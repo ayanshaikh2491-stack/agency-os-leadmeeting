@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/outputs/
+data/workspace_content_agents/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.gitmessage
