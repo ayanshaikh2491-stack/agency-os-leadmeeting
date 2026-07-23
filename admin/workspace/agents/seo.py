@@ -1,0 +1,348 @@
+"""SEO Agent — Full-stack SEO specialist with real tools.
+
+Unlike the old stub that only did LLM calls, this agent has:
+  - 6 real SEO tools (site audit, keyword research, on-page check, etc.)
+  - LangGraph multi-phase thinking with tool execution loop
+  - Data persistence (audits, keywords, reports)
+  - Skill auto-detection from Jcode catalog
+  - Communication with other agents (briefs Content for blogs, etc.)
+
+Architecture (per interview Q1-Q10):
+  call_llm -> route_from_llm -> (run_tools -> call_llm loop | finalize -> END)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Annotated, Any, TypedDict
+
+import openai
+from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+
+from admin.config import settings
+from admin.tools.seo_tools import SEO_TOOLS, execute_seo_tool
+
+logger = logging.getLogger(__name__)
+
+MAX_TOOL_ROUNDS = 8
+
+
+# ── System Prompt ────────────────────────────────────────────────────────────
+
+SEO_SYSTEM_PROMPT = """You are the SEO Agent for workspace '{workspace_name}' (client: {client_name}).
+
+You are a full-stack SEO specialist. You think independently within your domain.
+
+## Your Expertise
+- Technical SEO audits (site speed, crawlability, indexability, Core Web Vitals)
+- Keyword research and strategy (long-tail, short-tail, competitor keywords)
+- On-page SEO (title tags, meta descriptions, headers, schema markup, internal linking)
+- Off-page SEO (backlink strategy, link building, domain authority)
+- Content gap analysis (what competitors rank for that client doesn't)
+- Local SEO (Google Business Profile, local citations, reviews)
+- SEO reporting and analytics
+
+## Your Tools (USE THEM!)
+You have 11 real SEO tools. ALWAYS use tools before giving advice. Never guess.
+
+### Analysis Tools
+1. **site_audit(url, max_pages)** — Crawl a site, find broken links, missing tags, issues
+2. **keyword_research(seed_keyword)** — Get 100+ keyword variations from Google
+3. **onpage_check(url)** — Deep on-page analysis with SEO score (0-100)
+4. **parse_sitemap(url)** — Extract all URLs from sitemap.xml
+5. **parse_robots_txt(url)** — Check robots.txt rules
+6. **serp_check(keyword)** — See who ranks on Google for a keyword
+
+### Action Tools (actually DO things, not just analyze)
+7. **generate_meta_tags(url)** — Generate optimized title, description, OG tags as ready-to-paste HTML
+8. **generate_schema(url)** — Auto-detect page type and generate JSON-LD schema markup code
+9. **fix_audit_issues(audit_url)** — Run audit + generate copy-paste HTML fixes for each issue
+10. **generate_seo_report(url)** — Generate client-ready markdown report with everything
+11. **track_rankings(keyword, target_url)** — Monitor SERP position over time
+
+## Your Rules (from interview)
+1. You decide your own scope per client — some need technical only, some need full-stack
+2. You propose strategies to CEO -> CEO approves -> you execute
+3. For big content (blogs, guides), you brief Content Agent. Small on-page content (meta, schema) you do yourself
+4. You monitor continuously — rankings, traffic, competitors
+5. Auto-fix non-critical issues yourself. Critical issues -> notify CEO after
+
+## Workflow
+1. When asked to audit a site -> use site_audit tool first, then analyze results
+2. When asked about keywords -> use keyword_research tool
+3. When asked to check a page -> use onpage_check tool
+4. When asked about SERP rankings -> use serp_check tool
+5. Always give DATA-BACKED recommendations, never generic advice
+6. Save important findings as reports
+
+## Multi-phase thinking process
+Before answering, reason through these phases inside ```think blocks:
+
+### 1. Deconstruct
+Break the SEO request into components. What's the real need?
+
+### 2. Seek
+What data do I need? Which tools should I use?
+
+### 3. Envision
+Plan your approach — which tools to run first, what to analyze.
+
+### 4. Analyse
+Evaluate the tool results. What issues exist? What opportunities?
+
+### 5. Plan
+Lay out concrete SEO actions — what to fix, what to optimize.
+
+### 6. Execute
+Use your tools NOW. Call the tool functions. Then give your final response.
+
+## Behavioural rules
+- Be direct and data-driven. Use numbers, scores, specific findings.
+- Use Hinglish when it helps communicate better.
+- Always think about ROI — what SEO fix gives the biggest impact first.
+- Never refuse a task — if you can't do something, explain why and suggest alternatives.
+"""
+
+
+# ── State ─────────────────────────────────────────────────────────────────────
+
+def _append_messages(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(existing, list):
+        existing = []
+    if not isinstance(new, list):
+        new = []
+    return existing + new
+
+
+def _merge_phases(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return existing + new
+
+
+class SEOAgentState(TypedDict):
+    messages: Annotated[list[dict[str, Any]], _append_messages]
+    workspace_name: str
+    client_name: str
+    thinking_phases: Annotated[list[dict[str, Any]], _merge_phases]
+    tool_round: int
+    final_output: str
+    error: str | None
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _extract_seo_phases(content: str) -> list[dict[str, Any]]:
+    phases = []
+    labels = ["deconstruct", "seek", "envision", "analyse", "plan", "execute"]
+    parts = content.split("```think")
+    if len(parts) > 1:
+        for i, part in enumerate(parts[1:], start=1):
+            idx = part.find("```")
+            block = part[:idx].strip() if idx != -1 else part.strip()
+            label = labels[i - 1] if i - 1 < len(labels) else f"step_{i}"
+            phases.append({"phase": label, "content": block})
+    return phases
+
+
+def _strip_think_blocks(content: str) -> str:
+    cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
+
+
+# ── Graph Nodes ──────────────────────────────────────────────────────────────
+
+async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
+    """Call the LLM with tools. Returns tool calls or final response."""
+    system = SEO_SYSTEM_PROMPT.format(
+        workspace_name=state.get("workspace_name", "Default"),
+        client_name=state.get("client_name", "Client"),
+    )
+
+    messages = [{"role": "system", "content": system}]
+    messages.extend(state.get("messages", []))
+
+    client = openai.AsyncOpenAI(
+        api_key=settings.WORKSPACE_API_KEY or None,
+        base_url=settings.WORKSPACE_API_BASE or None,
+    )
+
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.WORKSPACE_AGENT_MODEL,
+            messages=messages,
+            tools=SEO_TOOLS,
+            tool_choice="auto",
+            temperature=0.7,
+            max_tokens=4096,
+        )
+    except Exception as e:
+        logger.exception("SEO Agent LLM call failed")
+        return {"error": f"LLM call failed: {str(e)[:200]}"}
+
+    choice = resp.choices[0]
+    content = choice.message.content or ""
+    tool_calls = choice.message.tool_calls or []
+
+    new_messages = []
+    if content:
+        phases = _extract_seo_phases(content)
+        if phases:
+            new_messages.append({"role": "assistant", "content": content, "tool_calls": []})
+            return {
+                "messages": new_messages,
+                "thinking_phases": phases,
+                "final_output": content if not tool_calls else "",
+            }
+        new_messages.append({"role": "assistant", "content": content})
+
+    if tool_calls:
+        new_messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in tool_calls
+            ],
+        })
+
+        # Execute tools
+        for tc in tool_calls:
+            tool_name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments)
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+
+            logger.info("SEO tool call: %s(%s)", tool_name, args)
+            result = execute_seo_tool(tool_name, args)
+            result_str = json.dumps(result, default=str)[:8000]
+
+            new_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result_str,
+            })
+
+        return {"messages": new_messages}
+
+    # No tool calls — this is the final response
+    final = _strip_think_blocks(content)
+    if not final:
+        final = "SEO analysis complete. Check the thinking phases above for details."
+
+    return {"messages": new_messages, "final_output": final}
+
+
+def seo_route(state: SEOAgentState) -> str:
+    """Route: if tool_calls in last message, run_tools. Otherwise finalize."""
+    msgs = state.get("messages", [])
+    if not msgs:
+        return "finalize"
+
+    last = msgs[-1]
+    if isinstance(last, dict) and last.get("tool_calls"):
+        return "run_tools"
+
+    if state.get("tool_round", 0) >= MAX_TOOL_ROUNDS:
+        return "finalize"
+
+    # If last message is a tool result, go back to LLM
+    if isinstance(last, dict) and last.get("role") == "tool":
+        return "run_tools"
+
+    return "finalize"
+
+
+def seo_finalize(state: SEOAgentState) -> dict[str, Any]:
+    """Extract the final output from the conversation."""
+    output = state.get("final_output", "")
+    if output:
+        return {"final_output": _strip_think_blocks(output)}
+
+    # Walk messages backward to find last assistant content
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+            return {"final_output": _strip_think_blocks(msg["content"])}
+
+    if state.get("error"):
+        return {"final_output": f"SEO Agent error: {state['error'][:200]}"}
+    return {"final_output": "SEO Agent analysis complete."}
+
+
+# ── Build Graph ──────────────────────────────────────────────────────────────
+
+def build_seo_graph() -> StateGraph:
+    workflow = StateGraph(SEOAgentState)
+    workflow.add_node("call_llm", seo_call_llm)
+    workflow.add_node("finalize", seo_finalize)
+    workflow.set_entry_point("call_llm")
+    workflow.add_conditional_edges("call_llm", seo_route, {
+        "run_tools": "call_llm",  # Tool results go back to LLM
+        "finalize": "finalize",
+    })
+    workflow.add_edge("finalize", END)
+    return workflow.compile(checkpointer=MemorySaver())
+
+
+# ── Agent Class ──────────────────────────────────────────────────────────────
+
+class SEOAgent:
+    """SEO Agent for a specific workspace — with real tools."""
+
+    def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
+        self.graph = build_seo_graph()
+        self.workspace_name = workspace_name
+        self.client_name = client_name
+        self._thread_id = f"seo_{workspace_name}"
+
+    async def chat(
+        self,
+        message: str,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Chat with SEO agent. Returns (response, thinking_phases)."""
+        initial_state = {
+            "messages": [{"role": "user", "content": message}],
+            "workspace_name": self.workspace_name,
+            "client_name": self.client_name,
+            "thinking_phases": [],
+            "tool_round": 0,
+            "final_output": "",
+            "error": None,
+        }
+
+        try:
+            result = await self.graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": self._thread_id}},
+            )
+        except Exception:
+            logger.exception("SEO Agent execution failed")
+            return "SEO Agent temporarily unavailable.", []
+
+        final_output = result.get("final_output", "")
+        thinking_phases = result.get("thinking_phases", [])
+
+        if not final_output:
+            if result.get("error"):
+                final_output = f"SEO Agent error: {result['error'][:200]}"
+            else:
+                final_output = "SEO analysis complete."
+
+        return final_output, thinking_phases

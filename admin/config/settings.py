@@ -1,0 +1,72 @@
+"""Central configuration for the TAGS Agency backend."""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Load .env from project root (e.g. C:\Users\TAUSHEF\Downloads\int\.env)
+load_dotenv(PROJECT_ROOT / ".env")
+
+ADMIN_ROOT = PROJECT_ROOT / "admin"
+
+# ── Free provider defaults ─────────────────────────────────────────────────
+#
+# Default models are free-tier:
+#   Groq →  groq/llama-3.3-70b-versatile  (fast, free, ~30 req/min)
+#         →  groq/llama-3.1-8b-instant     (lightweight workspace agent)
+#   Sign up: https://console.groq.com  →  copy your GROQ_API_KEY
+#
+# Other free options (swap in .env / env vars):
+#   Google Gemini  →  gemini/gemini-2.0-flash          (API key: GEMINI_API_KEY)
+#   OpenRouter     →  openrouter/meta-llama/llama-3.3-70b-instruct  (OPENROUTER_API_KEY)
+#   GitHub Models  →  github/gpt-4o-mini                         (GITHUB_TOKEN)
+#
+# Override everyhing via environment variables or .env file.
+
+# ── Agency CEO model ──────────────────────────────────────────────────────
+# Uses OpenAI-compatible client directly. Works with:
+#   Groq API   → base_url = https://api.groq.com/openai/v1   model = llama-3.3-70b-versatile
+#   OpenAI     → base_url = (empty)                           model = gpt-4o
+#   OpenRouter → base_url = https://openrouter.ai/api/v1      model = meta-llama/llama-3.3-70b-instruct
+AGENCY_CEO_MODEL = os.getenv("AGENCY_CEO_MODEL", "llama-3.3-70b-versatile")
+AGENCY_CEO_API_KEY = os.getenv("AGENCY_CEO_API_KEY", "")
+AGENCY_CEO_API_BASE = os.getenv("AGENCY_CEO_API_BASE", "")
+
+# ── Workspace (per‑client) agent model ─────────────────────────────────────
+WORKSPACE_AGENT_MODEL = os.getenv("WORKSPACE_AGENT_MODEL", "llama-3.3-70b-versatile")
+WORKSPACE_API_KEY = os.getenv("WORKSPACE_API_KEY", "")
+WORKSPACE_API_BASE = os.getenv("WORKSPACE_API_BASE", "")
+
+# ── Server ─────────────────────────────────────────────────────────────────
+HOST = os.getenv("ADMIN_HOST", "0.0.0.0")
+PORT = int(os.getenv("ADMIN_PORT", "9002"))
+
+# ── EC2 backend (frontend proxy target) ────────────────────────────────────
+EC2_BACKEND_URL = os.getenv("EC2_BACKEND_URL", "http://18.213.66.136:8000")
+
+# ── Chrome-agent (SBA's dedicated browser) ─────────────────────────────────
+CHROME_AGENT_PATH = os.getenv(
+    "CHROME_AGENT_PATH",
+    str(ADMIN_ROOT.parent / "chrome-agent" / "target" / "release" / "chrome-agent.exe"),
+)
+CHROME_AGENT_BROWSER = os.getenv("CHROME_AGENT_BROWSER", "sba")
+CHROME_AGENT_STEALTH = os.getenv("CHROME_AGENT_STEALTH", "true").lower() in ("1", "true", "yes")
+
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"postgresql+asyncpg://letta:letta@{HOST}:5432/tags_agency",
+)
+
+
+# ── Multi‑phase thinking loop steps ───────────────────────────────────────
+CEO_THINKING_PHASES = [
+    "deconstruct",   # Break the request into atomic components
+    "seek",          # Gather context, recall past decisions
+    "envision",      # Imagine possible approaches
+    "analyse",       # Evaluate trade-offs for each approach
+    "plan",          # Produce a structured plan
+    "execute",       # Generate the final output / delegations
+]

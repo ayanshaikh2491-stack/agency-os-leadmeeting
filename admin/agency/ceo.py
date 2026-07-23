@@ -1,0 +1,1434 @@
+"""Agency CEO — Co-founder strategic agent with full orchestration.
+
+The CEO:
+  - Thinks like a co-founder (Q19): candid, strategic, direct, disagrees respectfully
+  - Receives SBA handoffs (Q17): structured brief + full data dump
+  - Delegates in parallel blast (Q4): sab agents ko ek saath brief
+  - Reviews all agent output (Q20): self-QA → CEO review → Ayan sign-off
+  - Routes error fixes (Q21): CEO = error routing hub
+  - Generates weekly/monthly reports (Q23)
+  - Shares knowledge across workspaces (CRITICAL)
+  - Uses LangGraph for state management and conversation persistence
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import datetime, timezone
+from typing import Annotated, Any, Literal, TypedDict
+
+import openai
+from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+
+from admin.config import settings
+
+logger = logging.getLogger(__name__)
+
+MAX_TOOL_ROUNDS = 8  # Increased for parallel blast + review cycles
+
+
+# ── CEO System Prompt (Co-founder persona, Q19) ─────────────────────────────
+
+CEO_SYSTEM_PROMPT = """You are the Agency CEO of TAGS Agency — the co-founder and strategic brain.
+
+You are {user_role}. This is NOT a boss-employee relationship. You are a
+co-founder who thinks independently, pushes back respectfully when needed,
+and drives the agency forward with strategic clarity.
+
+## Your personality (Q19 — Strategic Partner + Executor)
+- You THINK for yourself. You don't just follow orders — you propose, disagree, and advise.
+- You are candid and direct. If a deal is bad, you say "Boss, yeh deal kharab hai."
+- You are a DOER, not just a talker. You plan AND execute through your team.
+- You use Hinglish naturally. Professional but not stiff.
+- You challenge assumptions. If something doesn't make strategic sense, say so.
+- You own outcomes. When you delegate, you follow through.
+
+## Your team (you brief ALL of them)
+- SBA Agent (leads, sales, outreach) — reports leads to you, you don't touch leads directly
+- SEO Agent — technical audits, keywords, on-page/off-page
+- Website Agent — design, development, hosting, maintenance
+- Ads Agent — Meta (Facebook + Instagram) + Google Ads strategy & optimization
+- Content Agent — visual execution only (images, videos, graphics)
+- Social Agent — social media strategist (Instagram, LinkedIn, X)
+- Analytics Agent — performance tracking, reporting
+
+## What you know about the agency
+
+{workspace_context}
+
+## Pending handoffs from SBA
+
+{handoff_context}
+
+## Agent feedback & reviews pending
+
+{review_context}
+
+## Multi-phase thinking process
+
+Before answering, reason through these phases **in order**. Output your
+thinking for each phase inside ```think blocks.
+
+### 1. Deconstruct
+What is really being asked? What's the strategic intent? Not just the surface request.
+
+### 2. Seek
+What context do you need? Check workspaces, pending handoffs, recent agent work.
+What past decisions or data would help?
+
+### 3. Envision
+2-3 possible approaches. What are trade-offs? What would each look like practically?
+Think about resource allocation, timelines, and client impact.
+
+### 4. Analyse
+Evaluate each approach. Which is most impactful? Most realistic? What are risks?
+Consider: cost, time, team capacity, client expectations.
+
+### 5. Plan
+Choose the best approach. Concrete actionable plan. If delegation needed, call tools.
+Specify exactly WHO does WHAT and by WHEN.
+
+### 6. Execute
+Your final response — the actual message to the agency owner.
+Clear, direct, actionable. No fluff.
+
+## Available tools
+- **delegate_to_workspace**: Send a task to a specific workspace agent
+- **delegate_parallel_blast**: Brief ALL agents in a workspace simultaneously (Q4)
+- **list_workspaces**: See all workspaces and their status
+- **get_workspace_report**: Detailed report for a specific workspace
+- **receive_sba_handoff**: Process an SBA handoff and create workspace (Q17)
+- **review_agent_output**: Review and approve/reject agent work (Q20)
+- **route_error_fix**: Route error recovery to the right agent (Q21)
+- **generate_report**: Create weekly/monthly agency reports (Q23)
+- **get_cross_workspace_knowledge**: Share learnings across workspaces (CRITICAL)
+
+## Behavioural rules
+- You are a co-founder, not a task-runner. Think STRATEGICALLY.
+- When SBA hands off a client, YOU create the workspace and brief ALL agents.
+- If something fails, YOU route the fix — don't wait, don't ask, just fix it.
+- You review agent work before it goes to Ayan. You are the quality gate.
+- Always think about what's best for the agency long-term.
+- Keep responses clear and direct. Hinglish welcome.
+- When delegating, give COMPLETE briefs — not half-baked instructions.
+"""
+
+
+# ── Tools definition for CEO ─────────────────────────────────────────────────
+
+CEO_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_to_workspace",
+            "description": "Delegate a task to a specific agent in a workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                    "agent_type": {
+                        "type": "string",
+                        "enum": ["sba", "seo", "content", "website", "analytics", "ads", "social"],
+                        "description": "Agent type to delegate to",
+                    },
+                    "task": {"type": "string", "description": "Clear task brief"},
+                    "context": {"type": "string", "description": "Additional context"},
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "urgent"],
+                        "description": "Task priority",
+                    },
+                },
+                "required": ["workspace_id", "agent_type", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_parallel_blast",
+            "description": (
+                "Brief ALL agents in a workspace simultaneously (Q4 — parallel blast). "
+                "Use when a new client starts or a major campaign launches. "
+                "CEO sends comprehensive brief to every agent at once."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                    "client_brief": {
+                        "type": "string",
+                        "description": (
+                            "Comprehensive client brief covering goals, brand, "
+                            "target audience, budget, timeline, KPIs"
+                        ),
+                    },
+                    "agents": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Specific agents to brief (default: all)",
+                    },
+                    "campaign_name": {
+                        "type": "string",
+                        "description": "Campaign or project name",
+                    },
+                    "deadline": {
+                        "type": "string",
+                        "description": "Expected delivery deadline",
+                    },
+                },
+                "required": ["workspace_id", "client_brief"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_workspaces",
+            "description": "List all client workspaces with status.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_workspace_report",
+            "description": "Detailed report for a specific workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                },
+                "required": ["workspace_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "receive_sba_handoff",
+            "description": (
+                "Process an SBA handoff (Q17). Creates workspace and briefs all agents. "
+                "Receives structured brief + full data dump from SBA."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "handoff_id": {"type": "string", "description": "SBA handoff ID"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["accept_and_create_workspace", "review_only", "reject"],
+                        "description": "What to do with the handoff",
+                    },
+                    "ceo_notes": {
+                        "type": "string",
+                        "description": "CEO's notes on the handoff",
+                    },
+                },
+                "required": ["handoff_id", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_agent_output",
+            "description": (
+                "Review and approve/reject agent work (Q20). "
+                "CEO reviews output before it goes to Ayan for final sign-off."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                    "agent_type": {"type": "string", "description": "Agent whose output to review"},
+                    "output_id": {
+                        "type": "string",
+                        "description": "ID of the output/task being reviewed",
+                    },
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["approved", "needs_revision", "rejected"],
+                        "description": "Review verdict",
+                    },
+                    "feedback": {
+                        "type": "string",
+                        "description": "Detailed feedback for the agent",
+                    },
+                },
+                "required": ["workspace_id", "agent_type", "verdict"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "route_error_fix",
+            "description": (
+                "Route error recovery to the right agent (Q21). "
+                "CEO is the routing hub for all error recovery."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                    "error_type": {
+                        "type": "string",
+                        "enum": [
+                            "seo_issue", "website_down", "ads_underperforming",
+                            "content_quality", "social_engagement", "analytics_anomaly",
+                            "client_complaint", "other",
+                        ],
+                        "description": "Type of error",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Error severity",
+                    },
+                    "description": {"type": "string", "description": "Error description"},
+                    "route_to": {
+                        "type": "string",
+                        "description": "Specific agent to route to (auto-detect if empty)",
+                    },
+                },
+                "required": ["workspace_id", "error_type", "severity", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_report",
+            "description": (
+                "Create weekly/monthly agency reports (Q23). "
+                "Aggregates data from all workspaces."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "report_type": {
+                        "type": "string",
+                        "enum": ["weekly", "monthly", "client_specific"],
+                        "description": "Type of report",
+                    },
+                    "workspace_id": {
+                        "type": "string",
+                        "description": "Workspace ID (for client_specific reports)",
+                    },
+                    "period_start": {
+                        "type": "string",
+                        "description": "Report period start (YYYY-MM-DD)",
+                    },
+                    "period_end": {
+                        "type": "string",
+                        "description": "Report period end (YYYY-MM-DD)",
+                    },
+                },
+                "required": ["report_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cross_workspace_knowledge",
+            "description": (
+                "Share learnings across workspaces (CRITICAL). "
+                "Agency-level knowledge pool — successful strategies, patterns, "
+                "client preferences shared across all workspaces."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get_all", "get_by_domain", "add_learning"],
+                        "description": "What to do with knowledge",
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Agent domain filter (seo, ads, content, etc.)",
+                    },
+                    "learning": {
+                        "type": "string",
+                        "description": "New learning to add (for add_learning action)",
+                    },
+                    "source_workspace": {
+                        "type": "string",
+                        "description": "Workspace this learning came from",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
+
+
+# ── State ────────────────────────────────────────────────────────────────────
+
+
+def _append_messages(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(existing, list):
+        existing = []
+    if not isinstance(new, list):
+        new = []
+    return existing + new
+
+
+def _merge_phases(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return existing + new
+
+
+class CEOGraphState(TypedDict):
+    messages: Annotated[list[dict[str, Any]], _append_messages]
+    user_role: str
+    workspace_context: str
+    handoff_context: str
+    review_context: str
+    thinking_phases: Annotated[list[dict[str, Any]], _merge_phases]
+    tool_round: int
+    final_output: str
+    error: str | None
+
+
+# ── Helper functions ─────────────────────────────────────────────────────────
+
+
+def _extract_phases(content: str) -> list[dict[str, Any]]:
+    """Extract thinking phases from LLM output."""
+    phases = []
+    labels = ["deconstruct", "seek", "envision", "analyse", "plan", "execute"]
+
+    # Format 1: ```think ... ```
+    parts = content.split("```think")
+    if len(parts) > 1:
+        for i, part in enumerate(parts[1:], start=1):
+            idx = part.find("```")
+            block = part[:idx].strip() if idx != -1 else part.strip()
+            label = labels[i - 1] if i - 1 < len(labels) else f"step_{i}"
+            phases.append({"phase": label, "content": block})
+        return phases
+
+    # Format 2: Plain "think" prefix
+    stripped = content.strip()
+    if stripped.lower().startswith("think"):
+        body = stripped[5:].strip()
+        section_splits = re.split(r'\n\s*\d+\.\s+', body)
+        if len(section_splits) > 1:
+            for i, section in enumerate(section_splits[1:], start=1):
+                colon_idx = section.find(":")
+                if colon_idx != -1:
+                    section_name = section[:colon_idx].strip().lower()
+                    section_body = section[colon_idx + 1:].strip()
+                else:
+                    section_name = labels[i - 1] if i - 1 < len(labels) else f"step_{i}"
+                    section_body = section.strip()
+                phases.append({"phase": section_name, "content": section_body})
+        else:
+            phases.append({"phase": "thinking", "content": body})
+        return phases
+
+    # Format <think> tags
+    tag_parts = re.split(r'<think>|</think>', content, flags=re.IGNORECASE)
+    if len(tag_parts) > 1:
+        for i, part in enumerate(tag_parts[1::2], start=1):
+            block = part.strip()
+            if block:
+                label = labels[i - 1] if i - 1 < len(labels) else f"step_{i}"
+                phases.append({"phase": label, "content": block})
+        return phases
+
+    return phases
+
+
+def _strip_think_blocks(content: str) -> str:
+    """Remove thinking blocks, leaving only the final response."""
+    result = re.sub(r"```think.*?```", "", content, flags=re.DOTALL).strip()
+    result = re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    stripped = result.strip()
+    if stripped.lower().startswith("think"):
+        body = stripped[5:].strip()
+        lines = body.split("\n")
+        in_thinking = False
+        response_lines = []
+        for line in lines:
+            if re.match(r'^\s*\d+\.\s+\w+', line):
+                in_thinking = True
+                continue
+            if in_thinking and re.match(r'^\s*$', line):
+                in_thinking = False
+                continue
+            if not in_thinking:
+                response_lines.append(line)
+        if response_lines:
+            result = "\n".join(response_lines).strip()
+
+    return result if result else ""
+
+
+def _build_workspace_context() -> str:
+    """Build a summary of all workspaces for the CEO's awareness."""
+    try:
+        from admin.workspace.manager import list_workspaces
+        workspaces = list_workspaces()
+    except ImportError:
+        return "No workspace data available yet."
+
+    if not workspaces:
+        return "No client workspaces exist yet. The agency is ready for its first client."
+
+    lines = ["Current workspaces:"]
+    for ws in workspaces:
+        agents = ", ".join(ws.agents) if ws.agents else "none assigned"
+        lines.append(
+            f"  - {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'})\n"
+            f"    Agents: {agents}\n"
+            f"    Created: {ws.created_at.strftime('%Y-%m-%d')}"
+        )
+    return "\n".join(lines)
+
+
+def _build_handoff_context() -> str:
+    """Build context from pending SBA handoffs."""
+    try:
+        from admin.agency.sba_store import list_handoffs
+        handoffs = list_handoffs()
+    except ImportError:
+        return "No handoff data available."
+
+    pending = [h for h in handoffs if not h.get("workspace_id")]
+    if not pending:
+        return "No pending handoffs from SBA."
+
+    lines = [f"Pending SBA handoffs ({len(pending)}):"]
+    for h in pending:
+        brief = h.get("brief", {})
+        lines.append(
+            f"  - Handoff ID: {h['id']}\n"
+            f"    Client: {brief.get('lead_name', 'N/A')} "
+            f"({brief.get('business_name', 'N/A')})\n"
+            f"    Score: {brief.get('score', 'N/A')}\n"
+            f"    Needs: {', '.join(brief.get('client_needs', [])) or 'N/A'}\n"
+            f"    Scope: {brief.get('agreed_scope', 'N/A')}\n"
+            f"    Time: {h.get('handoff_time', 'N/A')}"
+        )
+    return "\n".join(lines)
+
+
+def _build_review_context() -> str:
+    """Build context of agent outputs pending CEO review."""
+    try:
+        from admin.workspace.manager import list_pending_reviews
+        reviews = list_pending_reviews()
+    except (ImportError, AttributeError):
+        return "No pending reviews."
+
+    if not reviews:
+        return "No agent outputs pending your review."
+
+    lines = [f"Pending reviews ({len(reviews)}):"]
+    for r in reviews:
+        lines.append(
+            f"  - {r.get('agent_type', 'unknown')} output in workspace "
+            f"{r.get('workspace_id', 'N/A')}\n"
+            f"    Task: {r.get('task', 'N/A')}\n"
+            f"    Output: {r.get('output_preview', 'N/A')[:200]}"
+        )
+    return "\n".join(lines)
+
+
+# ── Graph Nodes ──────────────────────────────────────────────────────────────
+
+
+async def call_llm(state: CEOGraphState) -> dict:
+    """Call the LLM with CEO system prompt and tools."""
+    system_prompt = CEO_SYSTEM_PROMPT.format(
+        user_role=state.get("user_role", "the agency owner"),
+        workspace_context=state.get("workspace_context", "No workspace data."),
+        handoff_context=state.get("handoff_context", "No pending handoffs."),
+        review_context=state.get("review_context", "No pending reviews."),
+    )
+
+    oll_messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+    ]
+
+    for msg in state.get("messages", []):
+        if isinstance(msg, dict):
+            oll_messages.append(msg)
+
+    has_user = any(m.get("role") == "user" for m in oll_messages)
+    if not has_user:
+        oll_messages.append({"role": "user", "content": "Hello"})
+
+    try:
+        client_api = openai.AsyncOpenAI(
+            api_key=settings.AGENCY_CEO_API_KEY or None,
+            base_url=settings.AGENCY_CEO_API_BASE or None,
+        )
+        response = await client_api.chat.completions.create(
+            model=settings.AGENCY_CEO_MODEL,
+            messages=oll_messages,
+            tools=CEO_TOOLS,
+            tool_choice="auto",
+        )
+    except Exception as exc:
+        logger.exception("CEO LLM call failed")
+        return {
+            "error": str(exc),
+            "thinking_phases": [],
+            "messages": [],
+        }
+
+    choice = response.choices[0]
+    msg = choice.message
+
+    phases: list[dict[str, Any]] = []
+    if msg.content:
+        phases = _extract_phases(msg.content)
+
+    assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+    if msg.tool_calls:
+        assistant_msg["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in msg.tool_calls
+        ]
+
+    return {
+        "messages": [assistant_msg],
+        "thinking_phases": phases,
+        "error": None,
+    }
+
+
+def route_from_llm(state: CEOGraphState) -> Literal["run_tools", "finalize", "__end__"]:
+    """Route based on LLM response: tool calls -> run_tools, else -> finalize."""
+    if state.get("error"):
+        return "__end__"
+
+    messages = state.get("messages", [])
+    if not messages:
+        return "finalize"
+
+    last = messages[-1]
+    if isinstance(last, dict) and last.get("tool_calls"):
+        tool_round = state.get("tool_round", 0)
+        if tool_round >= MAX_TOOL_ROUNDS:
+            return "finalize"
+        return "run_tools"
+
+    return "finalize"
+
+
+async def run_tools(state: CEOGraphState) -> dict:
+    """Execute CEO tools (workspace queries, delegation, handoffs, reviews, errors, reports)."""
+    messages = state.get("messages", [])
+    if not messages:
+        return {"messages": [], "tool_round": state.get("tool_round", 0) + 1}
+
+    last = messages[-1]
+    tool_calls = last.get("tool_calls", []) if isinstance(last, dict) else []
+
+    if not tool_calls:
+        return {"messages": [], "tool_round": state.get("tool_round", 0) + 1}
+
+    tool_results: list[dict[str, Any]] = []
+
+    for tc in tool_calls:
+        tool_name = tc["function"]["name"]
+        try:
+            tool_args = json.loads(tc["function"]["arguments"])
+        except (json.JSONDecodeError, KeyError):
+            tool_args = {}
+
+        logger.info("CEO tool call: %s(%s)", tool_name, json.dumps(tool_args))
+
+        try:
+            result_text = await _execute_ceo_tool(tool_name, tool_args)
+        except Exception as exc:
+            result_text = f"Error executing {tool_name}: {exc}"
+
+        tool_results.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id", ""),
+            "content": result_text,
+        })
+
+    return {
+        "messages": tool_results,
+        "tool_round": state.get("tool_round", 0) + 1,
+    }
+
+
+async def _execute_ceo_tool(name: str, args: dict) -> str:
+    """Execute a CEO tool and return the result text."""
+
+    if name == "list_workspaces":
+        return _tool_list_workspaces()
+
+    elif name == "get_workspace_report":
+        return _tool_workspace_report(args.get("workspace_id", ""))
+
+    elif name == "delegate_to_workspace":
+        return await _tool_delegate(args)
+
+    elif name == "delegate_parallel_blast":
+        return await _tool_parallel_blast(args)
+
+    elif name == "receive_sba_handoff":
+        return await _tool_receive_handoff(args)
+
+    elif name == "review_agent_output":
+        return await _tool_review_output(args)
+
+    elif name == "route_error_fix":
+        return await _tool_route_error(args)
+
+    elif name == "generate_report":
+        return await _tool_generate_report(args)
+
+    elif name == "get_cross_workspace_knowledge":
+        return await _tool_cross_workspace_knowledge(args)
+
+    else:
+        return f"Unknown tool: {name}"
+
+
+# ── Tool implementations ─────────────────────────────────────────────────────
+
+
+def _tool_list_workspaces() -> str:
+    """List all workspaces."""
+    try:
+        from admin.workspace.manager import list_workspaces
+        workspaces = list_workspaces()
+    except ImportError:
+        return "No workspace data available."
+
+    if not workspaces:
+        return "No workspaces exist yet."
+
+    result = []
+    for ws in workspaces:
+        result.append(
+            f"- {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'}) "
+            f"agents: {', '.join(ws.agents) if ws.agents else 'none'}"
+        )
+    return "\n".join(result)
+
+
+def _tool_workspace_report(ws_id: str) -> str:
+    """Get detailed workspace report."""
+    try:
+        from admin.workspace.manager import get_workspace
+    except ImportError:
+        return "Workspace manager not available."
+
+    ws = get_workspace(ws_id)
+    if not ws:
+        return f"Workspace '{ws_id}' not found."
+
+    return (
+        f"Workspace: {ws.name}\n"
+        f"Client: {ws.client_name or 'N/A'}\n"
+        f"Description: {ws.description or 'None'}\n"
+        f"Agents: {', '.join(ws.agents) if ws.agents else 'none'}\n"
+        f"Created: {ws.created_at.isoformat()}"
+    )
+
+
+async def _tool_delegate(args: dict) -> str:
+    """Delegate task to a single agent in a workspace."""
+    ws_id = args.get("workspace_id", "")
+    agent_type = args.get("agent_type", "sba")
+    task = args.get("task", "")
+    context = args.get("context", "")
+    priority = args.get("priority", "normal")
+
+    try:
+        from admin.workspace.manager import get_workspace
+    except ImportError:
+        return "Workspace manager not available."
+
+    ws = get_workspace(ws_id)
+    if not ws:
+        return f"Workspace '{ws_id}' not found."
+    if agent_type not in ws.agents:
+        return f"Agent '{agent_type}' not in workspace '{ws_id}'. Available: {ws.agents}"
+
+    from admin.workspace.manager import route_to_agent
+
+    priority_tag = f"[PRIORITY: {priority.upper()}] " if priority != "normal" else ""
+    full_message = (
+        f"{priority_tag}[CEO DELEGATION] {task}\n\n"
+        f"Context: {context}" if context else
+        f"{priority_tag}[CEO DELEGATION] {task}"
+    )
+
+    try:
+        response = await route_to_agent(
+            workspace_id=ws_id,
+            agent_type=agent_type,
+            message=full_message,
+        )
+
+        # Store the output for review (Q20)
+        try:
+            from admin.workspace.manager import store_agent_output
+            store_agent_output(
+                workspace_id=ws_id,
+                agent_type=agent_type,
+                task=task,
+                output=response,
+            )
+        except (ImportError, AttributeError):
+            pass
+
+        return (
+            f"Delegated to {agent_type} in {ws.name}:\n"
+            f"Task: {task}\n"
+            f"Priority: {priority}\n"
+            f"Response: {response[:500]}"
+        )
+    except Exception as exc:
+        return f"Delegation failed: {exc}"
+
+
+async def _tool_parallel_blast(args: dict) -> str:
+    """Brief ALL agents in a workspace simultaneously (Q4)."""
+    ws_id = args.get("workspace_id", "")
+    client_brief = args.get("client_brief", "")
+    campaign_name = args.get("campaign_name", "General")
+    deadline = args.get("deadline", "TBD")
+    specific_agents = args.get("agents")
+
+    try:
+        from admin.workspace.manager import get_workspace
+    except ImportError:
+        return "Workspace manager not available."
+
+    ws = get_workspace(ws_id)
+    if not ws:
+        return f"Workspace '{ws_id}' not found."
+
+    agents_to_brief = specific_agents or [a for a in ws.agents if a != "memory"]
+
+    from admin.workspace.manager import route_to_agent
+
+    results = []
+    for agent_type in agents_to_brief:
+        if agent_type not in ws.agents:
+            results.append(f"  SKIP {agent_type}: not in workspace")
+            continue
+
+        agent_brief = (
+            f"[CEO PARALLEL BLAST — Campaign: {campaign_name}]\n\n"
+            f"Client Brief:\n{client_brief}\n\n"
+            f"Deadline: {deadline}\n\n"
+            f"As the {agent_type.upper()} agent, analyze this brief and:\n"
+            f"1. Identify what YOU need to do for this client\n"
+            f"2. List your specific deliverables\n"
+            f"3. Flag any dependencies on other agents\n"
+            f"4. State your estimated timeline\n"
+            f"5. Note any questions or concerns\n\n"
+            f"Think independently. You are the expert in your domain."
+        )
+
+        try:
+            response = await route_to_agent(
+                workspace_id=ws_id,
+                agent_type=agent_type,
+                message=agent_brief,
+            )
+            results.append(f"  OK {agent_type}: {response[:200]}")
+
+            # Store output for review
+            try:
+                from admin.workspace.manager import store_agent_output
+                store_agent_output(
+                    workspace_id=ws_id,
+                    agent_type=agent_type,
+                    task=f"Parallel blast: {campaign_name}",
+                    output=response,
+                )
+            except (ImportError, AttributeError):
+                pass
+
+        except Exception as exc:
+            results.append(f"  FAIL {agent_type}: {exc}")
+
+    return (
+        f"Parallel blast completed for {ws.name} — Campaign: {campaign_name}\n"
+        f"Deadline: {deadline}\n"
+        f"Agents briefed: {len(agents_to_brief)}\n\n"
+        f"Results:\n" + "\n".join(results)
+    )
+
+
+async def _tool_receive_handoff(args: dict) -> str:
+    """Receive SBA handoff and optionally create workspace (Q17)."""
+    handoff_id = args.get("handoff_id", "")
+    action = args.get("action", "review_only")
+    ceo_notes = args.get("ceo_notes", "")
+
+    try:
+        from admin.agency.sba_store import get_handoff
+    except ImportError:
+        return "SBA store not available."
+
+    handoff = get_handoff(handoff_id)
+    if not handoff:
+        return f"Handoff '{handoff_id}' not found."
+
+    brief = handoff.get("brief", {})
+    full_dump = handoff.get("full_dump", {})
+
+    if action == "reject":
+        return (
+            f"Handoff {handoff_id} rejected by CEO.\n"
+            f"Client: {brief.get('lead_name', 'N/A')}\n"
+            f"Notes: {ceo_notes}"
+        )
+
+    if action == "review_only":
+        return (
+            f"Handoff {handoff_id} — Review Only\n\n"
+            f"=== STRUCTURED BRIEF ===\n"
+            f"Client: {brief.get('lead_name', 'N/A')} ({brief.get('business_name', 'N/A')})\n"
+            f"Email: {brief.get('email', 'N/A')}\n"
+            f"Phone: {brief.get('phone', 'N/A')}\n"
+            f"Score: {brief.get('score', 'N/A')}\n"
+            f"Source: {brief.get('source', 'N/A')}\n"
+            f"Key Signals: {brief.get('key_signals', 'N/A')}\n"
+            f"Client Needs: {', '.join(brief.get('client_needs', [])) or 'N/A'}\n"
+            f"Agreed Scope: {brief.get('agreed_scope', 'N/A')}\n"
+            f"Next Steps: {', '.join(brief.get('next_steps', [])) or 'N/A'}\n\n"
+            f"=== FULL DATA DUMP ===\n"
+            f"Meetings: {len(full_dump.get('meetings', []))}\n"
+            f"All Notes: {len(full_dump.get('all_notes', []))}\n"
+            f"Action Items: {len(full_dump.get('action_items', []))}\n"
+            f"Lead Response History: {len(full_dump.get('lead_response_history', []))}\n\n"
+            f"CEO Notes: {ceo_notes or 'None'}"
+        )
+
+    if action == "accept_and_create_workspace":
+        # Create workspace
+        try:
+            from admin.workspace.manager import create_workspace
+            from admin.api.models.schemas import WorkspaceCreate
+
+            ws_payload = WorkspaceCreate(
+                name=f"{brief.get('business_name', brief.get('lead_name', 'Client'))} Workspace",
+                client_name=brief.get("lead_name", ""),
+                description=(
+                    f"Client: {brief.get('lead_name')} ({brief.get('business_name')})\n"
+                    f"Scope: {brief.get('agreed_scope', 'N/A')}\n"
+                    f"Needs: {', '.join(brief.get('client_needs', []))}\n"
+                    f"CEO Notes: {ceo_notes}"
+                ),
+            )
+            ws = create_workspace(ws_payload)
+
+            # Link workspace back to handoff
+            try:
+                from admin.agency.sba_store import mark_handoff_workspace_created
+                await mark_handoff_workspace_created(handoff_id, ws.id)
+            except (ImportError, AttributeError):
+                pass
+
+            # Add CEO notes to handoff
+            handoff["ceo_notes"] = ceo_notes
+            handoff["workspace_id"] = ws.id
+
+            return (
+                f"Handoff ACCEPTED. Workspace created.\n\n"
+                f"Workspace: {ws.name} (ID: {ws.id})\n"
+                f"Client: {brief.get('lead_name', 'N/A')}\n"
+                f"Handoff ID: {handoff_id}\n\n"
+                f"Next: Use delegate_parallel_blast to brief all agents.\n"
+                f"CEO Notes: {ceo_notes or 'None'}"
+            )
+        except Exception as exc:
+            return f"Failed to create workspace from handoff: {exc}"
+
+    return f"Unknown action: {action}"
+
+
+async def _tool_review_output(args: dict) -> str:
+    """Review agent output (Q20) — CEO review stage."""
+    ws_id = args.get("workspace_id", "")
+    agent_type = args.get("agent_type", "")
+    output_id = args.get("output_id", "")
+    verdict = args.get("verdict", "approved")
+    feedback = args.get("feedback", "")
+
+    # Store the review
+    try:
+        from admin.workspace.manager import store_review
+        store_review(
+            workspace_id=ws_id,
+            agent_type=agent_type,
+            output_id=output_id,
+            verdict=verdict,
+            feedback=feedback,
+        )
+    except (ImportError, AttributeError):
+        pass
+
+    if verdict == "approved":
+        return (
+            f"APPROVED: {agent_type} output in workspace {ws_id}\n"
+            f"Feedback: {feedback or 'No issues — good work.'}\n"
+            f"Status: Ready for Ayan's final sign-off."
+        )
+    elif verdict == "needs_revision":
+        return (
+            f"NEEDS REVISION: {agent_type} output in workspace {ws_id}\n"
+            f"Feedback: {feedback}\n"
+            f"Action: Agent has been notified to revise."
+        )
+    else:
+        return (
+            f"REJECTED: {agent_type} output in workspace {ws_id}\n"
+            f"Feedback: {feedback}\n"
+            f"Action: Rework required. CEO to rebrief if needed."
+        )
+
+
+async def _tool_route_error(args: dict) -> str:
+    """Route error fix to the right agent (Q21)."""
+    ws_id = args.get("workspace_id", "")
+    error_type = args.get("error_type", "other")
+    severity = args.get("severity", "medium")
+    description = args.get("description", "")
+    route_to = args.get("route_to", "")
+
+    # Auto-detect which agent to route to
+    error_agent_map = {
+        "seo_issue": "seo",
+        "website_down": "website",
+        "ads_underperforming": "ads",
+        "content_quality": "content",
+        "social_engagement": "social",
+        "analytics_anomaly": "analytics",
+    }
+    target_agent = route_to or error_agent_map.get(error_type, "")
+
+    # Store the error
+    try:
+        from admin.workspace.manager import store_error
+        store_error(
+            workspace_id=ws_id,
+            error_type=error_type,
+            severity=severity,
+            description=description,
+            routed_to=target_agent,
+        )
+    except (ImportError, AttributeError):
+        pass
+
+    if not target_agent:
+        return (
+            f"ERROR LOGGED (severity: {severity}):\n"
+            f"Type: {error_type}\n"
+            f"Description: {description}\n"
+            f"No auto-route agent determined. CEO manual intervention needed."
+        )
+
+    # Route the fix
+    try:
+        from admin.workspace.manager import route_to_agent
+        fix_brief = (
+            f"[CEO ERROR ROUTING — Severity: {severity.upper()}]\n\n"
+            f"Error Type: {error_type}\n"
+            f"Description: {description}\n\n"
+            f"Analyze this error and:\n"
+            f"1. Identify root cause\n"
+            f"2. Propose immediate fix\n"
+            f"3. Suggest prevention for future\n"
+            f"4. State timeline for fix"
+        )
+
+        response = await route_to_agent(
+            workspace_id=ws_id,
+            agent_type=target_agent,
+            message=fix_brief,
+        )
+
+        return (
+            f"ERROR ROUTED to {target_agent} (severity: {severity}):\n"
+            f"Type: {error_type}\n"
+            f"Description: {description}\n\n"
+            f"Agent Response: {response[:500]}"
+        )
+    except Exception as exc:
+        return (
+            f"ERROR LOGGED but routing failed:\n"
+            f"Type: {error_type}\n"
+            f"Description: {description}\n"
+            f"Route to: {target_agent}\n"
+            f"Error: {exc}"
+        )
+
+
+async def _tool_generate_report(args: dict) -> str:
+    """Generate weekly/monthly agency report (Q23)."""
+    report_type = args.get("report_type", "weekly")
+    ws_id = args.get("workspace_id")
+    period_start = args.get("period_start", "")
+    period_end = args.get("period_end", "")
+
+    now = datetime.now(timezone.utc)
+
+    # Gather workspace data
+    try:
+        from admin.workspace.manager import list_workspaces, get_workspace
+        workspaces = list_workspaces()
+    except ImportError:
+        workspaces = []
+
+    # Gather handoff data
+    try:
+        from admin.agency.sba_store import list_handoffs, list_leads
+        handoffs = list_handoffs()
+        leads = list_leads()
+    except ImportError:
+        handoffs = []
+        leads = []
+
+    if report_type == "client_specific" and ws_id:
+        ws = get_workspace(ws_id) if workspaces else None
+        ws_name = ws.name if ws else "Unknown"
+        return (
+            f"=== CLIENT REPORT: {ws_name} ===\n"
+            f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}\n\n"
+            f"Workspace: {ws_name} (ID: {ws_id})\n"
+            f"Agents: {', '.join(ws.agents) if ws and ws.agents else 'N/A'}\n"
+            f"Created: {ws.created_at.isoformat() if ws else 'N/A'}\n\n"
+            f"[Detailed metrics will be available when agents are fully operational]"
+        )
+
+    total_workspaces = len(workspaces)
+    total_handoffs = len(handoffs)
+    active_leads = len([l for l in leads if l.get("status") not in ("closed", "lost")])
+    converted_leads = len([l for l in leads if l.get("status") == "closed"])
+
+    report_lines = [
+        f"=== TAGS AGENCY {'WEEKLY' if report_type == 'weekly' else 'MONTHLY'} REPORT ===",
+        f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}",
+        "",
+        "--- AGENCY OVERVIEW ---",
+        f"Total Workspaces: {total_workspaces}",
+        f"Active Leads: {active_leads}",
+        f"Converted Leads (SBA): {converted_leads}",
+        f"Total Handoffs to CEO: {total_handoffs}",
+        "",
+    ]
+
+    if workspaces:
+        report_lines.append("--- WORKSPACE DETAILS ---")
+        for ws in workspaces:
+            report_lines.append(
+                f"  {ws.name} (client: {ws.client_name or 'N/A'})\n"
+                f"    Agents: {', '.join(ws.agents) if ws.agents else 'none'}\n"
+                f"    Created: {ws.created_at.strftime('%Y-%m-%d')}"
+            )
+        report_lines.append("")
+
+    report_lines.extend([
+        "--- NEXT STEPS ---",
+        "[CEO to fill in strategic priorities based on current state]",
+        "",
+        "--- RISKS & BLOCKERS ---",
+        "[CEO to flag any issues requiring Ayan's attention]",
+    ])
+
+    return "\n".join(report_lines)
+
+
+async def _tool_cross_workspace_knowledge(args: dict) -> str:
+    """Cross-workspace knowledge sharing (CRITICAL)."""
+    action = args.get("action", "get_all")
+    domain = args.get("domain", "")
+    learning = args.get("learning", "")
+    source_ws = args.get("source_workspace", "")
+
+    # In-memory knowledge store (will be DB later)
+    if not hasattr(_tool_cross_workspace_knowledge, "_store"):
+        _tool_cross_workspace_knowledge._store = []
+
+    store = _tool_cross_workspace_knowledge._store
+
+    if action == "add_learning":
+        if not learning:
+            return "No learning provided."
+
+        entry = {
+            "id": f"kl_{len(store) + 1}",
+            "domain": domain or "general",
+            "learning": learning,
+            "source_workspace": source_ws or "agency",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        store.append(entry)
+
+        return (
+            f"Learning added to agency knowledge pool:\n"
+            f"Domain: {entry['domain']}\n"
+            f"Source: {entry['source_workspace']}\n"
+            f"Learning: {learning}"
+        )
+
+    elif action == "get_by_domain":
+        if not domain:
+            return "Domain filter required for get_by_domain."
+
+        filtered = [e for e in store if e["domain"] == domain]
+        if not filtered:
+            return f"No learnings found for domain: {domain}"
+
+        lines = [f"Knowledge for domain '{domain}' ({len(filtered)} entries):"]
+        for e in filtered[-10:]:  # Last 10
+            lines.append(
+                f"  - [{e['source_workspace']}] {e['learning'][:200]}"
+            )
+        return "\n".join(lines)
+
+    else:  # get_all
+        if not store:
+            return "No cross-workspace knowledge collected yet."
+
+        lines = [f"Agency Knowledge Pool ({len(store)} entries):"]
+        for e in store[-20:]:  # Last 20
+            lines.append(
+                f"  - [{e['domain']}] [{e['source_workspace']}] {e['learning'][:150]}"
+            )
+        return "\n".join(lines)
+
+
+async def finalize(state: CEOGraphState) -> dict:
+    """Extract final output from accumulated state."""
+    messages = state.get("messages", [])
+    final_text = ""
+
+    for msg in reversed(messages):
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+            full = msg["content"]
+            stripped = _strip_think_blocks(full)
+            if stripped and len(stripped) > 20:
+                final_text = stripped
+                break
+            if not final_text and full and len(full) > 20:
+                final_text = full
+
+    if not final_text or len(final_text) < 20:
+        phases = state.get("thinking_phases", [])
+        if phases:
+            final_text = "CEO analysis complete:\n\n"
+            for p in phases:
+                final_text += f"**{p['phase'].title()}**: {p['content'][:300]}...\n\n"
+        else:
+            if state.get("error"):
+                final_text = (
+                    "Bhai, CEO ka thinking engine abhi reachable nahi hai. "
+                    f"Error: {str(state['error'])[:200]}"
+                )
+            else:
+                final_text = "CEO analysis complete. Aap kya next step chahte hain?"
+
+    return {"final_output": final_text}
+
+
+# ── Build Graph ──────────────────────────────────────────────────────────────
+
+
+def build_ceo_graph() -> StateGraph:
+    """Build the compiled LangGraph state graph for the Agency CEO.
+
+    Graph structure:
+      call_llm -> route_from_llm -> run_tools -> call_llm (loop)
+                                        \\-> finalize -> END
+    """
+    workflow = StateGraph(CEOGraphState)
+
+    workflow.add_node("call_llm", call_llm)
+    workflow.add_node("run_tools", run_tools)
+    workflow.add_node("finalize", finalize)
+
+    workflow.set_entry_point("call_llm")
+
+    workflow.add_conditional_edges(
+        "call_llm",
+        route_from_llm,
+        {
+            "run_tools": "run_tools",
+            "finalize": "finalize",
+            "__end__": END,
+        },
+    )
+
+    workflow.add_edge("run_tools", "call_llm")
+    workflow.add_edge("finalize", END)
+
+    checkpointer = MemorySaver()
+    return workflow.compile(checkpointer=checkpointer)
+
+
+# ── CEO Agent Class ──────────────────────────────────────────────────────────
+
+
+class AgencyCEO:
+    """Agency CEO agent — co-founder strategic partner with full orchestration."""
+
+    def __init__(self) -> None:
+        self.graph = build_ceo_graph()
+        self._thread_id = "ceo_agency"
+
+    async def chat(
+        self,
+        message: str,
+        *,
+        user_role: str = "the agency owner",
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> tuple[str, str, list[dict[str, Any]]]:
+        """Chat with the CEO agent.
+
+        Returns (response, conversation_id, thinking_phases).
+        """
+        workspace_context = _build_workspace_context()
+        handoff_context = _build_handoff_context()
+        review_context = _build_review_context()
+
+        initial_state = {
+            "messages": [{"role": "user", "content": message}],
+            "user_role": user_role,
+            "workspace_context": workspace_context,
+            "handoff_context": handoff_context,
+            "review_context": review_context,
+            "thinking_phases": [],
+            "tool_round": 0,
+            "final_output": "",
+            "error": None,
+        }
+
+        try:
+            result = await self.graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": self._thread_id}},
+            )
+        except Exception:
+            logger.exception("CEO LangGraph execution failed")
+            return (
+                "Bhai, CEO ka thinking engine abhi issue mein hai. "
+                "Thodi der mein try karte hain.",
+                "",
+                [],
+            )
+
+        final_output = result.get("final_output", "")
+        thinking_phases = result.get("thinking_phases", [])
+
+        if not final_output:
+            if result.get("error"):
+                final_output = (
+                    "Bhai, CEO ka LLM reachable nahi hai. "
+                    f"Error: {str(result['error'])[:200]}"
+                )
+            else:
+                final_output = "CEO analysis complete. Aap kya next step chahte hain?"
+
+        return final_output, "ceo-session-1", thinking_phases
+
+    # ── Direct API methods (for route handlers) ─────────────────────────────
+
+    async def receive_handoff(
+        self, handoff_id: str, action: str = "review_only", ceo_notes: str = ""
+    ) -> str:
+        """Receive and process an SBA handoff."""
+        return await _tool_receive_handoff({
+            "handoff_id": handoff_id,
+            "action": action,
+            "ceo_notes": ceo_notes,
+        })
+
+    async def parallel_blast(
+        self, workspace_id: str, client_brief: str,
+        campaign_name: str = "General", deadline: str = "TBD",
+    ) -> str:
+        """Brief all agents in a workspace simultaneously."""
+        return await _tool_parallel_blast({
+            "workspace_id": workspace_id,
+            "client_brief": client_brief,
+            "campaign_name": campaign_name,
+            "deadline": deadline,
+        })
+
+    async def review_output(
+        self, workspace_id: str, agent_type: str,
+        verdict: str, feedback: str = "", output_id: str = "",
+    ) -> str:
+        """Review agent output."""
+        return await _tool_review_output({
+            "workspace_id": workspace_id,
+            "agent_type": agent_type,
+            "output_id": output_id,
+            "verdict": verdict,
+            "feedback": feedback,
+        })
+
+    async def route_error(
+        self, workspace_id: str, error_type: str,
+        severity: str, description: str, route_to: str = "",
+    ) -> str:
+        """Route error recovery."""
+        return await _tool_route_error({
+            "workspace_id": workspace_id,
+            "error_type": error_type,
+            "severity": severity,
+            "description": description,
+            "route_to": route_to,
+        })
+
+    async def generate_report(
+        self, report_type: str, workspace_id: str | None = None,
+        period_start: str = "", period_end: str = "",
+    ) -> str:
+        """Generate agency report."""
+        return await _tool_generate_report({
+            "report_type": report_type,
+            "workspace_id": workspace_id,
+            "period_start": period_start,
+            "period_end": period_end,
+        })
+
+    async def cross_workspace_knowledge(
+        self, action: str = "get_all", domain: str = "",
+        learning: str = "", source_workspace: str = "",
+    ) -> str:
+        """Query or update cross-workspace knowledge."""
+        return await _tool_cross_workspace_knowledge({
+            "action": action,
+            "domain": domain,
+            "learning": learning,
+            "source_workspace": source_workspace,
+        })
