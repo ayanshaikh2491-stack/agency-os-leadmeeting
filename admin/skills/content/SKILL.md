@@ -40,6 +40,9 @@ Full-spectrum content execution engine. Creates images, videos, AND text content
 - The agent who briefed = the agent who approves
 - Always discover brand identity before creating visuals
 - Cross-project learning via Agency Content Agent
+- Auto brand discovery on first brief if brand info missing
+- Content goes through CEO approval before publishing
+- Job queue ensures GPU only used on-demand (no waste)
 
 ## Brand Discovery
 Autonomously discovers client brand identity:
@@ -50,12 +53,15 @@ Autonomously discovers client brand identity:
 
 ## Workflow
 1. Receive visual/content brief from domain agent
-2. Discover client brand identity (if new client)
-3. Create production plan (prompts, dimensions, GPU estimate)
-4. Generate visuals (FLUX/CogVideoX on Kaggle GPU)
-5. Generate text content (blog, copy, meta)
-6. Report completion to briefing agent
-7. Share learnings with Agency Content Agent
+2. Discover client brand identity (if new client — auto-triggered)
+3. Enhance brief with brand intelligence (colors, style, dimensions)
+4. Submit job to GPU queue (on-demand, no waste)
+5. Process queue when GPU free (auto-retry on failure)
+6. Generate visuals (FLUX/CogVideoX on Kaggle GPU)
+7. Generate text content (blog, copy, meta)
+8. Request CEO approval before publishing
+9. Report completion to briefing agent
+10. Share learnings with Agency Content Agent
 
 ## Communication
 - **Reports to**: The domain agent that briefed them
@@ -97,8 +103,14 @@ Autonomously discovers client brand identity:
 20. repurpose_for_social — Cross-platform content conversion
 21. generate_ad_copy — Ad copy for any platform
 
-## API Endpoints (27 total)
+## API Endpoints (38 total)
+
+### Core
 - POST /api/content/chat — LangGraph chat
+- GET  /api/content/tools — Tool list
+- GET  /api/content/status — Agent status
+
+### Visual Generation
 - POST /api/content/discover-brand — Brand discovery
 - POST /api/content/parse-brief — Brief parsing
 - POST /api/content/plan — Production planning
@@ -108,6 +120,8 @@ Autonomously discovers client brand identity:
 - POST /api/content/generate-social — Social image
 - POST /api/content/generate-hero — Hero banner
 - POST /api/content/batch-generate — Batch images
+
+### Text Content
 - POST /api/content/analyze-readability — Readability
 - POST /api/content/content-brief — Content brief
 - POST /api/content/blog-post — Blog post
@@ -119,12 +133,42 @@ Autonomously discovers client brand identity:
 - POST /api/content/image-specs — Image sizes
 - POST /api/content/repurpose — Cross-platform
 - POST /api/content/ad-copy — Ad copy
+
+### GPU Queue
+- POST /api/content/queue/submit — Submit job to queue
+- GET  /api/content/queue/status/{job_id} — Job status
+- GET  /api/content/queue/list — List recent jobs
+- GET  /api/content/queue/overview — Queue overview
+- POST /api/content/queue/process — Process next job
+
+### Agency Intelligence
 - GET  /api/content/agency/stats — Agency stats
 - POST /api/content/agency/knowledge — Cross-project knowledge
 - POST /api/content/agency/best-prompts — Best prompts
+
+### Content Agent Intelligence (NEW)
+- POST /api/content/agent/brand-discover — Auto brand discovery
+- POST /api/content/agent/submit-job — Submit job with intelligence
+- POST /api/content/agent/process-job — Process queued job
+- GET  /api/content/agent/memory/{workspace_id} — Workspace memory
+- GET  /api/content/agent/queue-status/{workspace_id} — Queue status
+- POST /api/content/agent/approve — Request CEO approval
+
+### Domain Agent Integration
 - POST /api/content/brief-content-agent — Domain agent briefing
-- GET  /api/content/tools — Tool list
-- GET  /api/content/status — Agent status
+
+## Memory & Learning
+- Per-workspace memory (success rate, brand learnings, mistakes to avoid)
+- Platform performance tracking (what works on which platform)
+- Cross-project knowledge from Agency Content Agent
+- Auto-accumulated prompt patterns that work well
+
+## Job Queue
+- On-demand GPU usage (no waste)
+- Priority ordering (urgent > high > normal > low)
+- Auto-retry on failure (max 2 retries)
+- Per-workspace queue isolation
+- Domain agent notification on completion
 
 ## Interview References
 - Q1: Full-spectrum content (visual + text)
