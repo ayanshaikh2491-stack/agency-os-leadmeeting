@@ -32,7 +32,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
 from admin.tools.visual_tools import VISUAL_TOOLS, execute_visual_tool
-from admin.tools.kaggle_tools import execute_kaggle_tool
+from admin.tools.kaggle_tools import KAGGLE_TOOLS, execute_kaggle_tool
 from admin.tools.content_tools import CONTENT_TOOLS, execute_content_tool
 from admin.tools.content_queue import ContentBrief, get_queue, enhance_brief, JobStatus
 from admin.workspace.agent_bus import send_message, share_knowledge
@@ -47,7 +47,7 @@ MAX_TOOL_ROUNDS = 10
 # ── Unified Tool Registry ─────────────────────────────────────────────────────
 
 # Merge visual + kaggle + content tools into one unified list for the LLM
-ALL_CONTENT_TOOLS = VISUAL_TOOLS + CONTENT_TOOLS
+ALL_CONTENT_TOOLS = VISUAL_TOOLS + KAGGLE_TOOLS + CONTENT_TOOLS
 
 
 # ── System Prompt ──────────────────────────────────────────────────────────────
@@ -797,8 +797,34 @@ class ContentAgent:
                     "steps": job.steps,
                 })
 
-            if result.get("status") == "success" or result.get("output_path"):
-                output_files = [result.get("output_path", result.get("url", ""))]
+            if result.get("status") in ("submitted", "success") or result.get("output_path"):
+                # Kaggle returns "submitted" first — we need to poll for completion
+                output_files = []
+                kernel_slug = result.get("kernel_slug", "")
+                if kernel_slug:
+                    # Poll Kaggle until complete
+                    import time as _time
+                    slug = kernel_slug
+                    poll_start = _time.time()
+                    while _time.time() - poll_start < 600:  # 10 min timeout
+                        status_result = execute_kaggle_tool("check_notebook_status", {"kernel_slug": slug})
+                        status_out = status_result.get("output", "").lower()
+                        if "complete" in status_out:
+                            dl_result = execute_kaggle_tool("download_notebook_output", {"kernel_slug": slug})
+                            if dl_result.get("status") == "downloaded":
+                                output_files = dl_result.get("files", [])
+                                out_dir = dl_result.get("output_dir", "")
+                                if out_dir:
+                                    for f in os.listdir(out_dir):
+                                        fp = os.path.join(out_dir, f)
+                                        if f.endswith(".png") or f.endswith(".jpg") or f.endswith(".mp4"):
+                                            output_files.append(fp)
+                            break
+                        elif "error" in status_out or "fail" in status_out:
+                            break
+                        _time.sleep(15)
+                else:
+                    output_files = [result.get("output_path", result.get("url", ""))]
                 queue.complete(job.job_id, output_files)
 
                 # Record success in workspace memory
