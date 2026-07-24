@@ -961,3 +961,93 @@ class ContentAgent:
             return {**stats, "queue": queue_status}
         except Exception:
             return {"queue": self.get_queue_status()}
+
+    # ── Process Pending Briefs from Agent Bus ─────────────────────────────
+
+    async def process_pending_briefs(self) -> list[dict[str, Any]]:
+        """Poll agent_bus for unread briefs and process them.
+
+        This is the glue between domain agents (who send briefs via bus)
+        and Content Agent execution. Call periodically or on-demand.
+        
+        Returns list of processing results.
+        """
+        from admin.workspace.agent_bus import get_messages, mark_read, mark_responded
+        import asyncio
+
+        # Get unread briefs addressed to content agent
+        briefs = get_messages(
+            workspace_id=self._workspace_id,
+            to_agent="content",
+            unread_only=True,
+            message_type="brief",
+        )
+        
+        if not briefs:
+            return []
+
+        results = []
+        for brief in briefs:
+            meta = brief.metadata or {}
+            content_type = meta.get("content_type", "mixed")
+            brief_from = brief.from_agent
+            topic = brief.subject or ""
+            platform = meta.get("platform", "website")
+            style = meta.get("style", "professional")
+            description = brief.content or ""
+
+            logger.info(
+                "Processing brief from %s: %s (%s)", 
+                brief_from, content_type, topic[:60]
+            )
+
+            try:
+                # Auto-discover brand if needed
+                if not self._brand_discovered:
+                    await self.auto_discover_brand()
+
+                # Route: visual jobs → submit_visual_job, text/mixed → chat()
+                if content_type in ("image", "video", "graphic", "ad", "hero"):
+                    job_result = self.submit_visual_job(
+                        brief_from=brief_from,
+                        content_type=content_type,
+                        platform=platform,
+                        topic=brief.subject or "",
+                        style=style,
+                        description=description,
+                    )
+                    
+                    # Also process the next job from queue
+                    await self.process_next_job()
+                    
+                    mark_read(brief.id, self._workspace_id)
+                    mark_responded(brief.id, self._workspace_id)
+                    
+                    results.append({"brief_id": brief.id, "status": "queued", **job_result})
+                else:
+                    # Text/mixed content → LLM-based processing
+                    response, phases = await self.chat(
+                        message=(
+                            f"You received a brief from {brief_from}.\n"
+                            f"Content type: {content_type}\n"
+                            f"Platform: {platform}\n"
+                            f"Style: {style}\n"
+                            f"Description: {description}\n"
+                            f"---\n{brief.content}"
+                        ),
+                        brief_from=brief_from,
+                    )
+                    
+                    mark_read(brief.id, self._workspace_id)
+                    mark_responded(brief.id, self._workspace_id)
+                    
+                    results.append({
+                        "brief_id": brief.id,
+                        "status": "processed",
+                        "response": response[:500],
+                    })
+            except Exception as e:
+                logger.exception("Failed to process brief %s: %s", brief.id, e)
+                results.append({"brief_id": brief.id, "status": "error", "error": str(e)})
+
+        return results
