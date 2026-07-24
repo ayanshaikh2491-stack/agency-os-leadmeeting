@@ -775,3 +775,221 @@ async def queue_process(body: QueueProcessRequest):
             "error": str(e)[:200],
             "queue_status": queue.get_queue_status(),
         }
+
+
+# ── Content Agent Intelligence Endpoints ──────────────────────────────────────
+
+
+class BrandDiscoverRequest(BaseModel):
+    """Auto-discover brand identity from client website."""
+    workspace_id: str
+
+
+@router.post("/agent/brand-discover")
+async def agent_brand_discover(body: BrandDiscoverRequest):
+    """Auto-discover client brand from their website.
+
+    Called automatically on first brief if brand info is missing.
+    Updates workspace client_context with discovered colors, style, etc.
+    """
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(body.workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=body.workspace_id,
+    )
+
+    result = await agent.auto_discover_brand()
+    return {"success": True, "data": result}
+
+
+class SubmitJobRequest(BaseModel):
+    """Submit a visual job through the Content Agent (with intelligence)."""
+    workspace_id: str
+    brief_from: str = ""
+    content_type: str
+    platform: str = "instagram"
+    topic: str = ""
+    style: str = "professional"
+    quantity: int = 1
+    priority: str = "normal"
+    description: str = ""
+    text_overlay: str = ""
+    cta: str = ""
+
+
+@router.post("/agent/submit-job")
+async def agent_submit_job(body: SubmitJobRequest):
+    """Submit a visual content job through the Content Agent.
+
+    Content Agent enhances the brief with brand intelligence before queuing.
+    """
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(body.workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=body.workspace_id,
+    )
+
+    result = agent.submit_visual_job(
+        brief_from=body.brief_from,
+        content_type=body.content_type,
+        platform=body.platform,
+        topic=body.topic,
+        style=body.style,
+        quantity=body.quantity,
+        priority=body.priority,
+        description=body.description,
+        text_overlay=body.text_overlay,
+        cta=body.cta,
+    )
+
+    return {"success": True, "data": result}
+
+
+class ProcessJobRequest(BaseModel):
+    """Process the next job in workspace queue."""
+    workspace_id: str
+
+
+@router.post("/agent/process-job")
+async def agent_process_job(body: ProcessJobRequest):
+    """Process the next queued job through the Content Agent.
+
+    Routes to appropriate tool (image/video) based on content type.
+    Handles retry on failure.
+    """
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(body.workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=body.workspace_id,
+    )
+
+    result = await agent.process_next_job()
+
+    if result is None:
+        return {"success": True, "message": "No jobs in queue", "data": None}
+
+    return {"success": True, "data": result}
+
+
+@router.get("/agent/memory/{workspace_id}")
+async def agent_memory(workspace_id: str):
+    """Get workspace Content Agent memory summary.
+
+    Shows success rate, brand learnings, mistakes to avoid, platform performance.
+    """
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=workspace_id,
+    )
+
+    memory = agent.get_memory_summary()
+    stats = agent.get_stats()
+
+    return {
+        "success": True,
+        "data": {
+            "memory_summary": memory,
+            "stats": stats,
+        },
+    }
+
+
+@router.get("/agent/queue-status/{workspace_id}")
+async def agent_queue_status(workspace_id: str):
+    """Get Content Agent queue status for a workspace."""
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=workspace_id,
+    )
+
+    status = agent.get_queue_status()
+    recent = agent.list_recent_jobs(5)
+
+    return {
+        "success": True,
+        "data": {
+            "queue": status,
+            "recent_jobs": recent,
+        },
+    }
+
+
+class ApprovalRequest(BaseModel):
+    """Request CEO approval for content."""
+    workspace_id: str
+    content_type: str
+    output_summary: str
+    brief_from: str = ""
+    output_files: list[str] = []
+
+
+@router.post("/agent/approve")
+async def agent_request_approval(body: ApprovalRequest):
+    """Request CEO approval for content before publishing.
+
+    Stores content in pending reviews for CEO to approve/reject.
+    """
+    from admin.workspace.manager import get_workspace
+    from admin.workspace.agents.content import ContentAgent
+
+    ws = get_workspace(body.workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    agent = ContentAgent(
+        workspace_name=ws.name,
+        client_name=ws.client_name,
+        client_context=ws.client_context or {},
+        workspace_id=body.workspace_id,
+    )
+
+    result = agent.request_approval(
+        content_type=body.content_type,
+        output_summary=body.output_summary,
+        brief_from=body.brief_from,
+        output_files=body.output_files,
+    )
+
+    return {"success": True, "data": result}

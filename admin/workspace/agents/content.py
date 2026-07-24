@@ -34,8 +34,10 @@ from admin.config import settings
 from admin.tools.visual_tools import VISUAL_TOOLS, execute_visual_tool
 from admin.tools.kaggle_tools import execute_kaggle_tool
 from admin.tools.content_tools import CONTENT_TOOLS, execute_content_tool
+from admin.tools.content_queue import ContentBrief, get_queue, enhance_brief, JobStatus
 from admin.workspace.agent_bus import send_message, share_knowledge
 from admin.agency.content_agent import ContentReport, get_agency_content_agent
+from admin.workspace.content_store import get_content_store
 
 logger = logging.getLogger(__name__)
 
@@ -391,13 +393,16 @@ class ContentAgent:
         client_name: str = "Client",
         client_context: dict[str, Any] | None = None,
         _agency_knowledge: str = "",
+        workspace_id: str = "",
     ):
         self.graph = build_content_graph()
         self.workspace_name = workspace_name
         self.client_name = client_name
         self.client_context = client_context or {}
         self._thread_id = f"content_{workspace_name}"
-        self._agency_knowledge = _agency_knowledge  # Cross-project learnings from Agency Content Agent
+        self._agency_knowledge = _agency_knowledge
+        self._workspace_id = workspace_id or workspace_name
+        self._brand_discovered = False  # Track if brand has been auto-discovered
 
     def _build_client_brief(self) -> str:
         """Build a client context brief for the system prompt.
@@ -612,3 +617,321 @@ class ContentAgent:
 
         except Exception as e:
             logger.warning("Failed to report to Agency Content Agent: %s", e)
+
+    # ── Brand Auto-Discovery ──────────────────────────────────────────────
+
+    async def auto_discover_brand(self) -> dict[str, Any]:
+        """Auto-discover client brand from their website.
+
+        Called on first brief if brand info is not in client_context.
+        Updates client_context with discovered brand info.
+        """
+        website_url = self.client_context.get("website_url", "")
+        if not website_url:
+            return {"status": "no_website", "message": "No website URL in client context"}
+
+        if self._brand_discovered:
+            return {"status": "already_discovered", "message": "Brand already discovered"}
+
+        try:
+            result = execute_visual_tool("discover_brand_identity", {
+                "website_url": website_url,
+            })
+
+            if result and not result.get("error"):
+                # Merge discovered brand info into client_context
+                if result.get("colors") and not self.client_context.get("brand_colors"):
+                    self.client_context["brand_colors"] = result["colors"]
+                if result.get("visual_style") and not self.client_context.get("brand_style"):
+                    self.client_context["brand_style"] = result["visual_style"]
+                if result.get("brand_name"):
+                    self.client_context["brand_name"] = result["brand_name"]
+                if result.get("social_links"):
+                    self.client_context["social_links"] = result["social_links"]
+
+                self._brand_discovered = True
+                logger.info(
+                    "Auto-discovered brand for '%s': %s, %d colors",
+                    self.client_name,
+                    result.get("brand_name", "Unknown"),
+                    len(result.get("colors", [])),
+                )
+                return {"status": "discovered", "brand": result}
+
+            return {"status": "failed", "error": result.get("error", "Unknown error")}
+
+        except Exception as e:
+            logger.warning("Brand auto-discovery failed: %s", e)
+            return {"status": "error", "error": str(e)}
+
+    # ── Visual Job Queue Integration ──────────────────────────────────────
+
+    def submit_visual_job(
+        self,
+        brief_from: str,
+        content_type: str,
+        platform: str,
+        topic: str,
+        style: str = "professional",
+        quantity: int = 1,
+        priority: str = "normal",
+        description: str = "",
+        text_overlay: str = "",
+        cta: str = "",
+    ) -> dict[str, Any]:
+        """Submit a visual content job to the GPU queue.
+
+        Called by domain agents (Social, Ads, Website) for visual content.
+        The brief gets enhanced with brand intelligence before queuing.
+        """
+        # Auto-discover brand if not done yet
+        if not self._brand_discovered and self.client_context.get("website_url"):
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're in an async context but can't await here
+                    # Brand discovery will happen on next chat() call
+                    pass
+                else:
+                    loop.run_until_complete(self.auto_discover_brand())
+            except Exception:
+                pass
+
+        # Create structured brief
+        brief = ContentBrief(
+            workspace_id=self._workspace_id,
+            from_agent=brief_from,
+            content_type=content_type,
+            platform=platform,
+            style=style,
+            quantity=quantity,
+            topic=topic,
+            description=description,
+            text_overlay=text_overlay,
+            cta=cta,
+            priority=priority,
+        )
+
+        # Enhance brief with Content Agent intelligence
+        enhanced = enhance_brief(brief, self.client_context)
+
+        # Submit to queue
+        queue = get_queue(self._workspace_id)
+        job_id = queue.submit(enhanced)
+
+        # Record in workspace memory
+        try:
+            store = get_content_store()
+            store.record_brief_received(self._workspace_id, {
+                "job_id": job_id,
+                "from_agent": brief_from,
+                "content_type": content_type,
+                "platform": platform,
+                "topic": topic,
+            })
+        except Exception as e:
+            logger.warning("Failed to record brief in content store: %s", e)
+
+        # Report submission to domain agent
+        if brief_from:
+            try:
+                send_message(
+                    from_agent="content",
+                    to_agent=brief_from,
+                    workspace_id=self.workspace_name,
+                    subject=f"Content job queued: {job_id} ({content_type} for {platform})",
+                    content=(
+                        f"Job {job_id} has been queued for {content_type} on {platform}.\n"
+                        f"Enhanced prompt: {enhanced.enhanced_prompt[:200]}\n"
+                        f"Dimensions: {enhanced.width}x{enhanced.height}\n"
+                        f"Priority: {priority}"
+                    ),
+                    message_type="status",
+                    metadata={"job_id": job_id, "content_type": content_type},
+                )
+            except Exception as e:
+                logger.warning("Failed to notify domain agent: %s", e)
+
+        logger.info(
+            "Visual job submitted: %s (%s %s %dx%d) from %s",
+            job_id, content_type, platform, enhanced.width, enhanced.height, brief_from,
+        )
+
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "content_type": content_type,
+            "platform": platform,
+            "dimensions": f"{enhanced.width}x{enhanced.height}",
+            "enhanced_prompt": enhanced.enhanced_prompt[:300],
+            "priority": priority,
+        }
+
+    async def process_next_job(self) -> dict[str, Any] | None:
+        """Process the next job in the queue.
+
+        Called by the scheduler or manually to process queued visual content jobs.
+        Returns job result or None if queue is empty.
+        """
+        queue = get_queue(self._workspace_id)
+        job = queue.get_next()
+
+        if not job:
+            return None
+
+        logger.info("Processing job: %s (%s)", job.job_id, job.content_type)
+
+        try:
+            # Route to appropriate tool based on content type
+            if job.content_type in ("video",):
+                result = execute_kaggle_tool("generate_video_kaggle", {
+                    "prompt": job.enhanced_prompt,
+                    "frames": job.frames,
+                })
+            else:
+                result = execute_kaggle_tool("generate_image_kaggle", {
+                    "prompt": job.enhanced_prompt,
+                    "width": job.width,
+                    "height": job.height,
+                    "steps": job.steps,
+                })
+
+            if result.get("status") == "success" or result.get("output_path"):
+                output_files = [result.get("output_path", result.get("url", ""))]
+                queue.complete(job.job_id, output_files)
+
+                # Record success in workspace memory
+                try:
+                    store = get_content_store()
+                    store.record_success(
+                        workspace_id=self._workspace_id,
+                        job_id=job.job_id,
+                        brief_summary=job.topic or job.description,
+                        deliverables=output_files,
+                        prompts_used=[job.enhanced_prompt[:200]],
+                        platform=job.platform,
+                        visual_type=job.content_type,
+                        gpu_minutes=0.0,  # TODO: track actual GPU time
+                    )
+                except Exception as e:
+                    logger.warning("Failed to record success: %s", e)
+
+                # Notify domain agent
+                if job.from_agent:
+                    try:
+                        send_message(
+                            from_agent="content",
+                            to_agent=job.from_agent,
+                            workspace_id=self.workspace_name,
+                            subject=f"Content job completed: {job.job_id}",
+                            content=f"Job {job.job_id} completed. Output: {output_files}",
+                            message_type="response",
+                            metadata={"job_id": job.job_id, "output_files": output_files},
+                        )
+                    except Exception:
+                        pass
+
+                return {
+                    "job_id": job.job_id,
+                    "status": "completed",
+                    "output_files": output_files,
+                }
+            else:
+                error = result.get("error", "Generation failed")
+                will_retry = queue.fail(job.job_id, error)
+
+                # Record failure
+                try:
+                    store = get_content_store()
+                    store.record_failure(
+                        workspace_id=self._workspace_id,
+                        job_id=job.job_id,
+                        brief_summary=job.topic or job.description,
+                        error=error,
+                        platform=job.platform,
+                        visual_type=job.content_type,
+                        what_failed=f"{job.content_type} generation failed",
+                        avoid_next_time=f"Check GPU availability for {job.content_type}",
+                    )
+                except Exception:
+                    pass
+
+                return {
+                    "job_id": job.job_id,
+                    "status": "retrying" if will_retry else "failed",
+                    "error": error,
+                    "retry_count": job.retry_count,
+                }
+
+        except Exception as e:
+            queue.fail(job.job_id, str(e))
+            logger.exception("Job processing failed: %s", job.job_id)
+            return {"job_id": job.job_id, "status": "error", "error": str(e)}
+
+    def get_job_status(self, job_id: str) -> dict[str, Any] | None:
+        """Get status of a specific job."""
+        queue = get_queue(self._workspace_id)
+        return queue.get_status(job_id)
+
+    def get_queue_status(self) -> dict[str, Any]:
+        """Get overall queue status for this workspace."""
+        queue = get_queue(self._workspace_id)
+        return queue.get_queue_status()
+
+    def list_recent_jobs(self, limit: int = 10) -> list[dict[str, Any]]:
+        """List recent jobs in this workspace."""
+        queue = get_queue(self._workspace_id)
+        return queue.list_recent(limit)
+
+    # ── Content Approval Workflow ─────────────────────────────────────────
+
+    def request_approval(
+        self,
+        content_type: str,
+        output_summary: str,
+        brief_from: str = "",
+        output_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Request CEO approval for content before publishing.
+
+        Stores the content in pending reviews for CEO to approve/reject.
+        """
+        try:
+            from admin.workspace.manager import store_agent_output
+            record = store_agent_output(
+                workspace_id=self._workspace_id,
+                agent_type="content",
+                task=f"{content_type}: {output_summary[:100]}",
+                output=output_summary,
+            )
+            logger.info(
+                "Content approval requested: %s (record: %s)",
+                content_type, record.get("id"),
+            )
+            return {
+                "status": "pending_approval",
+                "approval_id": record.get("id"),
+                "content_type": content_type,
+            }
+        except Exception as e:
+            logger.warning("Failed to request approval: %s", e)
+            return {"status": "error", "error": str(e)}
+
+    def get_memory_summary(self) -> str:
+        """Get workspace content agent memory summary."""
+        try:
+            store = get_content_store()
+            return store.get_memory_summary(self._workspace_id)
+        except Exception:
+            return ""
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get workspace content agent stats."""
+        try:
+            store = get_content_store()
+            stats = store.get_stats(self._workspace_id)
+            queue_status = self.get_queue_status()
+            return {**stats, "queue": queue_status}
+        except Exception:
+            return {"queue": self.get_queue_status()}

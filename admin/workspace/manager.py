@@ -261,6 +261,10 @@ async def route_to_agent(
             }
             if hasattr(ws, 'client_context') and ws.client_context:
                 agent_kwargs["client_context"] = ws.client_context
+
+            # For Content Agent, inject workspace_id for queue/memory
+            if agent_type == "content":
+                agent_kwargs["workspace_id"] = workspace_id
             
             # For Content Agent, inject cross-project knowledge + workspace memory
             if agent_type == "content":
@@ -278,7 +282,7 @@ async def route_to_agent(
                     )
                     
                     # Get workspace-specific memory
-                    ws_memory = store.get_memory_summary(wid)
+                    ws_memory = store.get_memory_summary(workspace_id)
                     
                     # Build combined context
                     knowledge_parts = []
@@ -291,7 +295,7 @@ async def route_to_agent(
                     
                     # Also add mistakes to avoid from this workspace
                     mem = store.get_or_create(
-                        workspace_id=wid,
+                        workspace_id=workspace_id,
                         workspace_name=ws.name,
                         client_name=ws.client_name,
                         industry=client_ctx.get("industry", ""),
