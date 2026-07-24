@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -33,9 +34,21 @@ def _now() -> str:
 
 def _check_kaggle() -> bool:
     """Check if Kaggle CLI is installed and configured."""
+    # Try direct kaggle command first
     try:
         result = subprocess.run(
             ["kaggle", "--version"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: try python -m kaggle (works on Windows where kaggle not in PATH)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "kaggle", "--version"],
             capture_output=True, text=True, timeout=10
         )
         return result.returncode == 0
@@ -61,20 +74,27 @@ def _get_kaggle_creds() -> dict[str, str]:
 
 def _run_kaggle_cmd(args: list[str], timeout: int = 30) -> dict[str, Any]:
     """Run a kaggle CLI command and return result."""
-    try:
-        result = subprocess.run(
-            ["kaggle"] + args,
-            capture_output=True, text=True, timeout=timeout
-        )
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
-        }
-    except FileNotFoundError:
-        return {"success": False, "error": "kaggle CLI not installed"}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Command timed out"}
+    # Try direct kaggle first, fallback to python -m kaggle
+    for cmd in [
+        ["kaggle"] + args,
+        [sys.executable, "-m", "kaggle"] + args,
+    ]:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True, timeout=timeout
+            )
+            if result.returncode == 0 or "not found" not in result.stderr.lower():
+                return {
+                    "success": result.returncode == 0,
+                    "stdout": result.stdout.strip(),
+                    "stderr": result.stderr.strip(),
+                }
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out"}
+    return {"success": False, "error": "kaggle CLI not installed"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -162,6 +182,70 @@ def _build_flux_notebook(prompt: str, width: int, height: int, steps: int) -> di
     return notebook
 
 
+def _build_kernel_metadata(username: str, title: str) -> dict[str, Any]:
+    """Build kernel-metadata.json required by Kaggle CLI.
+    
+    CRITICAL Kaggle rule: the kernel 'id' slug MUST exactly match 
+    the 'title' slug. If they differ, you get 409 Conflict.
+    
+    Example:
+      id:   artenzu/tags-flux-image-abc12345
+      title: TAGS flux image abc12345
+      slug:  tags-flux-image-abc12345  (both match!)
+    """
+    import re
+    import uuid
+    
+    # Generate unique suffix to avoid 409 on rapid re-runs
+    unique = uuid.uuid4().hex[:8]
+    
+    # Full title shown on Kaggle
+    full_title = f"TAGS {title} {unique}"
+    
+    # Kaggle slug rules: lowercase, replace spaces with hyphens, strip special chars
+    slug = re.sub(r'[^a-z0-9\s-]', '', full_title.lower())
+    slug = re.sub(r'[\s]+', '-', slug).strip('-')
+    
+    # The kernel id MUST be: username/{exact-title-slug}
+    kernel_id = f"{username}/{slug}"
+    
+    return {
+        "id": kernel_id,
+        "title": full_title,
+        "code_file": "notebook.ipynb",
+        "language": "python",
+        "kernel_type": "notebook",
+        "is_private": True,
+        "enable_gpu": True,
+        "enable_internet": True,
+        "kernel_sources": [],
+        "dataset_sources": [],
+    }
+
+
+def _create_kaggle_kernel_dir(notebook_data: dict, title: str, username: str) -> str:
+    """Create a temporary folder with notebook.ipynb + kernel-metadata.json.
+    
+    Kaggle CLI requires a folder structure, not a raw .ipynb file.
+    Returns the path to the temporary directory.
+    """
+    import tempfile
+    kernel_dir = tempfile.mkdtemp(prefix=f"kaggle_{title.lower().replace(' ', '_')}_")
+
+    # Write notebook
+    notebook_path = os.path.join(kernel_dir, "notebook.ipynb")
+    with open(notebook_path, "w") as f:
+        json.dump(notebook_data, f, indent=2)
+
+    # Write kernel-metadata.json
+    metadata = _build_kernel_metadata(username, title)
+    metadata_path = os.path.join(kernel_dir, "kernel-metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    return kernel_dir, metadata.get("id", f"{username}/tags-{int(time.time())}")
+
+
 def generate_image_kaggle(
     prompt: str,
     width: int = 1024,
@@ -186,10 +270,10 @@ def generate_image_kaggle(
                 prompt=prompt, width=width, height=height, steps=steps
             ),
             "message": "Kaggle CLI not found. Notebook ready for manual upload.",
-            "setup": "pip install kaggle && kaggle config path ~/.kaggle/kaggle.json",
+            "setup": "pip install kaggle",
         }
 
-    # Submit via Kaggle API
+    # Check credentials
     creds = _get_kaggle_creds()
     if not creds["username"]:
         return {
@@ -200,27 +284,21 @@ def generate_image_kaggle(
                 "Set KAGGLE_USERNAME and KAGGLE_KEY env vars",
                 "Or save to ~/.kaggle/kaggle.json",
             ],
-            "notebook_code": FLUX_NOTEBOOK_SOURCE.format(
-                prompt=prompt, width=width, height=height, steps=steps
-            ),
         }
 
-    # Create temp notebook and submit
-    import tempfile
+    # Create kernel folder with notebook + metadata
     notebook_data = _build_flux_notebook(prompt, width, height, steps)
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".ipynb", delete=False, dir=tempfile.gettempdir()
-    ) as f:
-        json.dump(notebook_data, f)
-        tmp_path = f.name
+    kernel_dir, kernel_slug = _create_kaggle_kernel_dir(
+        notebook_data, "flux-image", creds["username"]
+    )
 
     try:
+        # Submit the FOLDER (not file) to Kaggle GPU
         result = _run_kaggle_cmd(
-            ["kernels", "push", "-p", tmp_path, "-t", "gpu"],
-            timeout=30,
+            ["kernels", "push", "-p", kernel_dir],
+            timeout=60,
         )
         if result["success"]:
-            kernel_slug = f"{creds['username']}/tags-flux-{int(time.time())}"
             return {
                 "status": "submitted",
                 "tool": "FLUX",
@@ -229,20 +307,22 @@ def generate_image_kaggle(
                 "steps": steps,
                 "estimated_time": "~30-60 seconds on T4 GPU",
                 "kernel_slug": kernel_slug,
-                "message": "Notebook submitted to Kaggle. Check status with kaggle kernels status.",
-                "check_status": f"kaggle kernels status {kernel_slug}",
+                "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
+                "message": "Notebook submitted to Kaggle GPU!",
             }
         else:
             return {
                 "status": "submit_failed",
                 "error": result.get("stderr", result.get("error", "Unknown error")),
+                "stdout": result.get("stdout", ""),
                 "notebook_code": FLUX_NOTEBOOK_SOURCE.format(
                     prompt=prompt, width=width, height=height, steps=steps
                 ),
             }
     finally:
+        import shutil
         try:
-            os.unlink(tmp_path)
+            shutil.rmtree(kernel_dir, ignore_errors=True)
         except OSError:
             pass
 
@@ -347,23 +427,25 @@ def generate_video_kaggle(
             "message": "Kaggle CLI not found. Notebook ready for manual upload.",
         }
 
-    # Submit via Kaggle API
+    creds = _get_kaggle_creds()
+    if not creds["username"]:
+        return {
+            "status": "setup_required",
+            "message": "Kaggle credentials not found",
+        }
+
+    # Create kernel folder with notebook + metadata
     notebook_data = _build_cogvideo_notebook(prompt, frames)
-    import tempfile
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".ipynb", delete=False, dir=tempfile.gettempdir()
-    ) as f:
-        json.dump(notebook_data, f)
-        tmp_path = f.name
+    kernel_dir, kernel_slug = _create_kaggle_kernel_dir(
+        notebook_data, "cogvideo-video", creds["username"]
+    )
 
     try:
-        creds = _get_kaggle_creds()
         result = _run_kaggle_cmd(
-            ["kernels", "push", "-p", tmp_path, "-t", "gpu"],
-            timeout=30,
+            ["kernels", "push", "-p", kernel_dir],
+            timeout=60,
         )
         if result["success"]:
-            kernel_slug = f"{creds.get('username', 'user')}/tags-cogvideo-{int(time.time())}"
             return {
                 "status": "submitted",
                 "tool": "CogVideoX",
@@ -372,20 +454,22 @@ def generate_video_kaggle(
                 "duration_seconds": round(frames / 8, 1),
                 "estimated_time": "~3-5 minutes on T4 GPU",
                 "kernel_slug": kernel_slug,
-                "message": "Notebook submitted to Kaggle.",
-                "check_status": f"kaggle kernels status {kernel_slug}",
+                "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
+                "message": "Video notebook submitted to Kaggle GPU!",
             }
         else:
             return {
                 "status": "submit_failed",
                 "error": result.get("stderr", result.get("error", "Unknown")),
+                "stdout": result.get("stdout", ""),
                 "notebook_code": COGVIDEO_NOTEBOOK_SOURCE.format(
                     prompt=prompt, frames=frames
                 ),
             }
     finally:
+        import shutil
         try:
-            os.unlink(tmp_path)
+            shutil.rmtree(kernel_dir, ignore_errors=True)
         except OSError:
             pass
 # ═══════════════════════════════════════════════════════════════════════════════
