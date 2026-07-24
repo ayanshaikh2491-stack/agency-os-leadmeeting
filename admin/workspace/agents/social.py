@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
+from admin.workspace.agent_bus import send_message
 
 logger = logging.getLogger(__name__)
 
@@ -233,3 +234,60 @@ class SocialAgent:
             logger.exception("Social Agent execution failed")
             return "Social Agent temporarily unavailable.", self._thread_id
         return result.get("final_output", "Social Agent analysis complete."), self._thread_id
+
+    def request_content(
+        self,
+        content_type: str,
+        topic: str,
+        platform: str = "instagram",
+        description: str = "",
+        style: str = "bold",
+        priority: str = "normal",
+        quantity: int = 1,
+    ) -> dict[str, Any]:
+        """Request social media content from Content Agent via agent_bus.
+
+        Social Agent uses this when it needs social media images,
+        reels covers, stories, or any visual content for social platforms.
+
+        Flow:
+        1. Social Agent sends brief to Content Agent via agent_bus
+        2. Content Agent enhances brief with brand intelligence
+        3. Content Agent queues job for GPU processing
+        4. On completion, Content Agent notifies Social Agent back
+        """
+        brief_content = (
+            f"Social Content Request:\n"
+            f"- Type: {content_type}\n"
+            f"- Topic: {topic}\n"
+            f"- Platform: {platform}\n"
+            f"- Description: {description}\n"
+            f"- Style: {style}\n"
+            f"- Quantity: {quantity}\n"
+            f"- Priority: {priority}"
+        )
+
+        try:
+            send_message(
+                from_agent="social",
+                to_agent="content",
+                workspace_id=self.workspace_name,
+                subject=f"Social needs {content_type}: {topic[:50]}",
+                content=brief_content,
+                message_type="brief",
+                metadata={
+                    "content_type": content_type,
+                    "platform": platform,
+                    "style": style,
+                    "quantity": quantity,
+                    "priority": priority,
+                },
+            )
+            logger.info(
+                "Social Agent requested content from Content Agent: %s (%s) x%d",
+                content_type, topic[:50], quantity,
+            )
+            return {"status": "brief_sent", "content_type": content_type, "topic": topic, "quantity": quantity}
+        except Exception as e:
+            logger.warning("Failed to request content from Content Agent: %s", e)
+            return {"status": "error", "error": str(e)}

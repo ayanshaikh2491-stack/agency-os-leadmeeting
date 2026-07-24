@@ -24,6 +24,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
 from admin.tools.seo_tools import SEO_TOOLS, execute_seo_tool
+from admin.workspace.agent_bus import send_message
 
 logger = logging.getLogger(__name__)
 
@@ -346,3 +347,57 @@ class SEOAgent:
                 final_output = "SEO analysis complete."
 
         return final_output, thinking_phases
+
+    def request_content(
+        self,
+        content_type: str,
+        topic: str,
+        platform: str = "website",
+        description: str = "",
+        style: str = "professional",
+        priority: str = "normal",
+    ) -> dict[str, Any]:
+        """Request content from Content Agent via agent_bus.
+
+        SEO Agent uses this when it needs blog posts, infographics,
+        or any visual/text content as part of SEO strategy.
+
+        Flow:
+        1. SEO Agent sends brief to Content Agent via agent_bus
+        2. Content Agent enhances brief with brand intelligence
+        3. Content Agent queues job for GPU processing
+        4. On completion, Content Agent notifies SEO Agent back
+        """
+        brief_content = (
+            f"SEO Content Request:\n"
+            f"- Type: {content_type}\n"
+            f"- Topic: {topic}\n"
+            f"- Platform: {platform}\n"
+            f"- Description: {description}\n"
+            f"- Style: {style}\n"
+            f"- Priority: {priority}"
+        )
+
+        try:
+            send_message(
+                from_agent="seo",
+                to_agent="content",
+                workspace_id=self.workspace_name,
+                subject=f"SEO needs {content_type}: {topic[:50]}",
+                content=brief_content,
+                message_type="brief",
+                metadata={
+                    "content_type": content_type,
+                    "platform": platform,
+                    "style": style,
+                    "priority": priority,
+                },
+            )
+            logger.info(
+                "SEO Agent requested content from Content Agent: %s (%s)",
+                content_type, topic[:50],
+            )
+            return {"status": "brief_sent", "content_type": content_type, "topic": topic}
+        except Exception as e:
+            logger.warning("Failed to request content from Content Agent: %s", e)
+            return {"status": "error", "error": str(e)}

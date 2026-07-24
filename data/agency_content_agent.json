@@ -111,6 +111,34 @@
         "Warm colors work better for travel posts"
       ],
       "timestamp": "2026-07-24T05:46:35.851205+00:00"
+    },
+    {
+      "report_id": "test_rpt_1",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "seo",
+      "brief_summary": "Create Instagram post images",
+      "deliverables": [
+        "img_1",
+        "img_2"
+      ],
+      "tools_used": [
+        "generate_social_image",
+        "discover_brand_identity"
+      ],
+      "prompts_used": [
+        "Beautiful sunset over mountains, vibrant colors"
+      ],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "image",
+      "gpu_minutes": 2.5,
+      "success": true,
+      "error": "",
+      "learnings": [
+        "Warm colors work better for travel posts"
+      ],
+      "timestamp": "2026-07-24T06:03:49.456710+00:00"
     }
   ],
   "prompt_patterns": [
@@ -120,7 +148,7 @@
       "platform": "instagram",
       "industry": "general",
       "prompt_template": "Beautiful sunset over mountains, vibrant colors",
-      "success_count": 4,
+      "success_count": 5,
       "avg_quality": 0.0,
       "notes": "",
       "timestamp": "2026-07-23T17:17:28.409345+00:00"
@@ -129,17 +157,17 @@
   "brand_insights": [],
   "platform_stats": {
     "instagram": {
-      "total_jobs": 4,
-      "total_gpu_minutes": 10.0,
+      "total_jobs": 5,
+      "total_gpu_minutes": 12.5,
       "success_rate": 1.0,
       "common_visual_types": {
-        "image": 4
+        "image": 5
       }
     }
   },
   "industry_stats": {
     "general": {
-      "total_jobs": 4,
+      "total_jobs": 5,
       "platforms_used": [
         "instagram"
       ],
@@ -148,5 +176,5 @@
       ]
     }
   },
-  "saved_at": "2026-07-24T05:46:35.853633+00:00"
+  "saved_at": "2026-07-24T06:03:49.459547+00:00"
 }

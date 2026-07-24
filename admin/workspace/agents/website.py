@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
+from admin.workspace.agent_bus import send_message
 
 logger = logging.getLogger(__name__)
 
@@ -230,3 +231,57 @@ class WebsiteAgent:
             logger.exception("Website Agent execution failed")
             return "Website Agent temporarily unavailable.", self._thread_id
         return result.get("final_output", "Website Agent analysis complete."), self._thread_id
+
+    def request_content(
+        self,
+        content_type: str,
+        topic: str,
+        platform: str = "website",
+        description: str = "",
+        style: str = "professional",
+        priority: str = "normal",
+    ) -> dict[str, Any]:
+        """Request website content from Content Agent via agent_bus.
+
+        Website Agent uses this when it needs hero images, banners,
+        icons, landing page visuals, or any visual content for the website.
+
+        Flow:
+        1. Website Agent sends brief to Content Agent via agent_bus
+        2. Content Agent enhances brief with brand intelligence
+        3. Content Agent queues job for GPU processing
+        4. On completion, Content Agent notifies Website Agent back
+        """
+        brief_content = (
+            f"Website Content Request:\n"
+            f"- Type: {content_type}\n"
+            f"- Topic: {topic}\n"
+            f"- Platform: {platform}\n"
+            f"- Description: {description}\n"
+            f"- Style: {style}\n"
+            f"- Priority: {priority}"
+        )
+
+        try:
+            send_message(
+                from_agent="website",
+                to_agent="content",
+                workspace_id=self.workspace_name,
+                subject=f"Website needs {content_type}: {topic[:50]}",
+                content=brief_content,
+                message_type="brief",
+                metadata={
+                    "content_type": content_type,
+                    "platform": platform,
+                    "style": style,
+                    "priority": priority,
+                },
+            )
+            logger.info(
+                "Website Agent requested content from Content Agent: %s (%s)",
+                content_type, topic[:50],
+            )
+            return {"status": "brief_sent", "content_type": content_type, "topic": topic}
+        except Exception as e:
+            logger.warning("Failed to request content from Content Agent: %s", e)
+            return {"status": "error", "error": str(e)}
