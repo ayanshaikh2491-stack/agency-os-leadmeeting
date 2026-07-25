@@ -196,6 +196,14 @@ async def request_content(req: RequestContentRequest):
     )
 
 
+@router.post("/request-seo")
+async def request_seo(req: RequestContentRequest):
+    """Route SEO work to SEO Agent."""
+    from admin.workspace.agents.website import WebsiteAgent
+    agent = WebsiteAgent(workspace_name=req.workspace_name, client_name=req.workspace_name)
+    return agent.request_seo(req.topic or req.description)
+
+
 @router.get("/tools")
 async def list_tools():
     """List available tools."""
@@ -206,4 +214,5 @@ async def list_tools():
             for t in WEBSITE_TOOLS
         ],
         "count": len(WEBSITE_TOOLS),
+        "seo_routing": "SEO requests are routed to SEO Agent",
     }

@@ -4,13 +4,16 @@ Real tools (10):
 1. analyze_website — Crawl site, detect tech stack, structure
 2. check_performance — Page speed, load time, resources
 3. check_links — Find broken links
-4. seo_basics — Title, meta, headings, images SEO
-5. security_check — Security headers
-6. tech_stack_advisor — Recommend tech stack
-7. design_planner — Plan site architecture
-8. check_accessibility — Basic a11y
-9. competitor_sites — Scan competitor websites
-10. generate_sitemap — Generate XML sitemap
+4. security_check — Security headers
+5. tech_stack_advisor — Recommend tech stack
+6. design_planner — Plan site architecture
+7. check_accessibility — Basic a11y
+8. competitor_sites — Scan competitor websites
+9. responsive_check — Mobile responsiveness
+10. check_ssl — SSL certificate status
+
+SEO ROUTING: When SEO work comes (keyword research, meta tags, schema,
+rankings, SERP analysis), Website Agent routes to SEO Agent.
 
 LangGraph: call_llm -> route -> (run_tools | finalize) -> END
 """
@@ -32,6 +35,22 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 8
 
+# SEO keywords — agar inme se koi aaye toh SEO Agent ko route karo
+SEO_KEYWORDS = [
+    "keyword", "keywords", "seo", "meta tag", "meta tags", "title tag",
+    "meta description", "schema", "structured data", "serp", "ranking",
+    "rankings", "backlink", "backlinks", "sitemap", "robots.txt",
+    "on-page", "off-page", "onpage", "offpage", "search engine",
+    "google", "organic", "domain authority", "page authority",
+    "anchor text", "alt text seo", "canonical", "hreflang",
+]
+
+
+def _is_seo_request(message: str) -> bool:
+    """Check if the request is SEO-related and should go to SEO Agent."""
+    msg_lower = message.lower()
+    return any(kw in msg_lower for kw in SEO_KEYWORDS)
+
 
 # ── System Prompt ────────────────────────────────────────────────────────────
 
@@ -46,7 +65,6 @@ You are a full-stack web developer and designer. You think independently within 
 - Domain registration and hosting setup
 - Deployment (Vercel default for frontend)
 - 24/7 site monitoring (broken links, performance, security, uptime)
-- SEO for websites (technical SEO, on-page, structured data)
 - Accessibility (WCAG compliance, a11y best practices)
 
 ## Your Tools (USE THEM!)
@@ -56,17 +74,24 @@ You have 10 real tools. ALWAYS use tools before giving advice. Never guess.
 1. **analyze_website(url)** — Crawl site, detect tech stack, structure, navigation, images
 2. **check_performance(url)** — Page speed, load time, resources, compression, caching
 3. **check_links(url)** — Find broken links on a page
-4. **seo_basics(url)** — Title, meta, headings, OG tags, schema, viewport
-5. **security_check(url)** — Security headers: HTTPS, HSTS, CSP, X-Frame-Options
-6. **check_accessibility(url)** — a11y: alt text, labels, heading hierarchy, ARIA
+4. **security_check(url)** — Security headers: HTTPS, HSTS, CSP, X-Frame-Options
+5. **check_accessibility(url)** — a11y: alt text, labels, heading hierarchy, ARIA
+6. **responsive_check(url)** — Mobile responsiveness: viewport, media queries, fixed widths
+7. **check_ssl(url)** — SSL certificate status: valid, expiry, issuer
 
 ### Planning Tools
-7. **tech_stack_advisor(site_type, needs_ecommerce, needs_blog, budget)** — Recommend tech stack
-8. **design_planner(site_type, pages, style)** — Plan architecture, navigation, colors, typography
+8. **tech_stack_advisor(site_type, needs_ecommerce, needs_blog, budget)** — Recommend tech stack
+9. **design_planner(site_type, pages, style)** — Plan architecture, navigation, colors, typography
 
 ### Competitive Tools
-9. **competitor_sites(urls)** — Scan competitor websites for comparison
-10. **generate_sitemap(url)** — Generate XML sitemap from website
+10. **competitor_sites(urls)** — Scan competitor websites for comparison
+
+## IMPORTANT: SEO ROUTING
+When a request is about SEO (keyword research, meta tags, schema markup, SERP rankings,
+backlinks, sitemap, robots.txt, on-page SEO, etc.), you must tell the user that this
+is SEO Agent's domain and suggest they contact the SEO Agent. You do NOT do SEO work.
+
+You focus on: DESIGN, DEVELOPMENT, HOSTING, PERFORMANCE, SECURITY, ACCESSIBILITY.
 
 ## Your Rules (from interview)
 1. You design AND build — full pipeline ownership
@@ -76,6 +101,7 @@ You have 10 real tools. ALWAYS use tools before giving advice. Never guess.
 5. Client may provide their own domain/hosting — you adapt
 6. Frontend hosting defaults to Vercel
 7. CEO can override your tech stack choice anytime
+8. For SEO work, route to SEO Agent — that's their domain
 
 ## Tech Stack Decision Framework
 - Simple landing page -> Next.js + Vercel
@@ -84,12 +110,14 @@ You have 10 real tools. ALWAYS use tools before giving advice. Never guess.
 - Client existing platform -> adapt to their stack
 
 ## Workflow
-1. When asked to analyze a site -> use analyze_website first, then check_performance + seo_basics
+1. When asked to analyze a site -> use analyze_website first, then check_performance + check_links
 2. When asked to plan a site -> use tech_stack_advisor + design_planner
 3. When asked about competitors -> use competitor_sites
-4. When asked for health check -> use check_links + security_check + check_accessibility
-5. Always give DATA-BACKED recommendations, never generic advice
-6. Brief Content Agent for visual assets (hero images, banners, icons)
+4. When asked for health check -> use check_links + security_check + check_accessibility + check_ssl
+5. When asked about mobile -> use responsive_check
+6. When asked about SEO -> route to SEO Agent
+7. Always give DATA-BACKED recommendations, never generic advice
+8. Brief Content Agent for visual assets (hero images, banners, icons)
 
 ## Behavioural rules
 - Be direct and technical. Use scores, specific findings, actionable fixes.
@@ -271,7 +299,7 @@ def get_website_graph() -> StateGraph:
 # ── WebsiteAgent Class ──────────────────────────────────────────────────────
 
 class WebsiteAgent:
-    """Full-stack Website Agent with real tools."""
+    """Full-stack Website Agent with real tools + SEO routing."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
         self.workspace_name = workspace_name
@@ -279,8 +307,46 @@ class WebsiteAgent:
         self._thread_id = f"website_{workspace_name}"
         self._graph = get_website_graph()
 
+    def _route_to_seo(self, message: str) -> dict[str, Any] | None:
+        """If request is SEO-related, route to SEO Agent."""
+        if not _is_seo_request(message):
+            return None
+
+        try:
+            from admin.workspace.agents.seo import SEOAgent
+            seo_agent = SEOAgent(workspace_name=self.workspace_name, client_name=self.client_name)
+
+            # Send via agent bus
+            send_message(
+                from_agent="website",
+                to_agent="seo",
+                workspace_id=self.workspace_name,
+                subject=f"SEO request routed from Website Agent",
+                content=message,
+                message_type="delegation",
+            )
+
+            return {
+                "routed_to_seo": True,
+                "message": (
+                    "This is an SEO request — routing to SEO Agent. "
+                    "SEO Agent handles: keyword research, meta tags, schema markup, "
+                    "SERP rankings, backlinks, sitemap, robots.txt, on-page/off-page SEO. "
+                    "I (Website Agent) handle: design, development, hosting, performance, "
+                    "security, accessibility."
+                ),
+            }
+        except Exception as e:
+            logger.warning("SEO routing failed: %s", e)
+            return None
+
     async def chat(self, message: str) -> tuple[str, str]:
         """Process a website request."""
+        # SEO routing check
+        seo_result = self._route_to_seo(message)
+        if seo_result:
+            return seo_result["message"], self._thread_id
+
         initial_state: dict[str, Any] = {
             "messages": [{"role": "user", "content": message}],
             "workspace_name": self.workspace_name,
@@ -329,5 +395,20 @@ class WebsiteAgent:
                 metadata={"content_type": content_type, "style": style, "priority": priority},
             )
             return {"status": "brief_sent", "content_type": content_type, "topic": topic}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def request_seo(self, task: str) -> dict[str, Any]:
+        """Explicitly request SEO work from SEO Agent."""
+        try:
+            send_message(
+                from_agent="website",
+                to_agent="seo",
+                workspace_id=self.workspace_name,
+                subject=f"SEO task from Website Agent",
+                content=task,
+                message_type="brief",
+            )
+            return {"status": "brief_sent", "routed_to": "seo", "task": task[:100]}
         except Exception as e:
             return {"status": "error", "error": str(e)}

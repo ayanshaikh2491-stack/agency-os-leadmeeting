@@ -1,21 +1,23 @@
 """Website Tools — Real tools for Website Agent.
 
-10 tools:
-1. analyze_website — Crawl site, detect tech stack, structure, meta
+10 tools (NO SEO — SEO Agent ka kaam hai):
+1. analyze_website — Crawl site, detect tech stack, structure
 2. check_performance — Page speed, load time, resources
 3. check_links — Find broken links
-4. seo_basics — Title, meta, headings, images SEO check
-5. security_check — Security headers check
-6. tech_stack_advisor — Recommend tech stack
-7. design_planner — Plan site architecture, navigation
-8. check_accessibility — Basic a11y checks
-9. competitor_sites — Scan competitor websites
-10. generate_sitemap — Generate XML sitemap
+4. security_check — Security headers check
+5. tech_stack_advisor — Recommend tech stack
+6. design_planner — Plan site architecture, navigation
+7. check_accessibility — Basic a11y checks
+8. competitor_sites — Scan competitor websites
+9. responsive_check — Mobile responsiveness
+10. check_ssl — SSL certificate status
 """
 from __future__ import annotations
 
 import re
+import ssl
 import json
+import socket
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -29,7 +31,6 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
-_WEBSITE_TOOLS_LIST: list[dict[str, Any]] = []
 
 
 def _now() -> str:
@@ -131,7 +132,7 @@ def analyze_website(url: str) -> dict[str, Any]:
     images = soup.find_all("img")
     images_without_alt = sum(1 for img in images if not img.get("alt", "").strip())
 
-    # Headings structure
+    # Headings
     headings = {}
     for level in range(1, 7):
         h_tags = soup.find_all(f"h{level}")
@@ -147,10 +148,7 @@ def analyze_website(url: str) -> dict[str, Any]:
         "navigation": nav_links[:15],
         "page_count": len(internal_links),
         "internal_links": list(internal_links)[:50],
-        "images": {
-            "total": len(images),
-            "without_alt": images_without_alt,
-        },
+        "images": {"total": len(images), "without_alt": images_without_alt},
         "headings": headings,
         "headers": {k: v[:100] for k, v in headers.items() if k in ["server", "content-type", "x-powered-by"]},
         "status_code": resp.status_code,
@@ -174,36 +172,23 @@ def check_performance(url: str) -> dict[str, Any]:
 
     soup = _soup(resp.text)
     html_size = len(resp.content)
-
-    # Resource counts
     css_files = len(soup.find_all("link", rel="stylesheet"))
     js_files = len(soup.find_all("script", src=True))
     images = soup.find_all("img")
 
-    # Image sizes (approximate)
     large_images = 0
     for img in images:
-        src = img.get("src", "")
-        if src:
-            width = img.get("width", "")
-            height = img.get("height", "")
-            try:
-                if (int(width) > 1000 or int(height) > 1000):
-                    large_images += 1
-            except (ValueError, TypeError):
-                pass
+        try:
+            if int(img.get("width", 0)) > 1000 or int(img.get("height", 0)) > 1000:
+                large_images += 1
+        except (ValueError, TypeError):
+            pass
 
-    # Inline styles/scripts
     inline_styles = len(soup.find_all("style"))
     inline_scripts = len(soup.find_all("script", src=False))
-
-    # Compression check
     encoding = resp.headers.get("Content-Encoding", "none")
-
-    # Caching
     cache_control = resp.headers.get("Cache-Control", "not set")
 
-    # Score
     score = 100
     issues = []
     if load_time > 3:
@@ -237,18 +222,8 @@ def check_performance(url: str) -> dict[str, Any]:
         "load_time_seconds": load_time,
         "html_size_bytes": html_size,
         "html_size_kb": round(html_size / 1024, 1),
-        "resources": {
-            "css_files": css_files,
-            "js_files": js_files,
-            "images": len(images),
-            "large_images": large_images,
-            "inline_styles": inline_styles,
-            "inline_scripts": inline_scripts,
-        },
-        "optimization": {
-            "compression": encoding,
-            "cache_control": cache_control,
-        },
+        "resources": {"css_files": css_files, "js_files": js_files, "images": len(images), "large_images": large_images, "inline_styles": inline_styles, "inline_scripts": inline_scripts},
+        "optimization": {"compression": encoding, "cache_control": cache_control},
         "score": max(0, score),
         "issues": issues,
     }
@@ -265,16 +240,12 @@ def check_links(url: str, max_links: int = 50) -> dict[str, Any]:
         return {"error": f"Cannot reach {url}", "status": "failed"}
 
     soup = _soup(resp.text)
-    parsed = urlparse(url)
     links = []
-
     for a in soup.find_all("a", href=True)[:max_links * 2]:
         href = a["href"]
         if href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
-        full_url = urljoin(url, href)
-        links.append(full_url)
-
+        links.append(urljoin(url, href))
     links = list(set(links))[:max_links]
 
     broken = []
@@ -301,114 +272,7 @@ def check_links(url: str, max_links: int = 50) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. SEO BASICS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def seo_basics(url: str) -> dict[str, Any]:
-    """Basic SEO check: title, meta, headings, images, OG tags."""
-    resp = _safe_get(url)
-    if not resp:
-        return {"error": f"Cannot reach {url}", "status": "failed"}
-
-    soup = _soup(resp.text)
-    issues = []
-    score = 100
-
-    # Title
-    title = soup.title.string.strip() if soup.title and soup.title.string else ""
-    if not title:
-        score -= 15
-        issues.append("Missing title tag")
-    elif len(title) < 30:
-        score -= 5
-        issues.append(f"Title too short: {len(title)} chars (target: 30-60)")
-    elif len(title) > 60:
-        score -= 5
-        issues.append(f"Title too long: {len(title)} chars (target: 30-60)")
-
-    # Meta description
-    meta_desc = soup.find("meta", attrs={"name": "description"})
-    desc = meta_desc["content"].strip() if meta_desc and meta_desc.get("content") else ""
-    if not desc:
-        score -= 15
-        issues.append("Missing meta description")
-    elif len(desc) < 120:
-        score -= 5
-        issues.append(f"Meta description too short: {len(desc)} chars (target: 120-160)")
-    elif len(desc) > 160:
-        score -= 5
-        issues.append(f"Meta description too long: {len(desc)} chars")
-
-    # OG Tags
-    og_title = soup.find("meta", property="og:title")
-    og_desc = soup.find("meta", property="og:description")
-    og_image = soup.find("meta", property="og:image")
-    if not og_title:
-        score -= 5
-        issues.append("Missing og:title")
-    if not og_desc:
-        score -= 5
-        issues.append("Missing og:description")
-    if not og_image:
-        score -= 5
-        issues.append("Missing og:image")
-
-    # Canonical
-    canonical = soup.find("link", rel="canonical")
-    if not canonical:
-        score -= 5
-        issues.append("Missing canonical tag")
-
-    # Headings
-    h1s = soup.find_all("h1")
-    if len(h1s) == 0:
-        score -= 10
-        issues.append("No H1 tag found")
-    elif len(h1s) > 1:
-        score -= 5
-        issues.append(f"Multiple H1 tags: {len(h1s)} (should be 1)")
-
-    # Images without alt
-    images = soup.find_all("img")
-    no_alt = sum(1 for img in images if not img.get("alt", "").strip())
-    if no_alt > 0:
-        score -= min(10, no_alt * 2)
-        issues.append(f"{no_alt}/{len(images)} images missing alt text")
-
-    # Schema/structured data
-    schemas = soup.find_all("script", type="application/ld+json")
-    if not schemas:
-        score -= 5
-        issues.append("No structured data (JSON-LD)")
-
-    # Viewport
-    viewport = soup.find("meta", attrs={"name": "viewport"})
-    if not viewport:
-        score -= 10
-        issues.append("Missing viewport meta tag (not mobile-friendly)")
-
-    return {
-        "url": url,
-        "checked_at": _now(),
-        "score": max(0, score),
-        "title": {"text": title, "length": len(title)},
-        "meta_description": {"text": desc[:200], "length": len(desc)},
-        "og_tags": {
-            "title": bool(og_title),
-            "description": bool(og_desc),
-            "image": bool(og_image),
-        },
-        "canonical": bool(canonical),
-        "headings": {"h1_count": len(h1s)},
-        "images": {"total": len(images), "without_alt": no_alt},
-        "structured_data": bool(schemas),
-        "viewport": bool(viewport),
-        "issues": issues,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. SECURITY CHECK
+# 4. SECURITY CHECK
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def security_check(url: str) -> dict[str, Any]:
@@ -441,14 +305,11 @@ def security_check(url: str) -> dict[str, Any]:
             score -= 15 if info["critical"] else 5
             issues.append(f"Missing {info['name']}")
 
-    # HTTPS check
     is_https = url.startswith("https://")
     if not is_https:
         score -= 20
         issues.append("Not using HTTPS")
 
-    # Server info leak
-    server = headers.get("server", "")
     x_powered = headers.get("x-powered-by", "")
     if x_powered:
         score -= 5
@@ -466,14 +327,13 @@ def security_check(url: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. TECH STACK ADVISOR
+# 5. TECH STACK ADVISOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def tech_stack_advisor(
     site_type: str = "",
     needs_ecommerce: bool = False,
     needs_blog: bool = False,
-    needs_admin: bool = False,
     budget: str = "medium",
     client_preference: str = "",
 ) -> dict[str, Any]:
@@ -494,18 +354,16 @@ def tech_stack_advisor(
 
     if site_type in ("landing", "portfolio", "saas"):
         recommendations.append({"stack": "Next.js + Tailwind", "reason": "Fast, modern, great SEO, easy to deploy on Vercel"})
-
     if site_type in ("corporate", "enterprise"):
         recommendations.append({"stack": "Next.js + Headless CMS", "reason": "Scalable, secure, flexible content management"})
-
     if site_type in ("webapp", "dashboard"):
         recommendations.append({"stack": "Next.js + React + PostgreSQL", "reason": "Full-stack, type-safe, great DX"})
 
     if client_preference:
-        recommendations.append({"stack": client_preference, "reason": "Client preference — adapt to their existing stack"})
+        recommendations.append({"stack": client_preference, "reason": "Client preference"})
 
     if not recommendations:
-        recommendations.append({"stack": "Next.js + Tailwind + Vercel", "reason": "Default modern stack — fast, free hosting, great SEO"})
+        recommendations.append({"stack": "Next.js + Tailwind + Vercel", "reason": "Default modern stack"})
 
     hosting = "Vercel" if any("Next.js" in r["stack"] for r in recommendations) else "AWS/Netlify"
     cms = "None (code-based)" if not needs_blog else ("Sanity/Contentful" if budget != "low" else "WordPress")
@@ -524,7 +382,7 @@ def tech_stack_advisor(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7. DESIGN PLANNER
+# 6. DESIGN PLANNER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def design_planner(
@@ -535,50 +393,19 @@ def design_planner(
     """Plan site architecture, navigation, page structure."""
     page_list = [p.strip() for p in pages.split(",") if p.strip()]
 
-    # Default page structure
     page_structures = {
-        "home": {
-            "sections": ["hero", "features/benefits", "testimonials", "cta", "footer"],
-            "purpose": "First impression, convert visitors",
-        },
-        "about": {
-            "sections": ["hero", "story", "team", "values", "cta"],
-            "purpose": "Build trust, show brand personality",
-        },
-        "services": {
-            "sections": ["hero", "service_list", "process", "pricing", "cta"],
-            "purpose": "Showcase offerings, drive inquiries",
-        },
-        "contact": {
-            "sections": ["hero", "contact_form", "map", "details", "social_links"],
-            "purpose": "Enable communication, capture leads",
-        },
-        "blog": {
-            "sections": ["hero", "featured_posts", "post_grid", "pagination"],
-            "purpose": "Content marketing, SEO, thought leadership",
-        },
-        "pricing": {
-            "sections": ["hero", "pricing_cards", "faq", "cta"],
-            "purpose": "Show plans, drive conversions",
-        },
-        "portfolio": {
-            "sections": ["hero", "project_grid", "case_study", "cta"],
-            "purpose": "Showcase work, build credibility",
-        },
+        "home": {"sections": ["hero", "features/benefits", "testimonials", "cta", "footer"], "purpose": "First impression, convert visitors"},
+        "about": {"sections": ["hero", "story", "team", "values", "cta"], "purpose": "Build trust, show brand personality"},
+        "services": {"sections": ["hero", "service_list", "process", "pricing", "cta"], "purpose": "Showcase offerings, drive inquiries"},
+        "contact": {"sections": ["hero", "contact_form", "map", "details", "social_links"], "purpose": "Enable communication, capture leads"},
+        "blog": {"sections": ["hero", "featured_posts", "post_grid", "pagination"], "purpose": "Content marketing, SEO"},
+        "pricing": {"sections": ["hero", "pricing_cards", "faq", "cta"], "purpose": "Show plans, drive conversions"},
+        "portfolio": {"sections": ["hero", "project_grid", "case_study", "cta"], "purpose": "Showcase work, build credibility"},
     }
 
-    planned_pages = []
-    for page in page_list:
-        structure = page_structures.get(page, {
-            "sections": ["hero", "content", "cta"],
-            "purpose": "Custom page",
-        })
-        planned_pages.append({"name": page, **structure})
-
-    # Navigation
+    planned_pages = [{"name": p, **page_structures.get(p, {"sections": ["hero", "content", "cta"], "purpose": "Custom page"})} for p in page_list]
     nav = {"primary": page_list[:6], "footer": page_list}
 
-    # Color palette suggestion based on style
     palettes = {
         "modern": {"primary": "#2563EB", "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF"},
         "minimal": {"primary": "#000000", "secondary": "#666666", "accent": "#2563EB", "bg": "#FFFFFF"},
@@ -593,16 +420,13 @@ def design_planner(
         "pages": planned_pages,
         "navigation": nav,
         "color_palette": palettes.get(style, palettes["modern"]),
-        "typography": {
-            "heading": "Inter" if style == "modern" else "Poppins",
-            "body": "Inter",
-        },
+        "typography": {"heading": "Inter" if style == "modern" else "Poppins", "body": "Inter"},
         "responsive_breakpoints": {"mobile": "375px", "tablet": "768px", "desktop": "1024px", "wide": "1280px"},
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 8. CHECK ACCESSIBILITY
+# 7. CHECK ACCESSIBILITY
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def check_accessibility(url: str) -> dict[str, Any]:
@@ -615,21 +439,18 @@ def check_accessibility(url: str) -> dict[str, Any]:
     issues = []
     score = 100
 
-    # Images without alt
     images = soup.find_all("img")
     no_alt = [img.get("src", "")[:80] for img in images if not img.get("alt", "").strip()]
     if no_alt:
         score -= min(15, len(no_alt) * 3)
         issues.append(f"{len(no_alt)} images missing alt text")
 
-    # Links without text
     links = soup.find_all("a")
     empty_links = [a.get("href", "")[:80] for a in links if not a.get_text(strip=True) and not a.find("img") and not a.get("aria-label")]
     if empty_links:
         score -= min(10, len(empty_links) * 2)
         issues.append(f"{len(empty_links)} links without accessible text")
 
-    # Form inputs without labels
     inputs = soup.find_all(["input", "textarea", "select"])
     unlabeled = 0
     for inp in inputs:
@@ -644,31 +465,28 @@ def check_accessibility(url: str) -> dict[str, Any]:
         score -= min(10, unlabeled * 2)
         issues.append(f"{unlabeled} form inputs without labels")
 
-    # Heading hierarchy
     headings = []
     for level in range(1, 7):
         for _ in soup.find_all(f"h{level}"):
             headings.append(level)
     skipped = 0
     for i in range(1, len(headings)):
-        if headings[i] - headings[i-1] > 1:
+        if headings[i] - headings[i - 1] > 1:
             skipped += 1
     if skipped:
         score -= min(10, skipped * 3)
         issues.append(f"Heading hierarchy skipped {skipped} levels")
 
-    # Language attribute
     html_tag = soup.find("html")
     has_lang = bool(html_tag and html_tag.get("lang"))
     if not has_lang:
         score -= 5
         issues.append("Missing lang attribute on <html>")
 
-    # ARIA landmarks
     landmarks = soup.find_all(attrs={"role": True})
     if not landmarks and not soup.find("nav") and not soup.find("main"):
         score -= 5
-        issues.append("No ARIA landmarks or semantic HTML (nav, main, footer)")
+        issues.append("No ARIA landmarks or semantic HTML")
 
     return {
         "url": url,
@@ -685,7 +503,7 @@ def check_accessibility(url: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 9. COMPETITOR SITES
+# 8. COMPETITOR SITES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def competitor_sites(urls: list[str]) -> dict[str, Any]:
@@ -698,67 +516,162 @@ def competitor_sites(urls: list[str]) -> dict[str, Any]:
         try:
             analysis = analyze_website(url)
             perf = check_performance(url)
-            seo = seo_basics(url)
             results.append({
                 "url": url,
                 "title": analysis.get("title", ""),
                 "tech_stack": analysis.get("tech_stack", []),
                 "page_count": analysis.get("page_count", 0),
                 "performance_score": perf.get("score", 0),
-                "seo_score": seo.get("score", 0),
                 "load_time": perf.get("load_time_seconds", 0),
             })
         except Exception as e:
             results.append({"url": url, "error": str(e)})
 
-    return {
-        "analyzed_at": _now(),
-        "competitors": results,
-        "count": len(results),
-    }
+    return {"analyzed_at": _now(), "competitors": results, "count": len(results)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 10. GENERATE SITEMAP
-# ═══════════════════════════════════════════════════════════════
+# 9. RESPONSIVE CHECK
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def generate_sitemap(url: str) -> dict[str, Any]:
-    """Generate XML sitemap from website."""
+def responsive_check(url: str) -> dict[str, Any]:
+    """Check mobile responsiveness: viewport, media queries, mobile-friendly."""
     resp = _safe_get(url)
     if not resp:
         return {"error": f"Cannot reach {url}", "status": "failed"}
 
     soup = _soup(resp.text)
-    parsed = urlparse(url)
-    urls_found = set()
+    issues = []
+    score = 100
 
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if href.startswith(("#", "mailto:", "tel:", "javascript:")):
-            continue
-        full = urljoin(url, href).split("#")[0].split("?")[0]
-        if urlparse(full).netloc == parsed.netloc:
-            urls_found.add(full)
+    viewport = soup.find("meta", attrs={"name": "viewport"})
+    has_viewport = bool(viewport)
+    viewport_content = viewport.get("content", "") if viewport else ""
+    if not has_viewport:
+        score -= 30
+        issues.append("Missing viewport meta tag")
+    elif "width=device-width" not in viewport_content:
+        score -= 10
+        issues.append("Viewport missing device-width")
 
-    urls_found.add(url.rstrip("/"))
+    # CSS media queries
+    media_queries = 0
+    for tag in soup.find_all("style"):
+        text = tag.string or ""
+        media_queries += len(re.findall(r"@media", text))
+    for tag in soup.find_all(style=True)[:20]:
+        if "max-width" in tag.get("style", "") or "min-width" in tag.get("style", ""):
+            media_queries += 1
+    if media_queries == 0:
+        score -= 15
+        issues.append("No CSS media queries found (may not be responsive)")
 
-    xml_lines = ['<?xml version="1.0" encoding="UTF-8"?>']
-    xml_lines.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
-    for u in sorted(urls_found):
-        xml_lines.append("  <url>")
-        xml_lines.append(f"    <loc>{u}</loc>")
-        xml_lines.append("    <changefreq>weekly</changefreq>")
-        xml_lines.append("    <priority>0.8</priority>")
-        xml_lines.append("  </url>")
-    xml_lines.append("</urlset>")
+    # Fixed widths
+    fixed_widths = 0
+    for tag in soup.find_all(style=True)[:30]:
+        if re.search(r"width:\s*\d{4,}px", tag.get("style", "")):
+            fixed_widths += 1
+    if fixed_widths > 3:
+        score -= 10
+        issues.append(f"{fixed_widths} elements with fixed widths >1000px")
+
+    # Large images
+    images = soup.find_all("img")
+    large_unconstrained = 0
+    for img in images:
+        try:
+            if int(img.get("width", 0)) > 800:
+                large_unconstrained += 1
+        except (ValueError, TypeError):
+            pass
+    if large_unconstrained > 2:
+        score -= 10
+        issues.append(f"{large_unconstrained} large images may overflow on mobile")
 
     return {
         "url": url,
-        "generated_at": _now(),
-        "url_count": len(urls_found),
-        "xml": "\n".join(xml_lines),
-        "urls": sorted(urls_found),
+        "checked_at": _now(),
+        "score": max(0, score),
+        "has_viewport": has_viewport,
+        "viewport_content": viewport_content,
+        "media_queries_found": media_queries,
+        "fixed_width_elements": fixed_widths,
+        "images_total": len(images),
+        "issues": issues,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. CHECK SSL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def check_ssl(url: str) -> dict[str, Any]:
+    """Check SSL certificate status."""
+    parsed = urlparse(url if url.startswith("http") else f"https://{url}")
+    hostname = parsed.hostname or ""
+    port = parsed.port or 443
+
+    if not hostname:
+        return {"error": "Invalid URL", "status": "failed"}
+
+    result: dict[str, Any] = {
+        "url": url,
+        "hostname": hostname,
+        "checked_at": _now(),
+        "is_https": url.startswith("https"),
+        "ssl_valid": False,
+        "issuer": "",
+        "subject": "",
+        "not_before": "",
+        "not_after": "",
+        "days_until_expiry": 0,
+        "protocol": "",
+        "issues": [],
+    }
+
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((hostname, port), timeout=10) as sock:
+            with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                result["ssl_valid"] = True
+                result["protocol"] = ssock.version() or ""
+
+                issuer_dict = dict(x[0] for x in cert.get("issuer", []))
+                result["issuer"] = issuer_dict.get("organizationName", issuer_dict.get("commonName", ""))
+
+                subject_dict = dict(x[0] for x in cert.get("subject", []))
+                result["subject"] = subject_dict.get("commonName", "")
+
+                result["not_before"] = cert.get("notBefore", "")
+                not_after = cert.get("notAfter", "")
+                result["not_after"] = not_after
+
+                if not_after:
+                    try:
+                        expiry = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
+                        days = (expiry - datetime.utcnow()).days
+                        result["days_until_expiry"] = days
+                        if days < 30:
+                            result["issues"].append(f"SSL expires in {days} days!")
+                        elif days < 90:
+                            result["issues"].append(f"SSL expires in {days} days — renew soon")
+                    except ValueError:
+                        pass
+
+    except ssl.SSLCertVerificationError as e:
+        result["issues"].append(f"SSL verification failed: {str(e)[:100]}")
+    except socket.timeout:
+        result["issues"].append("Connection timeout")
+    except socket.gaierror:
+        result["issues"].append(f"Cannot resolve hostname: {hostname}")
+    except Exception as e:
+        result["issues"].append(f"SSL check failed: {str(e)[:100]}")
+
+    if not result["is_https"]:
+        result["issues"].insert(0, "Site is not using HTTPS")
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -782,7 +695,7 @@ WEBSITE_TOOLS = [
         "type": "function",
         "function": {
             "name": "check_performance",
-            "description": "Check page performance: load time, HTML size, resources, compression, caching. Returns performance score.",
+            "description": "Check page performance: load time, HTML size, resources, compression, caching. Returns score.",
             "parameters": {
                 "type": "object",
                 "properties": {"url": {"type": "string", "description": "URL to check"}},
@@ -801,18 +714,6 @@ WEBSITE_TOOLS = [
                     "url": {"type": "string", "description": "Page URL to check"},
                     "max_links": {"type": "integer", "description": "Max links to check (default 50)", "default": 50},
                 },
-                "required": ["url"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "seo_basics",
-            "description": "Basic SEO check: title, meta description, OG tags, headings, images alt, canonical, schema, viewport.",
-            "parameters": {
-                "type": "object",
-                "properties": {"url": {"type": "string", "description": "URL to check"}},
                 "required": ["url"],
             },
         },
@@ -892,11 +793,23 @@ WEBSITE_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "generate_sitemap",
-            "description": "Generate XML sitemap from website by crawling internal links.",
+            "name": "responsive_check",
+            "description": "Check mobile responsiveness: viewport meta, CSS media queries, fixed widths, large images.",
             "parameters": {
                 "type": "object",
-                "properties": {"url": {"type": "string", "description": "Website URL"}},
+                "properties": {"url": {"type": "string", "description": "URL to check"}},
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_ssl",
+            "description": "Check SSL certificate: valid, expiry date, issuer, protocol version.",
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string", "description": "URL to check"}},
                 "required": ["url"],
             },
         },
@@ -914,7 +827,6 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "analyze_website": lambda a: analyze_website(a["url"]),
         "check_performance": lambda a: check_performance(a["url"]),
         "check_links": lambda a: check_links(a["url"], a.get("max_links", 50)),
-        "seo_basics": lambda a: seo_basics(a["url"]),
         "security_check": lambda a: security_check(a["url"]),
         "tech_stack_advisor": lambda a: tech_stack_advisor(
             site_type=a.get("site_type", ""),
@@ -930,7 +842,8 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         ),
         "check_accessibility": lambda a: check_accessibility(a["url"]),
         "competitor_sites": lambda a: competitor_sites(a["urls"]),
-        "generate_sitemap": lambda a: generate_sitemap(a["url"]),
+        "responsive_check": lambda a: responsive_check(a["url"]),
+        "check_ssl": lambda a: check_ssl(a["url"]),
     }
     fn = dispatch.get(name)
     if fn:
