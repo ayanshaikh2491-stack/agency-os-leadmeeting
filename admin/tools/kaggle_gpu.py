@@ -1,17 +1,17 @@
-"""Kaggle GPU — On-demand visual content generation.
+"""Kaggle GPU — On-demand visual content generation (v2).
 
-Submit notebook → T4 GPU run → download output.
-
-Image: FLUX.1-dev (free, 30hrs/week)
-Video: CogVideoX-2b (free, 30hrs/week)
+GPU: T4x2 (enforced via accelerator metadata)
+Image: FLUX.1-schnell (bfloat16, 4 steps, guidance 3.5, text-in-image)
+Video: CogVideoX-2b (float16, on-demand only)
 
 Flow:
-  1. generate_visual(content_type, prompt, ...) 
+  1. generate_visual(content_type, prompt, ...)
   2. Creates Kaggle notebook with FLUX/CogVideoX code
-  3. Submits to GPU via Kaggle API
+  3. Submits to T4x2 GPU via Kaggle API
   4. Polls until complete
   5. Downloads output to data/outputs/
   6. Returns local file path
+  7. Memory cleanup after each task
 """
 from __future__ import annotations
 
@@ -42,91 +42,62 @@ def _now() -> str:
 # NOTEBOOK CODE TEMPLATES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FLUX_CODE = '''# TAGS Content Agent — FLUX Image Generation
-import subprocess, sys, json, os, traceback
+FLUX_CODE = '''# TAGS Content Agent — FLUX.1-schnell Image Generation (T4x2)
+# On-demand: model loaded ONLY during generation, cleaned after
+import subprocess, sys, json, os, gc, traceback, time
 
-# ── Fix PyTorch for Kaggle P100 GPU (sm_60 needs older PyTorch) ──
-try:
-    _gpu_check = subprocess.check_output(
-        ["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"],
-        text=True, timeout=10
-    ).strip().lower()
-    print(f"GPU raw: {_gpu_check}")
-    if "p100" in _gpu_check or "sm_60" in _gpu_check:
-        print("P100 detected — installing PyTorch with sm_60 support...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-            "torch==2.5.1", "torchvision==0.20.1",
-            "--index-url", "https://download.pytorch.org/whl/cu118"])
-        print("PyTorch reinstalled for P100")
-except Exception as e:
-    print(f"GPU check: {e}")
+_start = time.time()
+print("=== FLUX.1-schnell Image Generation ===")
+print(f"PyTorch: {__import__('torch').__version__}")
 
 import torch
-from diffusers import DiffusionPipeline
+from diffusers import FluxPipeline
 from PIL import Image
 
-# ── Device selection ──
-DEVICE = "cpu"
-DTYPE = torch.float32
-if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-    try:
-        cap = torch.cuda.get_device_capability(0)
-        gpu_name_full = torch.cuda.get_device_name(0)
-        print(f"CUDA GPU: {gpu_name_full} (sm_{cap[0]}{cap[1]})")
-        if cap[0] >= 8:
-            DEVICE = "cuda"
-            DTYPE = torch.bfloat16
-            print(f"Ampere+ — bfloat16")
-        elif cap[0] >= 7:
-            DEVICE = "cuda"
-            DTYPE = torch.bfloat16 if cap[1] >= 5 else torch.float16
-            print(f"Turing — {DTYPE}")
-        elif cap[0] >= 6:
-            DEVICE = "cuda"
-            DTYPE = torch.float16
-            print(f"Pascal — float16")
-        else:
-            print(f"GPU too old (sm_{cap[0]}{cap[1]}) — CPU")
-    except Exception as e:
-        print(f"CUDA error: {e}")
-else:
-    print("No CUDA — running on CPU")
+# ── GPU validation (must be sm_70+ for bfloat16) ──
+if not torch.cuda.is_available():
+    print(json.dumps({{"status": "error", "reason": "No CUDA GPU — T4x2 required"}}))
+    sys.exit(1)
 
-print(f"Device: {DEVICE}, dtype: {DTYPE}")
+cap = torch.cuda.get_device_capability(0)
+gpu_name = torch.cuda.get_device_name(0)
+vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+print(f"GPU: {{gpu_name}} | sm_{{cap[0]}}{{cap[1]}} | {{vram:.1f}}GB VRAM")
 
-# ── Model selection ──
+if cap[0] < 7:
+    print(json.dumps({{"status": "error", "reason": f"GPU sm_{{cap[0]}}{{cap[1]}} too old — need sm_70+ (T4)"}}))
+    sys.exit(1)
+
+DTYPE = torch.bfloat16
+print(f"Using dtype: {{DTYPE}}")
+
+# ── Load FLUX.1-schnell (ON-DEMAND — loaded only for this task) ──
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HF_TOKEN_READ", "")
+print(f"HF_TOKEN: {'set' if HF_TOKEN else 'not set — using SDXL fallback'}")
+
 if HF_TOKEN:
-    try:
-        from diffusers import FluxPipeline
-        MODEL_NAME = "black-forest-labs/FLUX.1-dev"
-        PIPE_CLASS = FluxPipeline
-        print("Using FLUX.1-dev")
-    except ImportError:
-        MODEL_NAME = "stabilityai/stable-diffusion-xl-base-1.0"
-        PIPE_CLASS = DiffusionPipeline
-        print("FluxPipeline not found, using SDXL")
+    MODEL_NAME = "black-forest-labs/FLUX.1-schnell"
+    print(f"Loading {{MODEL_NAME}}...")
 else:
     MODEL_NAME = "stabilityai/stable-diffusion-xl-base-1.0"
-    PIPE_CLASS = DiffusionPipeline
-    print("No HF_TOKEN, using SDXL (free)")
+    print(f"No HF_TOKEN — loading {{MODEL_NAME}} (free, no auth)...")
 
-print(f"Loading {MODEL_NAME}...")
 sys.stdout.flush()
 try:
-    pipe = PIPE_CLASS.from_pretrained(
-        MODEL_NAME, torch_dtype=DTYPE,
-        token=HF_TOKEN or None,
-        safety_checker=None, requires_safety_checker=False,
-    )
-    if DEVICE == "cuda":
-        pipe.enable_model_cpu_offload()
+    if HF_TOKEN:
+        pipe = FluxPipeline.from_pretrained(
+            MODEL_NAME, torch_dtype=DTYPE, token=HF_TOKEN,
+        )
     else:
-        pipe = pipe.to("cpu")
-    print("Model loaded")
+        from diffusers import DiffusionPipeline
+        pipe = DiffusionPipeline.from_pretrained(
+            MODEL_NAME, torch_dtype=DTYPE,
+        )
+    pipe.enable_model_cpu_offload()
+    print("Model loaded into VRAM")
     sys.stdout.flush()
 except Exception as e:
-    print(f"MODEL LOAD ERROR: {e}")
+    print(f"MODEL LOAD ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
 
@@ -134,93 +105,156 @@ except Exception as e:
 PROMPT = "{prompt}"
 WIDTH = {width}
 HEIGHT = {height}
-STEPS = {steps} if {steps} >= 20 else 30
 
-print(f"Generating: {{PROMPT[:100]}} ({{WIDTH}}x{{HEIGHT}}, steps={{STEPS}})")
+# FLUX.1-schnell: optimized for 4 steps, guidance 3.5
+# Supports text-in-image for ad banners/posters
+print(f"Generating: {{PROMPT[:120]}}")
+print(f"Params: {{WIDTH}}x{{HEIGHT}}, steps=4, guidance=3.5")
 sys.stdout.flush()
 try:
-    image = pipe(PROMPT, width=WIDTH, height=HEIGHT, num_inference_steps=STEPS, guidance_scale=3.5).images[0]
+    image = pipe(
+        PROMPT,
+        width=WIDTH,
+        height=HEIGHT,
+        num_inference_steps=4,
+        guidance_scale=3.5,
+    ).images[0]
     image.save("output.png")
     sz = os.path.getsize("output.png")
-    print(json.dumps({{"status": "success", "file": "output.png", "size_bytes": sz, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu", "device": DEVICE}}))
+    elapsed = round(time.time() - _start, 1)
+    print(json.dumps({{
+        "status": "success",
+        "file": "output.png",
+        "size_bytes": sz,
+        "gpu": gpu_name,
+        "sm": f"sm_{{cap[0]}}{{cap[1]}}",
+        "dtype": str(DTYPE),
+        "model": "{model}",
+        "steps": 4,
+        "guidance": 3.5,
+        "elapsed_seconds": elapsed
+    }}))
+except torch.cuda.OutOfMemoryError:
+    print(json.dumps({"status": "error", "error": "VRAM_OOM", "reason": "CUDA out of memory - try smaller resolution", "gpu": gpu_name, "vram_gb": round(vram, 1)}))
+    sys.exit(1)
 except Exception as e:
-    print(f"GENERATION ERROR: {e}")
+    print(f"GENERATION ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
+finally:
+    # ── MEMORY CLEANUP (on-demand: free VRAM after task) ──
+    try:
+        del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("VRAM cleaned up")
+    except Exception:
+        pass
 '''
 
-COGVIDEO_CODE = '''# TAGS Content Agent — CogVideoX Video Generation
-import subprocess, sys, json, os, traceback
 
-# ── GPU Detection (handles ALL Kaggle GPU types) ──
-GPU_NAME = "unknown"
-GPU_OK = False
-try:
-    out = subprocess.check_output(
-        ["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"],
-        text=True, timeout=10
-    ).strip().lower()
-    print(f"GPU raw: {out}")
-    GPU_NAME = out.split(",")[0].strip() if "," in out else out
+COGVIDEO_CODE = '''# TAGS Content Agent — CogVideoX-2b Video Generation (T4x2)
+# Triggered ONLY when video prompt is explicitly provided
+# On-demand: model loaded ONLY during generation, cleaned after
+import subprocess, sys, json, os, gc, traceback, time
 
-    if "p100" in out or "sm_60" in out or "sm_6.0" in out:
-        print("P100 detected — CogVideo needs sm_70+. Skipping.")
-        GPU_OK = False
-    elif "g100" in out:
-        # G100 — unknown exact arch, check compute capability
-        print(f"G100 detected — will check compute capability")
-        GPU_OK = "check"  # will check below
-    else:
-        GPU_OK = True  # assume OK, check capability below
-except Exception as e:
-    print(f"GPU check failed: {e}")
+_start = time.time()
+print("=== CogVideoX-2b Video Generation ===")
+print(f"PyTorch: {__import__('torch').__version__}")
 
 import torch
 from diffusers import CogVideoXPipeline
 import imageio
 
+# ── GPU validation (needs sm_70+ for float16) ──
 if not torch.cuda.is_available():
-    print(json.dumps({{"status": "skipped", "reason": "No CUDA GPU available"}}))
-    sys.exit(0)
+    print(json.dumps({{"status": "error", "reason": "No CUDA GPU — T4x2 required"}}))
+    sys.exit(1)
 
 cap = torch.cuda.get_device_capability(0)
-gpu_full = torch.cuda.get_device_name(0)
-print(f"CUDA GPU: {gpu_full} (sm_{cap[0]}{cap[1]})")
+gpu_name = torch.cuda.get_device_name(0)
+vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+print(f"GPU: {{gpu_name}} | sm_{{cap[0]}}{{cap[1]}} | {{vram:.1f}}GB VRAM")
 
-# CogVideoX needs sm_70+ (Turing/Ampere/Ada)
 if cap[0] < 7:
-    print(json.dumps({{"status": "skipped", "reason": f"GPU sm_{cap[0]}{cap[1]} too old for CogVideo (needs sm_70+)"}}))
-    sys.exit(0)
+    print(json.dumps({{"status": "error", "reason": f"GPU sm_{{cap[0]}}{{cap[1]}} too old — need sm_70+ (T4)"}}))
+    sys.exit(1)
 
 DTYPE = torch.bfloat16 if cap[0] >= 8 else torch.float16
-print(f"Using {DTYPE} for sm_{cap[0]}{cap[1]}")
+print(f"Using dtype: {{DTYPE}}")
 
-print("Loading THUDM/CogVideoX-2b...")
+# ── Load CogVideoX-2b (ON-DEMAND — loaded only for this task) ──
+print("Loading THUDM/CogVideoX-2b (~5GB)...")
 sys.stdout.flush()
 try:
     pipe = CogVideoXPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=DTYPE)
     pipe.enable_model_cpu_offload()
-    print("Model loaded")
+    print("Model loaded into VRAM")
     sys.stdout.flush()
+except torch.cuda.OutOfMemoryError:
+    print(json.dumps({"status": "error", "error": "VRAM_OOM", "reason": "CUDA OOM during model load - CogVideoX needs ~8GB"}))
+    sys.exit(1)
 except Exception as e:
-    print(f"MODEL LOAD ERROR: {e}")
+    print(f"MODEL LOAD ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
 
+# ── Generate video ──
 PROMPT = "{prompt}"
 NUM_FRAMES = {frames}
 
-print(f"Generating video: {{PROMPT[:100]}} ({{NUM_FRAMES}} frames, ~5-10 min)")
+print(f"Generating video: {{PROMPT[:120]}}")
+print(f"Params: {{NUM_FRAMES}} frames, 50 steps, guidance 6.0")
 sys.stdout.flush()
 try:
-    video = pipe(PROMPT, num_videos_per_prompt=1, num_inference_steps=50, num_frames=NUM_FRAMES, guidance_scale=6.0).videos[0]
+    video = pipe(
+        PROMPT,
+        num_videos_per_prompt=1,
+        num_inference_steps=50,
+        num_frames=NUM_FRAMES,
+        guidance_scale=6.0,
+    ).videos[0]
     imageio.mimsave("output.mp4", video, fps=8)
     sz = os.path.getsize("output.mp4")
-    print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": NUM_FRAMES, "gpu": gpu_full}}))
+    elapsed = round(time.time() - _start, 1)
+    print(json.dumps({{
+        "status": "success",
+        "file": "output.mp4",
+        "size_bytes": sz,
+        "frames": NUM_FRAMES,
+        "duration_seconds": round(NUM_FRAMES / 8, 1),
+        "gpu": gpu_name,
+        "sm": f"sm_{{cap[0]}}{{cap[1]}}",
+        "dtype": str(DTYPE),
+        "elapsed_seconds": elapsed
+    }}))
+except torch.cuda.OutOfMemoryError:
+    reduced_frames = max(16, NUM_FRAMES // 2)
+    print(f"OOM at {NUM_FRAMES} frames - retrying with {reduced_frames} frames")
+    torch.cuda.empty_cache()
+    gc.collect()
+    try:
+        video = pipe(PROMPT, num_videos_per_prompt=1, num_inference_steps=50, num_frames=reduced_frames, guidance_scale=6.0).videos[0]
+        imageio.mimsave("output.mp4", video, fps=8)
+        sz = os.path.getsize("output.mp4")
+        elapsed = round(time.time() - _start, 1)
+        print(json.dumps({"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": reduced_frames, "duration_seconds": round(reduced_frames / 8, 1), "gpu": gpu_name, "sm": f"sm_{cap[0]}{cap[1]}", "dtype": str(DTYPE), "elapsed_seconds": elapsed, "warning": f"Reduced from {NUM_FRAMES} to {reduced_frames} frames due to VRAM limit"}))
+    except Exception as e2:
+        print(json.dumps({"status": "error", "error": "VRAM_OOM", "reason": f"OOM even at {reduced_frames} frames: {e2}", "gpu": gpu_name, "vram_gb": round(vram, 1)}))
+        sys.exit(1)
 except Exception as e:
-    print(f"VIDEO ERROR: {e}")
+    print(f"VIDEO ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
+finally:
+    # ── MEMORY CLEANUP (on-demand: free VRAM after task) ──
+    try:
+        del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("VRAM cleaned up")
+    except Exception:
+        pass
 '''
 
 
@@ -242,6 +276,8 @@ PLATFORM_SIZES: dict[str, tuple[int, int]] = {
     "blog_hero": (1200, 600),
     "og_image": (1200, 630),
     "poster_a4": (2480, 3508),
+    "ad_banner": (1200, 628),
+    "ad_poster": (1080, 1350),
     "square": (1024, 1024),
     "landscape": (1920, 1080),
     "portrait": (1080, 1920),
@@ -315,13 +351,13 @@ def _source_to_lines(source: str) -> list[str]:
 
 
 def _build_notebook(code_source: str) -> dict[str, Any]:
-    """Build Kaggle-format notebook JSON."""
+    """Build Kaggle-format notebook JSON with T4x2 GPU enforcement."""
     return {
         "nbformat": 4,
         "nbformat_minor": 5,
         "metadata": {
             "kaggle": {
-                "accelerator": "gpu",
+                "accelerator": "gpuT4x2",
                 "dataSources": [],
                 "isGpuEnabled": True,
                 "isInternetEnabled": True,
@@ -346,7 +382,7 @@ def _build_notebook(code_source: str) -> dict[str, Any]:
 
 
 def _build_metadata(username: str, title: str) -> dict[str, Any]:
-    """Build kernel-metadata.json for Kaggle CLI."""
+    """Build kernel-metadata.json for Kaggle CLI — T4x2 GPU enforced."""
     unique = uuid.uuid4().hex[:8]
     full_title = f"TAGS {title} {unique}"
     slug = re.sub(r"[^a-z0-9\s-]", "", full_title.lower())
@@ -364,7 +400,7 @@ def _build_metadata(username: str, title: str) -> dict[str, Any]:
         "enable_internet": True,
         "kernel_sources": [],
         "dataset_sources": [],
-        "gpuType": "T4",  # Request T4 GPU specifically
+        "accelerator": "gpuT4x2",
     }
 
 
@@ -377,19 +413,16 @@ def _submit_notebook(code_source: str, title: str) -> dict[str, Any]:
     kernel_dir = tempfile.mkdtemp(prefix=f"kaggle_{title}_")
 
     try:
-        # Write notebook
         notebook = _build_notebook(code_source)
         with open(os.path.join(kernel_dir, "notebook.ipynb"), "w") as f:
             json.dump(notebook, f, indent=2)
 
-        # Write metadata
         metadata = _build_metadata(username, title)
         with open(os.path.join(kernel_dir, "kernel-metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2)
 
         kernel_slug = metadata["id"]
 
-        # Submit
         result = _run_kaggle(["kernels", "push", "-p", kernel_dir], timeout=60)
         if result["success"]:
             return {
@@ -425,7 +458,7 @@ def poll_status(kernel_slug: str) -> str:
         return "queued"
     elif "error" in output or "fail" in output:
         return "error"
-    return "running"  # default: still going
+    return "running"
 
 
 def download_output(kernel_slug: str, dest_dir: str | Path | None = None) -> dict[str, Any]:
@@ -486,19 +519,19 @@ def generate_visual(
     platform: str = "instagram",
     width: int = 0,
     height: int = 0,
-    steps: int = 20,
+    steps: int = 4,
     frames: int = 49,
     timeout: int = 600,
 ) -> dict[str, Any]:
-    """Visual content generate karo — on-demand GPU.
+    """Visual content generate karo — on-demand T4x2 GPU.
 
     Args:
         content_type: "image" or "video"
-        prompt: AI prompt for generation
+        prompt: AI prompt for generation (supports text-in-image for ads)
         platform: Target platform (for size auto-detection)
         width/height: Override platform size (0 = auto from platform)
-        steps: FLUX inference steps (images only)
-        frames: CogVideoX frames (videos only, 49=~6s, 81=~10s)
+        steps: Ignored — FLUX.1-schnell always uses 4 steps
+        frames: CogVideoX frames (49=~6s, 60=~7.5s, 81=~10s)
         timeout: Max wait time in seconds
 
     Returns:
@@ -527,9 +560,10 @@ def generate_visual(
     else:
         code = FLUX_CODE.format(
             prompt=prompt.replace('"', '\\"'),
-            width=width, height=height, steps=steps,
+            width=width, height=height,
+            model="FLUX.1-schnell",
         )
-        title = "flux"
+        title = "flux-schnell"
         estimated = f"{width}x{height}"
 
     logger.info("Generating %s: %s (%s)", content_type, prompt[:80], estimated)
@@ -590,18 +624,18 @@ def generate_visual(
 # CONVENIENCE FUNCTIONS (for API routes + direct use)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def generate_image(prompt: str, platform: str = "instagram", width: int = 0, height: int = 0, steps: int = 20) -> dict[str, Any]:
-    """Image generate karo."""
+def generate_image(prompt: str, platform: str = "instagram", width: int = 0, height: int = 0, steps: int = 4) -> dict[str, Any]:
+    """Image generate karo — FLUX.1-schnell (4 steps, text-in-image support)."""
     return generate_visual("image", prompt, platform, width, height, steps=steps)
 
 
 def generate_video(prompt: str, platform: str = "instagram", frames: int = 49) -> dict[str, Any]:
-    """Video generate karo."""
+    """Video generate karo — CogVideoX-2b (triggered only when video prompt provided)."""
     return generate_visual("video", prompt, platform, frames=frames)
 
 
 def generate_ad_image(product: str, platform: str = "facebook", style: str = "professional") -> dict[str, Any]:
-    """Ad creative image generate karo."""
+    """Ad creative image generate karo — supports text-in-image for banners/posters."""
     style_desc = {
         "professional": "clean, professional, modern, corporate",
         "bold": "bold, vibrant, eye-catching, dynamic",
@@ -633,32 +667,25 @@ def check_status(kernel_slug: str) -> str:
 # FALLBACK + BATCH + SMART RETRY
 # ═══════════════════════════════════════════════════════════════════════════════
 
-
 def generate_with_fallback(
     prompt: str,
     platform: str = "instagram",
     width: int = 0,
     height: int = 0,
-    steps: int = 20,
+    steps: int = 4,
     content_type: str = "image",
     frames: int = 49,
 ) -> dict[str, Any]:
-    """Try generate_visual; on failure simplify prompt and retry (max 3 attempts).
-
-    Attempt 1: Original prompt.
-    Attempt 2: Remove adjectives (simplified prompt).
-    Attempt 3: Switch content_type to "image" with SDXL model.
-    """
+    """Try generate_visual; on failure simplify prompt and retry (max 3 attempts)."""
     _ADJECTIVE_WORDS = {
         "beautiful", "stunning", "amazing", "gorgeous", "elegant",
-        "gorgeous", "vibrant", "mesmerizing", "breathtaking", "captivating",
+        "vibrant", "mesmerizing", "breathtaking", "captivating",
         "exquisite", "luminous", "radiant", "glorious", "magnificent",
         "fantastic", "brilliant", "wonderful", "spectacular", "fabulous",
         "luxurious", "premium", "high-quality", "ultra", "professional",
     }
 
     def _simplify_prompt(original: str) -> str:
-        """Remove adjectives from prompt to reduce model confusion."""
         words = original.split()
         simplified = [w for w in words if w.lower().strip(",.!?;:") not in _ADJECTIVE_WORDS]
         return " ".join(simplified) if simplified else original
@@ -668,17 +695,13 @@ def generate_with_fallback(
     for attempt in range(1, 4):
         current_prompt = prompt
         current_type = content_type
-        current_steps = steps
 
         if attempt == 2:
-            # Attempt 2: simplified prompt (adjectives removed)
             current_prompt = _simplify_prompt(prompt)
             logger.info("Fallback attempt 2: simplified prompt '%s'", current_prompt[:80])
         elif attempt == 3:
-            # Attempt 3: force image with SDXL-compatible settings
             current_type = "image"
             current_prompt = _simplify_prompt(prompt)
-            current_steps = 25
             width = width or 1024
             height = height or 1024
             logger.info("Fallback attempt 3: force image mode with simplified prompt")
@@ -689,7 +712,7 @@ def generate_with_fallback(
             platform=platform,
             width=width,
             height=height,
-            steps=current_steps,
+            steps=steps,
             frames=frames,
         )
 
@@ -701,9 +724,7 @@ def generate_with_fallback(
             return result
 
         last_error = result.get("error", f"Attempt {attempt} failed")
-        logger.warning(
-            "generate_with_fallback attempt %d failed: %s", attempt, last_error,
-        )
+        logger.warning("generate_with_fallback attempt %d failed: %s", attempt, last_error)
 
     return {
         "status": "error",
@@ -714,22 +735,7 @@ def generate_with_fallback(
 
 
 def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Generate visuals for a list of prompt dicts sequentially.
-
-    Each dict should contain:
-        prompt (str): The AI prompt.
-        platform (str, optional): Target platform.
-        width (int, optional): Image width.
-        height (int, optional): Image height.
-        steps (int, optional): Inference steps.
-        content_type (str, optional): "image" or "video".
-        frames (int, optional): Video frames.
-
-    Returns:
-        {status, results: [...], success_count, failure_count}
-
-    Used for content calendars where multiple assets are needed.
-    """
+    """Generate visuals for a list of prompt dicts sequentially."""
     results: list[dict[str, Any]] = []
     success_count = 0
     failure_count = 0
@@ -748,7 +754,7 @@ def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
             platform=item.get("platform", "instagram"),
             width=item.get("width", 0),
             height=item.get("height", 0),
-            steps=item.get("steps", 20),
+            steps=item.get("steps", 4),
             content_type=item.get("content_type", "image"),
             frames=item.get("frames", 49),
         )
@@ -761,7 +767,6 @@ def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             failure_count += 1
 
-        # Small delay between submissions to avoid Kaggle rate limits
         if i < len(prompts) - 1:
             time.sleep(5)
 
@@ -771,99 +776,4 @@ def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
         "success_count": success_count,
         "failure_count": failure_count,
         "total": len(prompts),
-    }
-
-
-def smart_retry(
-    kernel_slug: str, max_retries: int = 2, timeout: int = 600
-) -> dict[str, Any]:
-    """If a notebook fails, resubmit with simplified code and check status.
-
-    Args:
-        kernel_slug: The original kernel slug that failed.
-        max_retries: Maximum retry attempts (default 2).
-        timeout: Max wait per attempt in seconds.
-
-    Returns:
-        {status, kernel_slug, retries_used, ...}
-    """
-    for attempt in range(1, max_retries + 1):
-        logger.info("smart_retry attempt %d/%d for %s", attempt, max_retries, kernel_slug)
-
-        # Check current status first
-        status = poll_status(kernel_slug)
-        if status == "complete":
-            return {
-                "status": "complete",
-                "kernel_slug": kernel_slug,
-                "retries_used": attempt - 1,
-            }
-        elif status != "error":
-            # Still running or queued -- wait
-            wait_result = wait_for_completion(kernel_slug, timeout=timeout)
-            if wait_result["status"] == "complete":
-                return {
-                    "status": "complete",
-                    "kernel_slug": kernel_slug,
-                    "retries_used": attempt - 1,
-                }
-
-        # Notebook errored -- attempt resubmission with simplified code
-        logger.warning(
-            "Kernel %s failed (attempt %d). Resubmitting...", kernel_slug, attempt,
-        )
-
-        # Extract username and base slug to create a new submission
-        username = _get_username()
-        if not username:
-            return {
-                "status": "error",
-                "error": "Kaggle credentials not found for retry",
-                "retries_used": attempt,
-            }
-
-        # Build simplified notebook -- reduce steps, use smaller size
-        simplified_code = FLUX_CODE.format(
-            prompt="a simple clear photograph",
-            width=512,
-            height=512,
-            steps=15,
-        )
-        title = f"retry-{attempt}"
-
-        submit = _submit_notebook(simplified_code, title)
-        if submit["status"] == "error":
-            return {
-                "status": "error",
-                "error": f"Retry {attempt} submission failed: {submit.get('error', '')}",
-                "retries_used": attempt,
-            }
-
-        kernel_slug = submit["kernel_slug"]
-        logger.info("Retry %d submitted as %s", attempt, kernel_slug)
-
-        # Wait for retry to complete
-        wait_result = wait_for_completion(kernel_slug, timeout=timeout)
-        if wait_result["status"] == "complete":
-            # Download output
-            download = download_output(kernel_slug)
-            if download["status"] == "downloaded":
-                output_files = download.get("files", [])
-                output_file = ""
-                for f in output_files:
-                    if f.endswith((".png", ".jpg", ".jpeg", ".mp4", ".webm")):
-                        output_file = os.path.join(download["dir"], f)
-                        break
-                return {
-                    "status": "complete",
-                    "kernel_slug": kernel_slug,
-                    "file": output_file,
-                    "retries_used": attempt,
-                }
-
-    return {
-        "status": "error",
-        "kernel_slug": kernel_slug,
-        "error": f"All {max_retries} retries exhausted",
-        "retries_used": max_retries,
     }
