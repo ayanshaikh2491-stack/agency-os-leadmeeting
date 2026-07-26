@@ -12,6 +12,11 @@ Endpoints:
   POST /api/website/competitors       — Scan competitor websites
   POST /api/website/request-content   — Brief Content Agent for visuals
   POST /api/website/request-seo       — Route SEO work to SEO Agent
+  POST /api/website/generate-code     — Generate Next.js/HTML/CSS code
+  POST /api/website/deploy            — Deploy to Vercel (frontend+backend)
+  POST /api/website/domain            — Domain DNS + SSL + availability check
+  POST /api/website/screenshot        — Capture website visual metadata
+  POST /api/website/uptime            — Monitor site uptime + response time
   GET  /api/website/tools             — Available tools
 
 NOTE: SEO endpoints (/seo, /sitemap) are handled by SEO Agent routes (/api/seo/*).
@@ -83,6 +88,38 @@ class RequestContentRequest(BaseModel):
     description: str = ""
     style: str = "professional"
     priority: str = "normal"
+
+
+class GenerateCodeRequest(BaseModel):
+    page_type: str = "landing"
+    framework: str = "nextjs"
+    style: str = "modern"
+    sections: str = "hero,features,cta,footer"
+    color_primary: str = "#2563EB"
+    title: str = "My Website"
+
+
+class DeployRequest(BaseModel):
+    project_path: str = "."
+    project_name: str = ""
+    prod: bool = True
+    env_vars: str = ""
+
+
+class DomainRequest(BaseModel):
+    domain: str
+
+
+class ScreenshotRequest(BaseModel):
+    url: str
+    width: int = 1280
+    height: int = 800
+
+
+class UptimeRequest(BaseModel):
+    url: str
+    checks: int = 3
+    interval: int = 2
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -208,6 +245,53 @@ async def request_seo(req: RequestContentRequest):
         "response": response,
         "thinking_phases": phases,
     }
+
+
+@router.post("/generate-code")
+async def generate_code(req: GenerateCodeRequest):
+    """Generate Next.js/HTML/CSS code for a page."""
+    from admin.tools.website_tools import generate_code
+    return generate_code(
+        page_type=req.page_type,
+        framework=req.framework,
+        style=req.style,
+        sections=req.sections,
+        color_primary=req.color_primary,
+        title=req.title,
+    )
+
+
+@router.post("/deploy")
+async def deploy(req: DeployRequest):
+    """Deploy project to Vercel (frontend+backend)."""
+    from admin.tools.website_tools import deploy_vercel
+    return deploy_vercel(
+        project_path=req.project_path,
+        project_name=req.project_name,
+        prod=req.prod,
+        env_vars=req.env_vars,
+    )
+
+
+@router.post("/domain")
+async def domain_check(req: DomainRequest):
+    """Check domain: DNS records, SSL, website status."""
+    from admin.tools.website_tools import check_domain
+    return check_domain(req.domain)
+
+
+@router.post("/screenshot")
+async def screenshot(req: ScreenshotRequest):
+    """Capture website visual metadata."""
+    from admin.tools.website_tools import screenshot_site
+    return screenshot_site(url=req.url, width=req.width, height=req.height)
+
+
+@router.post("/uptime")
+async def uptime(req: UptimeRequest):
+    """Monitor site uptime and response time."""
+    from admin.tools.website_tools import check_uptime
+    return check_uptime(url=req.url, checks=req.checks, interval=req.interval)
 
 
 @router.get("/tools")

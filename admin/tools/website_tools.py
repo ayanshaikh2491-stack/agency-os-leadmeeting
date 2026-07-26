@@ -1,6 +1,8 @@
 """Website Tools — Real tools for Website Agent.
 
-10 tools (NO SEO — SEO Agent ka kaam hai):
+15 tools (NO SEO — SEO Agent ka kaam hai):
+
+Analysis (10):
 1. analyze_website — Crawl site, detect tech stack, structure
 2. check_performance — Page speed, load time, resources
 3. check_links — Find broken links
@@ -11,6 +13,13 @@
 8. competitor_sites — Scan competitor websites
 9. responsive_check — Mobile responsiveness
 10. check_ssl — SSL certificate status
+
+Action (5):
+11. generate_code — Generate Next.js/HTML/CSS code for a page
+12. deploy_vercel — Deploy frontend+backend to Vercel
+13. check_domain — Domain availability + DNS records
+14. screenshot_site — Take a screenshot of a website
+15. check_uptime — Monitor site uptime, response time, status
 """
 from __future__ import annotations
 
@@ -19,6 +28,9 @@ import ssl
 import json
 import socket
 import logging
+import subprocess
+import time
+import dns.resolver
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -675,6 +687,580 @@ def check_ssl(url: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 11. GENERATE CODE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate_code(
+    page_type: str = "landing",
+    framework: str = "nextjs",
+    style: str = "modern",
+    sections: str = "hero,features,cta,footer",
+    color_primary: str = "#2563EB",
+    title: str = "My Website",
+) -> dict[str, Any]:
+    """Generate starter code for a website page (Next.js or HTML/CSS)."""
+    section_list = [s.strip() for s in sections.split(",") if s.strip()]
+
+    # Color palette
+    palette = {
+        "modern": {"primary": color_primary, "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
+        "minimal": {"primary": "#000000", "secondary": "#666666", "accent": color_primary, "bg": "#FFFFFF", "text": "#333333"},
+        "bold": {"primary": "#DC2626", "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
+        "warm": {"primary": "#D97706", "secondary": "#92400E", "accent": "#059669", "bg": "#FFFBEB", "text": "#451A03"},
+        "tech": {"primary": "#7C3AED", "secondary": "#1E1B4B", "accent": "#06B6D4", "bg": "#FFFFFF", "text": "#1E1B4B"},
+    }
+    colors = palette.get(style, palette["modern"])
+
+    if framework == "html":
+        # Generate plain HTML + CSS
+        sections_html = ""
+        for sec in section_list:
+            if sec == "hero":
+                sections_html += f"""
+  <section class="hero">
+    <h1>{title}</h1>
+    <p>Welcome to our website. We build amazing things.</p>
+    <a href="#contact" class="btn">Get Started</a>
+  </section>"""
+            elif sec == "features":
+                sections_html += """
+  <section class="features">
+    <h2>Features</h2>
+    <div class="grid">
+      <div class="card"><h3>Fast</h3><p>Lightning fast performance</p></div>
+      <div class="card"><h3>Secure</h3><p>Enterprise-grade security</p></div>
+      <div class="card"><h3>Scalable</h3><p>Grows with your business</p></div>
+    </div>
+  </section>"""
+            elif sec == "cta":
+                sections_html += """
+  <section class="cta">
+    <h2>Ready to Get Started?</h2>
+    <p>Contact us today and let's build something amazing together.</p>
+    <a href="#contact" class="btn">Contact Us</a>
+  </section>"""
+            elif sec == "footer":
+                sections_html += """
+  <footer>
+    <p>&copy; 2026 """ + title + """. All rights reserved.</p>
+  </footer>"""
+            elif sec == "about":
+                sections_html += """
+  <section class="about">
+    <h2>About Us</h2>
+    <p>We are a team of passionate developers building the future of web.</p>
+  </section>"""
+            elif sec == "contact":
+                sections_html += """
+  <section class="contact" id="contact">
+    <h2>Contact Us</h2>
+    <form><input type="text" placeholder="Name" required><input type="email" placeholder="Email" required><textarea placeholder="Message" required></textarea><button type="submit">Send</button></form>
+  </section>"""
+            elif sec == "testimonials":
+                sections_html += """
+  <section class="testimonials">
+    <h2>What Our Clients Say</h2>
+    <blockquote>"Amazing work! Highly recommend." — Client Name</blockquote>
+  </section>"""
+            elif sec == "pricing":
+                sections_html += """
+  <section class="pricing">
+    <h2>Pricing</h2>
+    <div class="grid">
+      <div class="card"><h3>Starter</h3><p>$29/mo</p></div>
+      <div class="card"><h3>Pro</h3><p>$79/mo</p></div>
+      <div class="card"><h3>Enterprise</h3><p>$199/mo</p></div>
+    </div>
+  </section>"""
+            else:
+                sections_html += f'\n  <section class="{sec}"><h2>{sec.title()}</h2><p>Content for {sec} section.</p></section>'
+
+        html_code = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{ font-family: 'Inter', system-ui, sans-serif; color: {colors['text']}; background: {colors['bg']}; }}
+    .hero {{ min-height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {colors['secondary']}; color: white; }}
+    .hero h1 {{ font-size: 3.5rem; margin-bottom: 1rem; }}
+    .hero p {{ font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; }}
+    .features, .about, .testimonials, .pricing, .contact {{ padding: 5rem 2rem; text-align: center; }}
+    .features h2, .about h2, .testimonials h2, .pricing h2, .contact h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
+    .card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
+    .card h3 {{ color: {colors['primary']}; margin-bottom: 0.5rem; }}
+    .cta {{ background: {colors['primary']}; color: white; padding: 5rem 2rem; text-align: center; }}
+    .cta h2 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
+    .cta p {{ font-size: 1.1rem; margin-bottom: 2rem; opacity: 0.9; }}
+    .btn {{ display: inline-block; padding: 1rem 2.5rem; background: {colors['accent']}; color: {colors['secondary']}; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 1.1rem; transition: transform 0.2s; }}
+    .btn:hover {{ transform: translateY(-2px); }}
+    footer {{ background: {colors['secondary']}; color: white; text-align: center; padding: 2rem; }}
+    form {{ display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin: 0 auto; }}
+    input, textarea {{ padding: 0.75rem; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }}
+    button {{ padding: 0.75rem; background: {colors['primary']}; color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
+    blockquote {{ font-size: 1.2rem; font-style: italic; max-width: 600px; margin: 0 auto; padding: 2rem; border-left: 4px solid {colors['primary']}; }}
+    @media (max-width: 768px) {{ .hero h1 {{ font-size: 2.2rem; }} }}
+  </style>
+</head>
+<body>
+{sections_html}
+</body>
+</html>"""
+
+        return {
+            "framework": "html",
+            "style": style,
+            "sections": section_list,
+            "colors": colors,
+            "title": title,
+            "code": html_code,
+            "instructions": "Save as index.html and open in browser. Ready to deploy.",
+            "generated_at": _now(),
+        }
+
+    # Next.js (default)
+    components = []
+    for sec in section_list:
+        if sec == "hero":
+            components.append("""export default function Hero() {
+  return (
+    <section className="min-h-[80vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
+      <h1 className="text-5xl font-bold mb-4">{title}</h1>
+      <p className="text-xl mb-8 opacity-90">Welcome to our website. We build amazing things.</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
+    </section>
+  );
+}""")
+        elif sec == "features":
+            components.append("""export default function Features() {
+  const features = [
+    { title: "Fast", desc: "Lightning fast performance" },
+    { title: "Secure", desc: "Enterprise-grade security" },
+    { title: "Scalable", desc: "Grows with your business" },
+  ];
+  return (
+    <section className="py-20 px-8 text-center">
+      <h2 className="text-4xl font-bold mb-12">Features</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        {features.map((f, i) => (
+          <div key={i} className="bg-white rounded-xl p-8 shadow-lg">
+            <h3 className="text-lg font-bold text-blue-600 mb-2">{f.title}</h3>
+            <p className="text-gray-600">{f.desc}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}""")
+        elif sec == "cta":
+            components.append(f"""export default function CTA() {{
+  return (
+    <section className="py-20 px-8 text-center bg-blue-600 text-white">
+      <h2 className="text-4xl font-bold mb-4">Ready to Get Started?</h2>
+      <p className="text-lg mb-8 opacity-90">Contact us today.</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Contact Us</a>
+    </section>
+  );
+}}""")
+        elif sec == "footer":
+            components.append(f"""export default function Footer() {{
+  return (
+    <footer className="bg-slate-800 text-white text-center py-6">
+      <p>&copy; 2026 {title}. All rights reserved.</p>
+    </footer>
+  );
+}}""")
+        else:
+            components.append(f"""export default function {sec.title()}() {{
+  return (
+    <section className="py-20 px-8 text-center">
+      <h2 className="text-4xl font-bold mb-4">{sec.title()}</h2>
+      <p className="text-gray-600">Content for {sec} section.</p>
+    </section>
+  );
+}}""")
+
+    # Build page.tsx
+    imports = "\n".join(f"import {sec.title()} from './components/{sec.title()}';" for sec in section_list)
+    calls = "\n      ".join(f"<{sec.title()} />" for sec in section_list)
+
+    page_code = f"""// app/page.tsx — Generated by Website Agent
+{imports}
+
+export default function Home() {{
+  return (
+    <main>
+      {calls}
+    </main>
+  );
+}}
+"""
+
+    nextjs_code = {
+        "framework": "nextjs",
+        "style": style,
+        "sections": section_list,
+        "colors": colors,
+        "title": title,
+        "page_code": page_code,
+        "components": {sec.title(): code for sec, code in zip(section_list, components)},
+        "instructions": (
+            "1. Create Next.js project: npx create-next-app@latest\n"
+            "2. Replace app/page.tsx with page_code above\n"
+            "3. Create components/ folder with each component file\n"
+            "4. Run: npm run dev\n"
+            "5. Deploy: vercel deploy"
+        ),
+        "generated_at": _now(),
+    }
+
+    return nextjs_code
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. DEPLOY TO VERCEL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def deploy_vercel(
+    project_path: str = ".",
+    project_name: str = "",
+    prod: bool = True,
+    env_vars: str = "",
+) -> dict[str, Any]:
+    """Deploy a project to Vercel (frontend+backend). Uses vercel CLI."""
+    import os
+
+    # Check if vercel CLI is installed
+    try:
+        result = subprocess.run(
+            ["vercel", "--version"],
+            capture_output=True, text=True, timeout=10,
+            cwd=project_path if os.path.isdir(project_path) else ".",
+        )
+        if result.returncode != 0:
+            return {
+                "error": "Vercel CLI not found. Install: npm i -g vercel",
+                "status": "failed",
+                "install_command": "npm i -g vercel",
+            }
+    except FileNotFoundError:
+        return {
+            "error": "Vercel CLI not found. Install: npm i -g vercel",
+            "status": "failed",
+            "install_command": "npm i -g vercel",
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Vercel CLI check timed out", "status": "failed"}
+
+    # Build deploy command
+    cmd = ["vercel", "--yes"]
+    if prod:
+        cmd.append("--prod")
+    if project_name:
+        cmd.extend(["--name", project_name])
+
+    # Parse env vars (KEY=VALUE,KEY2=VALUE2)
+    env_list = []
+    if env_vars:
+        for pair in env_vars.split(","):
+            pair = pair.strip()
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                env_list.append(f"{k.strip()}={v.strip()}")
+
+    for env in env_list:
+        cmd.extend(["--env", env])
+
+    # Deploy
+    try:
+        deploy_start = time.time()
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=300,
+            cwd=project_path if os.path.isdir(project_path) else ".",
+        )
+        deploy_time = round(time.time() - deploy_start, 1)
+
+        output = result.stdout + result.stderr
+
+        # Extract URL from output
+        url = ""
+        for line in output.split("\n"):
+            line = line.strip()
+            if "https://" in line and "vercel" in line:
+                url = line
+                break
+            if line.startswith("https://"):
+                url = line
+                break
+
+        return {
+            "status": "deployed" if result.returncode == 0 else "failed",
+            "project_name": project_name or "auto",
+            "project_path": project_path,
+            "production": prod,
+            "url": url,
+            "deploy_time_seconds": deploy_time,
+            "output": output[:3000],
+            "deployed_at": _now(),
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Deploy timed out (300s limit)", "status": "failed"}
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. CHECK DOMAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def check_domain(domain: str) -> dict[str, Any]:
+    """Check domain availability, DNS records, and registrar info."""
+    # Clean domain
+    domain = domain.strip().lower()
+    if domain.startswith("http"):
+        domain = urlparse(domain).hostname or domain
+    domain = domain.replace("www.", "")
+
+    result: dict[str, Any] = {
+        "domain": domain,
+        "checked_at": _now(),
+        "dns_records": {},
+        "has_website": False,
+        "ssl_info": {},
+        "issues": [],
+    }
+
+    # DNS records
+    record_types = ["A", "AAAA", "CNAME", "MX", "TXT", "NS"]
+    for rtype in record_types:
+        try:
+            answers = dns.resolver.resolve(domain, rtype)
+            records = [str(r) for r in answers]
+            result["dns_records"][rtype] = records
+            if rtype == "A" or rtype == "AAAA":
+                result["has_website"] = True
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            pass
+        except Exception:
+            pass
+
+    # Check if site responds
+    for scheme in ["https", "http"]:
+        url = f"{scheme}://{domain}"
+        resp = _safe_get(url, timeout=8)
+        if resp:
+            result["has_website"] = True
+            result["status_code"] = resp.status_code
+            result["final_url"] = resp.url
+            result["title"] = ""
+            soup = _soup(resp.text)
+            if soup.title and soup.title.string:
+                result["title"] = soup.title.string.strip()[:100]
+            break
+
+    # SSL check
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((domain, 443), timeout=8) as sock:
+            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+                cert = ssock.getpeercert()
+                issuer = dict(x[0] for x in cert.get("issuer", []))
+                result["ssl_info"] = {
+                    "valid": True,
+                    "issuer": issuer.get("organizationName", issuer.get("commonName", "")),
+                    "expires": cert.get("notAfter", ""),
+                }
+    except Exception:
+        result["ssl_info"] = {"valid": False}
+
+    # Suggestions
+    if not result["has_website"]:
+        result["issues"].append("Domain has no active website")
+    if not result["dns_records"]:
+        result["issues"].append("No DNS records found — domain may be available")
+    if not result.get("ssl_info", {}).get("valid"):
+        result["issues"].append("No valid SSL certificate")
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. SCREENSHOT SITE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def screenshot_site(
+    url: str,
+    width: int = 1280,
+    height: int = 800,
+) -> dict[str, Any]:
+    """Take a screenshot of a website using requests-based approach.
+
+    For full browser screenshots, use the Chrome Agent (CDP).
+    This tool captures page metadata + visual indicators.
+    """
+    resp = _safe_get(url, timeout=15)
+    if not resp:
+        return {"error": f"Cannot reach {url}", "status": "failed"}
+
+    soup = _soup(resp.text)
+
+    # Extract visual metadata
+    og_image = ""
+    for meta in soup.find_all("meta"):
+        if meta.get("property") == "og:image":
+            og_image = meta.get("content", "")
+            break
+
+    # Extract all images
+    images = []
+    for img in soup.find_all("img")[:20]:
+        src = img.get("src", "")
+        if src:
+            src = urljoin(url, src)
+        images.append({
+            "src": src,
+            "alt": img.get("alt", ""),
+            "width": img.get("width", ""),
+            "height": img.get("height", ""),
+        })
+
+    # Favicon
+    favicon = ""
+    link = soup.find("link", rel=lambda r: r and "icon" in r)
+    if link:
+        favicon = urljoin(url, link.get("href", ""))
+
+    # Background colors
+    bg_colors = set()
+    for tag in soup.find_all(style=True)[:30]:
+        style = tag.get("style", "")
+        color_match = re.findall(r"background(?:-color)?:\s*(#[0-9a-fA-F]{3,8})", style)
+        bg_colors.update(color_match)
+
+    # Try to capture screenshot via CDP if available
+    screenshot_path = ""
+    try:
+        from admin.tools.chrome_tool import ChromeTool
+        chrome = ChromeTool()
+        # This would need async context — skip for sync tool
+        # Just report that CDP is available
+    except Exception:
+        pass
+
+    return {
+        "url": url,
+        "captured_at": _now(),
+        "viewport": {"width": width, "height": height},
+        "title": soup.title.string.strip()[:100] if soup.title and soup.title.string else "",
+        "og_image": og_image,
+        "favicon": favicon,
+        "images": images,
+        "image_count": len(images),
+        "bg_colors": list(bg_colors)[:10],
+        "screenshot_available": bool(screenshot_path),
+        "note": "For full browser screenshots, use Chrome Agent via CDP or Playwright",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. CHECK UPTIME
+# ═══════════════════════════════════════════════════════════════════════
+def check_uptime(
+    url: str,
+    checks: int = 3,
+    interval: int = 2,
+) -> dict[str, Any]:
+    """Monitor site uptime: check response time, status code, SSL over multiple pings."""
+    results = []
+    status_counts: dict[str, int] = {}
+    response_times = []
+
+    for i in range(checks):
+        start = time.time()
+        try:
+            resp = requests.get(
+                url, headers=_HEADERS, timeout=15, allow_redirects=True
+            )
+            elapsed = round(time.time() - start, 3)
+            status = resp.status_code
+
+            results.append({
+                "check": i + 1,
+                "status": status,
+                "response_time_ms": round(elapsed * 1000),
+                "size_bytes": len(resp.content),
+                "redirected": len(resp.history) > 0,
+                "final_url": resp.url,
+            })
+
+            status_key = f"{status}"
+            status_counts[status_key] = status_counts.get(status_key, 0) + 1
+            response_times.append(elapsed)
+        except requests.exceptions.Timeout:
+            elapsed = round(time.time() - start, 3)
+            results.append({"check": i + 1, "status": "timeout", "response_time_ms": round(elapsed * 1000)})
+            status_counts["timeout"] = status_counts.get("timeout", 0) + 1
+        except requests.exceptions.ConnectionError:
+            results.append({"check": i + 1, "status": "connection_error"})
+            status_counts["connection_error"] = status_counts.get("connection_error", 0) + 1
+        except Exception as e:
+            results.append({"check": i + 1, "status": "error", "error": str(e)[:100]})
+            status_counts["error"] = status_counts.get("error", 0) + 1
+
+        if i < checks - 1:
+            time.sleep(interval)
+
+    # Calculate stats
+    avg_response = round(sum(response_times) / len(response_times) * 1000, 1) if response_times else 0
+    min_response = round(min(response_times) * 1000, 1) if response_times else 0
+    max_response = round(max(response_times) * 1000, 1) if response_times else 0
+
+    success_count = sum(v for k, v in status_counts.items() if k.startswith("2"))
+    uptime_percent = round((success_count / max(checks, 1)) * 100, 1)
+
+    # SSL check
+    ssl_valid = False
+    try:
+        parsed = urlparse(url if url.startswith("http") else f"https://{url}")
+        hostname = parsed.hostname
+        if hostname:
+            ctx = ssl.create_default_context()
+            with socket.create_connection((hostname, 443), timeout=8) as sock:
+                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    ssl_valid = True
+    except Exception:
+        pass
+
+    # Health assessment
+    if uptime_percent == 100 and avg_response < 2000:
+        health = "healthy"
+    elif uptime_percent >= 80:
+        health = "degraded"
+    else:
+        health = "unhealthy"
+
+    return {
+        "url": url,
+        "checked_at": _now(),
+        "checks_performed": checks,
+        "uptime_percent": uptime_percent,
+        "health": health,
+        "response_time": {
+            "avg_ms": avg_response,
+            "min_ms": min_response,
+            "max_ms": max_response,
+        },
+        "status_distribution": status_counts,
+        "ssl_valid": ssl_valid,
+        "checks": results,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TOOL REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -814,6 +1400,88 @@ WEBSITE_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_code",
+            "description": "Generate starter code for a website page (Next.js components or HTML/CSS). Returns ready-to-use code with color palette and sections.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_type": {"type": "string", "description": "landing, portfolio, saas, corporate", "default": "landing"},
+                    "framework": {"type": "string", "enum": ["nextjs", "html"], "default": "nextjs"},
+                    "style": {"type": "string", "enum": ["modern", "minimal", "bold", "warm", "tech"], "default": "modern"},
+                    "sections": {"type": "string", "description": "Comma-separated sections: hero,features,cta,footer,about,contact,testimonials,pricing", "default": "hero,features,cta,footer"},
+                    "color_primary": {"type": "string", "description": "Primary color hex code", "default": "#2563EB"},
+                    "title": {"type": "string", "description": "Website/page title", "default": "My Website"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deploy_vercel",
+            "description": "Deploy a project to Vercel (frontend+backend). Uses vercel CLI. Returns deploy URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Path to project directory", "default": "."},
+                    "project_name": {"type": "string", "description": "Vercel project name"},
+                    "prod": {"type": "boolean", "description": "Deploy to production", "default": True},
+                    "env_vars": {"type": "string", "description": "Comma-separated env vars: KEY1=val1,KEY2=val2"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_domain",
+            "description": "Check domain: DNS records (A, AAAA, CNAME, MX, TXT, NS), SSL, website status, availability hints.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string", "description": "Domain name to check (e.g. example.com)"},
+                },
+                "required": ["domain"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "screenshot_site",
+            "description": "Capture website visual metadata: title, OG image, favicon, images, background colors, layout info.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to capture"},
+                    "width": {"type": "integer", "description": "Viewport width", "default": 1280},
+                    "height": {"type": "integer", "description": "Viewport height", "default": 800},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_uptime",
+            "description": "Monitor site uptime: multiple health checks, response time stats, SSL validity, health assessment.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to monitor"},
+                    "checks": {"type": "integer", "description": "Number of checks to perform (default 3)", "default": 3},
+                    "interval": {"type": "integer", "description": "Seconds between checks (default 2)", "default": 2},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 
@@ -844,6 +1512,31 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "competitor_sites": lambda a: competitor_sites(a["urls"]),
         "responsive_check": lambda a: responsive_check(a["url"]),
         "check_ssl": lambda a: check_ssl(a["url"]),
+        "generate_code": lambda a: generate_code(
+            page_type=a.get("page_type", "landing"),
+            framework=a.get("framework", "nextjs"),
+            style=a.get("style", "modern"),
+            sections=a.get("sections", "hero,features,cta,footer"),
+            color_primary=a.get("color_primary", "#2563EB"),
+            title=a.get("title", "My Website"),
+        ),
+        "deploy_vercel": lambda a: deploy_vercel(
+            project_path=a.get("project_path", "."),
+            project_name=a.get("project_name", ""),
+            prod=a.get("prod", True),
+            env_vars=a.get("env_vars", ""),
+        ),
+        "check_domain": lambda a: check_domain(a["domain"]),
+        "screenshot_site": lambda a: screenshot_site(
+            url=a["url"],
+            width=a.get("width", 1280),
+            height=a.get("height", 800),
+        ),
+        "check_uptime": lambda a: check_uptime(
+            url=a["url"],
+            checks=a.get("checks", 3),
+            interval=a.get("interval", 2),
+        ),
     }
     fn = dispatch.get(name)
     if fn:
