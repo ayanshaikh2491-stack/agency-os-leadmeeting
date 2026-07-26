@@ -1,4 +1,4 @@
-"""Social Agent API Routes — Organic Social Media strategist endpoints.
+"""Social Agent API Routes — Organic Social Media strategist + executor endpoints.
 
 Endpoints:
   POST /api/social/chat               — Chat with Social Agent
@@ -17,7 +17,20 @@ Endpoints:
   POST /api/social/dm-outreach        — DM outreach templates
   POST /api/social/influencers        — Influencer research
   POST /api/social/analytics          — Analytics report
+  POST /api/social/create-post        — Create complete post
+  POST /api/social/schedule-post      — Schedule post via SocialClaw
+  POST /api/social/post-now           — Publish immediately
+  POST /api/social/accounts           — Manage connected accounts
+  POST /api/social/queue              — View scheduled posts
+  POST /api/social/post-analytics     — Track post performance
   POST /api/social/request-content    — Brief Content Agent
+
+  # Token Management (Client Account Connection)
+  GET  /api/social/tokens/status      — Check connected accounts
+  POST /api/social/tokens/connect     — Connect via Explorer token
+  POST /api/social/tokens/exchange    — Exchange token for long-lived
+  DELETE /api/social/tokens/{platform} — Disconnect account
+
   GET  /api/social/tools              — Available tools
 """
 from __future__ import annotations
@@ -191,6 +204,24 @@ class PostAnalyticsRequest(BaseModel):
     period: str = "7d"
 
 
+# ── Token Management Models ────────────────────────────────────────────────
+
+class TokenConnectRequest(BaseModel):
+    workspace_id: str = "default"
+    platform: str = "facebook"
+    access_token: str = ""
+    explorer_token: str = ""
+    app_id: str = ""
+    app_secret: str = ""
+
+
+class TokenExchangeRequest(BaseModel):
+    workspace_id: str = "default"
+    explorer_token: str = ""
+    app_id: str = ""
+    app_secret: str = ""
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -347,6 +378,91 @@ async def post_analytics(req: PostAnalyticsRequest):
     """Track post performance."""
     from admin.tools.social_tools import post_analytics
     return post_analytics(req.platform, req.post_id, req.period)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOKEN MANAGEMENT — Client Account Connection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/tokens/status")
+async def token_status(workspace_id: str = "default"):
+    """Check connected social accounts and token status."""
+    from admin.token_manager import list_tokens, get_token_expiry_info
+    tokens = list_tokens(workspace_id)
+    return {
+        "workspace_id": workspace_id,
+        "connected_accounts": tokens,
+        "count": len(tokens),
+    }
+
+
+@router.post("/tokens/connect")
+async def token_connect(req: TokenConnectRequest):
+    """Connect a social account via Explorer token or direct token.
+
+    Two modes:
+    1. Direct token: Pass access_token directly (client gave you the token)
+    2. Explorer token: Pass explorer_token + app_id + app_secret (auto-exchange to long-lived)
+    """
+    from admin.token_manager import save_token, exchange_facebook_token
+
+    if req.platform == "facebook" and (req.explorer_token or req.app_id):
+        # Exchange Explorer token for long-lived token + fetch pages + IG
+        return exchange_facebook_token(
+            workspace_id=req.workspace_id,
+            explorer_token=req.explorer_token or req.access_token,
+            app_id=req.app_id,
+            app_secret=req.app_secret,
+        )
+
+    elif req.platform == "instagram" and req.access_token:
+        # Direct IG token save
+        result = save_token(
+            workspace_id=req.workspace_id,
+            platform="instagram",
+            access_token=req.access_token,
+        )
+        return {"status": "saved", "platform": "instagram", "result": result}
+
+    elif req.access_token:
+        # Direct token save for any platform
+        result = save_token(
+            workspace_id=req.workspace_id,
+            platform=req.platform,
+            access_token=req.access_token,
+        )
+        return {"status": "saved", "platform": req.platform, "result": result}
+
+    return {"status": "error", "error": "Provide access_token or explorer_token"}
+
+
+@router.post("/tokens/exchange")
+async def token_exchange(req: TokenExchangeRequest):
+    """Exchange Explorer token for long-lived token (60 days).
+
+    This also fetches all Pages and IG Business accounts linked to the account.
+    """
+    from admin.token_manager import exchange_facebook_token
+    return exchange_facebook_token(
+        workspace_id=req.workspace_id,
+        explorer_token=req.explorer_token,
+        app_id=req.app_id,
+        app_secret=req.app_secret,
+    )
+
+
+@router.delete("/tokens/{platform}")
+async def token_delete(platform: str, workspace_id: str = "default"):
+    """Disconnect a social account by removing its stored token."""
+    from admin.token_manager import delete_token
+    return delete_token(workspace_id, platform)
+
+
+@router.get("/tokens/{platform}/check")
+async def token_check(platform: str, workspace_id: str = "default"):
+    """Check if a specific platform token is active, expired, or expiring soon."""
+    from admin.token_manager import get_token_expiry_info
+    return get_token_expiry_info(workspace_id, platform)
 
 
 @router.post("/request-content")
