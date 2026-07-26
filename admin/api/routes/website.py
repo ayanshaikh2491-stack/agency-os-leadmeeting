@@ -1,19 +1,21 @@
 """Website Agent API Routes — Full-stack web developer endpoints.
 
 Endpoints:
-  POST /api/website/chat              — Chat with Website Agent
+  POST /api/website/chat              — Chat with Website Agent (SEO requests auto-route to SEO Agent)
   POST /api/website/analyze           — Analyze website structure + tech stack
   POST /api/website/performance       — Check page performance
   POST /api/website/links             — Find broken links
-  POST /api/website/seo               — Basic SEO check
   POST /api/website/security          — Security headers check
   POST /api/website/accessibility     — a11y checks
   POST /api/website/tech-stack        — Recommend tech stack
   POST /api/website/design-plan       — Plan site architecture
   POST /api/website/competitors       — Scan competitor websites
-  POST /api/website/sitemap           — Generate XML sitemap
   POST /api/website/request-content   — Brief Content Agent for visuals
+  POST /api/website/request-seo       — Route SEO work to SEO Agent
   GET  /api/website/tools             — Available tools
+
+NOTE: SEO endpoints (/seo, /sitemap) are handled by SEO Agent routes (/api/seo/*).
+      Website Agent auto-routes SEO requests to SEO Agent via agent_bus.
 """
 from __future__ import annotations
 
@@ -48,10 +50,6 @@ class LinksRequest(BaseModel):
     max_links: int = 50
 
 
-class SEORequest(BaseModel):
-    url: str
-
-
 class SecurityRequest(BaseModel):
     url: str
 
@@ -76,10 +74,6 @@ class DesignPlanRequest(BaseModel):
 
 class CompetitorsRequest(BaseModel):
     urls: list[str]
-
-
-class SitemapRequest(BaseModel):
-    url: str
 
 
 class RequestContentRequest(BaseModel):
@@ -122,12 +116,6 @@ async def links(req: LinksRequest):
     from admin.tools.website_tools import check_links
     return check_links(req.url, req.max_links)
 
-
-@router.post("/seo")
-async def seo(req: SEORequest):
-    """Basic SEO check: title, meta, headings, OG tags."""
-    from admin.tools.website_tools import seo_basics
-    return seo_basics(req.url)
 
 
 @router.post("/security")
@@ -175,12 +163,6 @@ async def competitors(req: CompetitorsRequest):
     return competitor_sites(req.urls)
 
 
-@router.post("/sitemap")
-async def sitemap(req: SitemapRequest):
-    """Generate XML sitemap."""
-    from admin.tools.website_tools import generate_sitemap
-    return generate_sitemap(req.url)
-
 
 @router.post("/request-content")
 async def request_content(req: RequestContentRequest):
@@ -198,10 +180,34 @@ async def request_content(req: RequestContentRequest):
 
 @router.post("/request-seo")
 async def request_seo(req: RequestContentRequest):
-    """Route SEO work to SEO Agent."""
-    from admin.workspace.agents.website import WebsiteAgent
-    agent = WebsiteAgent(workspace_name=req.workspace_name, client_name=req.workspace_name)
-    return agent.request_seo(req.topic or req.description)
+    """Route SEO work to SEO Agent — SEO Agent karega kaam aur report dega."""
+    from admin.workspace.agents.seo import SEOAgent
+    seo_agent = SEOAgent(workspace_name=req.workspace_name, client_name=req.workspace_name)
+    
+    task = req.topic or req.description
+    if not task:
+        raise HTTPException(400, "topic or description required for SEO task")
+    
+    response, phases = await seo_agent.chat(message=task)
+    
+    # Also send brief via agent_bus for audit trail
+    from admin.workspace.agent_bus import send_message
+    send_message(
+        from_agent="website",
+        to_agent="seo",
+        workspace_id=req.workspace_name,
+        subject=f"SEO task from Website Agent: {task[:80]}",
+        content=response,
+        message_type="response",
+    )
+    
+    return {
+        "status": "completed",
+        "routed_to": "seo",
+        "task": task[:200],
+        "response": response,
+        "thinking_phases": phases,
+    }
 
 
 @router.get("/tools")

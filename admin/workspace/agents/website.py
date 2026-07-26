@@ -308,15 +308,14 @@ class WebsiteAgent:
         self._graph = get_website_graph()
 
     def _route_to_seo(self, message: str) -> dict[str, Any] | None:
-        """If request is SEO-related, route to SEO Agent."""
+        """If request is SEO-related, route to SEO Agent and get actual response."""
         if not _is_seo_request(message):
             return None
 
         try:
             from admin.workspace.agents.seo import SEOAgent
-            seo_agent = SEOAgent(workspace_name=self.workspace_name, client_name=self.client_name)
 
-            # Send via agent bus
+            # Send delegation message via agent_bus for audit trail
             send_message(
                 from_agent="website",
                 to_agent="seo",
@@ -326,19 +325,52 @@ class WebsiteAgent:
                 message_type="delegation",
             )
 
+            # Actually call SEO Agent and get real response
+            import asyncio
+            seo_agent = SEOAgent(workspace_name=self.workspace_name, client_name=self.client_name)
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're inside an async context — use create_task pattern
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(
+                            asyncio.run,
+                            seo_agent.chat(message=message),
+                        )
+                        response, phases = future.result(timeout=120)
+                else:
+                    response, phases = loop.run_until_complete(seo_agent.chat(message=message))
+            except RuntimeError:
+                # No event loop — run fresh
+                response, phases = asyncio.run(seo_agent.chat(message=message))
+
+            # Send response back via agent_bus
+            send_message(
+                from_agent="seo",
+                to_agent="website",
+                workspace_id=self.workspace_name,
+                subject=f"SEO response for: {message[:60]}",
+                content=response,
+                message_type="response",
+            )
+
             return {
                 "routed_to_seo": True,
-                "message": (
-                    "This is an SEO request — routing to SEO Agent. "
-                    "SEO Agent handles: keyword research, meta tags, schema markup, "
-                    "SERP rankings, backlinks, sitemap, robots.txt, on-page/off-page SEO. "
-                    "I (Website Agent) handle: design, development, hosting, performance, "
-                    "security, accessibility."
-                ),
+                "message": f"**SEO Agent Response:**\n\n{response}",
+                "thinking_phases": phases,
             }
         except Exception as e:
             logger.warning("SEO routing failed: %s", e)
-            return None
+            return {
+                "routed_to_seo": True,
+                "message": (
+                    "SEO request detected but SEO Agent is temporarily unavailable. "
+                    "Please use the SEO Agent directly at `/api/seo/chat`. "
+                    f"Error: {str(e)[:200]}"
+                ),
+            }
 
     async def chat(self, message: str) -> tuple[str, str]:
         """Process a website request."""
@@ -399,16 +431,40 @@ class WebsiteAgent:
             return {"status": "error", "error": str(e)}
 
     def request_seo(self, task: str) -> dict[str, Any]:
-        """Explicitly request SEO work from SEO Agent."""
+        """Explicitly request SEO work from SEO Agent and get actual response."""
         try:
+            from admin.workspace.agents.seo import SEOAgent
+
+            # Send brief via agent_bus for audit trail
             send_message(
                 from_agent="website",
                 to_agent="seo",
                 workspace_id=self.workspace_name,
-                subject=f"SEO task from Website Agent",
+                subject="SEO task from Website Agent",
                 content=task,
                 message_type="brief",
             )
-            return {"status": "brief_sent", "routed_to": "seo", "task": task[:100]}
+
+            # Call SEO Agent and get real response
+            seo_agent = SEOAgent(workspace_name=self.workspace_name, client_name=self.client_name)
+            import asyncio
+            try:
+                response, phases = asyncio.run(seo_agent.chat(message=task))
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                response, phases = loop.run_until_complete(seo_agent.chat(message=task))
+                loop.close()
+
+            # Send response back
+            send_message(
+                from_agent="seo",
+                to_agent="website",
+                workspace_id=self.workspace_name,
+                subject=f"SEO response: {task[:60]}",
+                content=response,
+                message_type="response",
+            )
+
+            return {"status": "completed", "routed_to": "seo", "response": response, "phases": phases}
         except Exception as e:
             return {"status": "error", "error": str(e)}
