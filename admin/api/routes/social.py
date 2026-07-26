@@ -1,4 +1,4 @@
-"""Social Agent API Routes — Social media strategist endpoints.
+"""Social Agent API Routes — Organic Social Media strategist endpoints.
 
 Endpoints:
   POST /api/social/chat               — Chat with Social Agent
@@ -12,6 +12,11 @@ Endpoints:
   POST /api/social/gaps               — Content gap analysis
   POST /api/social/audience           — Audience analysis
   POST /api/social/growth             — Growth tactics
+  POST /api/social/caption            — Generate post caption
+  POST /api/social/repurpose          — Repurpose content for platforms
+  POST /api/social/dm-outreach        — DM outreach templates
+  POST /api/social/influencers        — Influencer research
+  POST /api/social/analytics          — Analytics report
   POST /api/social/request-content    — Brief Content Agent
   GET  /api/social/tools              — Available tools
 """
@@ -107,6 +112,41 @@ class RequestContentRequest(BaseModel):
     quantity: int = 1
 
 
+class CaptionRequest(BaseModel):
+    topic: str = ""
+    platform: str = "instagram"
+    tone: str = "engaging"
+    audience: str = "general"
+    include_cta: bool = True
+
+
+class RepurposeRequest(BaseModel):
+    original_content: str = ""
+    source_platform: str = "instagram"
+    target_platforms: list[str] = ["linkedin", "twitter", "tiktok", "facebook"]
+    topic: str = ""
+
+
+class DMOutreachRequest(BaseModel):
+    purpose: str = "collaboration"
+    platform: str = "instagram"
+    target_audience: str = "micro-influencers"
+    tone: str = "friendly"
+
+
+class InfluencerRequest(BaseModel):
+    niche: str = ""
+    platform: str = "instagram"
+    budget: str = "organic"
+    count: int = 10
+
+
+class AnalyticsRequest(BaseModel):
+    platform: str = "instagram"
+    metrics: list[str] = ["followers", "engagement", "reach"]
+    period: str = "weekly"
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -186,6 +226,41 @@ async def growth(req: GrowthRequest):
     """Growth tactics."""
     from admin.tools.social_tools import growth_tactics
     return growth_tactics(req.current_followers, req.platform, req.niche, req.budget)
+
+
+@router.post("/caption")
+async def caption(req: CaptionRequest):
+    """Generate post caption."""
+    from admin.tools.social_tools import generate_caption
+    return generate_caption(req.topic, req.platform, req.tone, req.audience, req.include_cta)
+
+
+@router.post("/repurpose")
+async def repurpose(req: RepurposeRequest):
+    """Repurpose content for multiple platforms."""
+    from admin.tools.social_tools import repurpose_content
+    return repurpose_content(req.original_content, req.source_platform, req.target_platforms, req.topic)
+
+
+@router.post("/dm-outreach")
+async def dm_outreach(req: DMOutreachRequest):
+    """DM outreach templates and strategy."""
+    from admin.tools.social_tools import dm_outreach
+    return dm_outreach(req.purpose, req.platform, req.target_audience, req.tone)
+
+
+@router.post("/influencers")
+async def influencers(req: InfluencerRequest):
+    """Influencer research."""
+    from admin.tools.social_tools import influencer_research
+    return influencer_research(req.niche, req.platform, req.budget, req.count)
+
+
+@router.post("/analytics")
+async def analytics(req: AnalyticsRequest):
+    """Analytics report."""
+    from admin.tools.social_tools import analytics_report
+    return analytics_report(req.platform, req.metrics, req.period)
 
 
 @router.post("/request-content")

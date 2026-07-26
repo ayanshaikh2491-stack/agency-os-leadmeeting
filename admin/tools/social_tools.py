@@ -380,36 +380,36 @@ def engagement_strategy(
 def platform_strategy(
     industry: str = "",
     goals: str = "brand awareness",
-    budget: str = "organic_only",
+    budget: str = "organic",
 ) -> dict[str, Any]:
     """Platform-specific strategy recommendations."""
     platforms = {
         "instagram": {
             "best_for": ["Visual brands", "Lifestyle", "Fashion", "Food", "Travel", "Fitness"],
             "content_types": ["Reels", "Carousels", "Stories", "Lives"],
-            "growth_tactics": ["Hashtag strategy", "Reels algorithm", "Collaborations", "Engagement pods"],
-            "monetization": ["Brand partnerships", "Affiliate links", "Shopping features"],
+            "organic_tactics": ["Hashtag strategy", "Reels algorithm", "Collaborations", "Engagement pods", "User-generated content"],
+            "growth_potential": "High — Reels reach non-followers easily",
             "priority": "high" if industry in ["fashion", "food", "fitness", "travel", "lifestyle"] else "medium",
         },
         "linkedin": {
             "best_for": ["B2B", "Professional services", "SaaS", "Consulting", "Tech"],
             "content_types": ["Text posts", "Articles", "Carousels", "Polls", "Documents"],
-            "growth_tactics": ["Thought leadership", "Employee advocacy", "Newsletter", "Events"],
-            "monetization": ["Lead generation", "Partnerships", "Speaking opportunities"],
+            "organic_tactics": ["Thought leadership", "Employee advocacy", "Newsletter", "Events", "Comment engagement"],
+            "growth_potential": "High — organic reach is still strong",
             "priority": "high" if industry in ["b2b", "saas", "consulting", "tech", "professional"] else "medium",
         },
         "twitter": {
             "best_for": ["Tech", "News", "Media", "Personal brands", "Startups"],
             "content_types": ["Threads", "Tweets", "Polls", "Spaces", "Quote tweets"],
-            "growth_tactics": ["Thread virality", "Engagement with thought leaders", "Trending topics"],
-            "monetization": ["Newsletter", "Speaking", "Consulting"],
+            "organic_tactics": ["Thread virality", "Engagement with thought leaders", "Trending topics", "Community building"],
+            "growth_potential": "Medium — algorithm favors engagement",
             "priority": "high" if industry in ["tech", "news", "media", "startups"] else "low",
         },
         "tiktok": {
             "best_for": ["Gen Z", "Entertainment", "Education", "D2C brands"],
             "content_types": ["Short video", "Trending sounds", "Duets", "Stitches", "Lives"],
-            "growth_tactics": ["Trending audio", "Hashtag challenges", "Series content"],
-            "monetization": ["Creator fund", "Brand deals", "TikTok Shop"],
+            "organic_tactics": ["Trending audio", "Hashtag challenges", "Series content", "Stitch strategy"],
+            "growth_potential": "Very High — best organic reach of any platform",
             "priority": "high" if industry in ["entertainment", "education", "d2c"] else "medium",
         },
     }
@@ -429,6 +429,8 @@ def platform_strategy(
             "Start with 1-2 platforms, expand later",
             "Cross-post adapted content (not identical)",
             "Each platform needs native content style",
+            "Focus on organic growth — no paid ads",
+            "Consistency beats perfection",
         ],
         "generated_at": _now(),
     }
@@ -559,12 +561,13 @@ def growth_tactics(
             "Create shareable carousel content",
         ],
         "established": [
-            "Partner with macro-influencers",
+            "Partner with micro-influencers for shoutouts",
             "Launch branded hashtag challenge",
-            "Invest in paid ads for reach",
             "Create original research/data content",
             "Build community (Discord, Facebook Group)",
-            "Monetize: courses, merchandise, consulting",
+            "Start a newsletter or email list",
+            "Collaborate with complementary brands",
+            "Create shareable infographic content",
         ],
     }
 
@@ -581,6 +584,456 @@ def growth_tactics(
             "50K": "Significant brand deal opportunities",
             "100K": "Macro-influencer status, speaking opportunities",
         },
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. GENERATE CAPTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate_caption(
+    topic: str = "",
+    platform: str = "instagram",
+    tone: str = "engaging",
+    audience: str = "general",
+    include_cta: bool = True,
+) -> dict[str, Any]:
+    """Generate social media post captions."""
+    caption_templates = {
+        "instagram": {
+            "engaging": "🎯 {topic}\n\nHere's what most people don't tell you about {topic}...\n\n👇 Swipe to learn more\n\n💬 Drop a comment if you agree!\n\n{hashtags}\n\n{cta}",
+            "educational": "📚 {topic} — Let's break it down.\n\n✅ Step 1: Understand the basics\n✅ Step 2: Apply consistently\n✅ Step 3: Measure results\n\nSave this for later! 🔖\n\n{hashtags}\n\n{cta}",
+            "inspirational": "✨ {topic}\n\nEvery expert was once a beginner. Don't wait for the \"right time\" — start now.\n\nYour future self will thank you. 💪\n\n{hashtags}\n\n{cta}",
+            "behind_scenes": "🎬 Behind the scenes of {topic}\n\nThis is what it really looks like. No filters, no pretending.\n\nAuthenticity wins every time. 🙌\n\n{hashtags}\n\n{cta}",
+        },
+        "linkedin": {
+            "engaging": "I spent the last 30 days studying {topic}.\n\nHere are 5 things I learned:\n\n1️⃣ Most people overcomplicate it\n2️⃣ Consistency matters more than perfection\n3️⃣ Data beats opinions\n4️⃣ Start small, scale fast\n5️⃣ Community is everything\n\nWhat's your experience with {topic}?\n\n{hashtags}",
+            "educational": "🎓 {topic} — A thread 🧵\n\nMost professionals get this wrong. Here's the right approach:\n\n→ Focus on fundamentals first\n→ Learn from real case studies\n→ Apply, measure, iterate\n\nAgree? Disagree? Let's discuss 👇\n\n{hashtags}",
+            "thought_leadership": "Hot take on {topic} 🔥\n\nThe industry is moving too fast for \"we've always done it this way.\"\n\nThe winners will be those who adapt, experiment, and stay curious.\n\nYour thoughts?\n\n{hashtags}",
+        },
+        "twitter": {
+            "engaging": "🧵 {topic}\n\nHere's what I've learned (thread):\n\n1/ The biggest mistake people make with {topic} is...\n2/ Instead, try this approach:\n3/ The results speak for themselves:\n\n♻️ RT if this helps\n🔔 Follow for more",
+            "hot_take": "Unpopular opinion:\n\n{topic} is overrated.\n\nHere's why 👇",
+        },
+        "tiktok": {
+            "engaging": "POV: You just discovered {topic} 🤯\n\nWait for the plot twist... 😂\n\n#fyp #viral #trending {hashtags}",
+            "educational": "Things nobody tells you about {topic}:\n\nPart 1 👇\n\n#learnontiktok #education #tips {hashtags}",
+        },
+    }
+
+    platform_captions = caption_templates.get(platform, caption_templates["instagram"])
+    template = platform_captions.get(tone, list(platform_captions.values())[0])
+
+    # Generate hashtags
+    niche_words = topic.split()[:3] if topic else ["business"]
+    hashtags = " ".join([f"#{w.lower()}" for w in niche_words[:5]])
+
+    cta = ""
+    if include_cta:
+        cta_options = {
+            "instagram": "Double tap if this resonates! ❤️",
+            "linkedin": "What's your take? Comment below 👇",
+            "twitter": "RT if you agree 🔄",
+            "tiktok": "Follow for more tips!",
+        }
+        cta = cta_options.get(platform, "Like and share!")
+
+    caption = template.format(
+        topic=topic or "this topic",
+        hashtags=hashtags,
+        cta=cta,
+    )
+
+    return {
+        "platform": platform,
+        "topic": topic,
+        "tone": tone,
+        "caption": caption,
+        "word_count": len(caption.split()),
+        "character_count": len(caption),
+        "hashtags": hashtags,
+        "cta": cta,
+        "tips": [
+            "Post at peak hours for maximum reach",
+            "First line is crucial — it determines if people read more",
+            "Use line breaks for readability",
+            "End with a question to boost comments",
+        ],
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. REPURPOSE CONTENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def repurpose_content(
+    original_content: str = "",
+    source_platform: str = "instagram",
+    target_platforms: list[str] = ["linkedin", "twitter", "tiktok", "facebook"],
+    topic: str = "",
+) -> dict[str, Any]:
+    """Adapt one piece of content for multiple platforms."""
+    adaptations = {}
+
+    platform_rules = {
+        "linkedin": {
+            "style": "Professional, thought leadership",
+            "format": "Text post or article",
+            "length": "1000-1300 characters",
+            "tone": "Authoritative, insightful",
+            "tips": [
+                "Start with a hook (first 2 lines visible)",
+                "Use line breaks for readability",
+                "Add personal experience/anecdote",
+                "End with a question for engagement",
+            ],
+        },
+        "twitter": {
+            "style": "Concise, punchy",
+            "format": "Thread or single tweet",
+            "length": "280 characters per tweet",
+            "tone": "Direct, witty",
+            "tips": [
+                "Break into 3-5 tweet thread",
+                "First tweet must hook",
+                "Use numbers/lists",
+                "End with CTA (RT, follow)",
+            ],
+        },
+        "tiktok": {
+            "style": "Casual, entertaining",
+            "format": "15-60 second video script",
+            "length": "Script for 30-60 seconds",
+            "tone": "Fun, relatable",
+            "tips": [
+                "Hook in first 3 seconds",
+                "Use trending audio",
+                "Show, don't tell",
+                "Add text overlays",
+            ],
+        },
+        "facebook": {
+            "style": "Conversational, community-focused",
+            "format": "Text post or shared link",
+            "length": "200-500 characters",
+            "tone": "Friendly, personal",
+            "tips": [
+                "Ask questions to drive comments",
+                "Use emojis strategically",
+                "Share personal stories",
+                "Post in groups for reach",
+            ],
+        },
+        "instagram": {
+            "style": "Visual-first, aesthetic",
+            "format": "Carousel, Reel, or Story",
+            "length": "Caption: 2200 characters max",
+            "tone": "Inspirational, educational",
+            "tips": [
+                "Carousel for education, Reels for reach",
+                "Use all 30 hashtag slots",
+                "First image is thumb-stopping",
+                "Add save-worthy content",
+            ],
+        },
+    }
+
+    for platform in target_platforms:
+        rules = platform_rules.get(platform, platform_rules["instagram"])
+        adaptations[platform] = {
+            "platform": platform,
+            "recommended_format": rules["format"],
+            "style": rules["style"],
+            "tone": rules["tone"],
+            "length": rules["length"],
+            "adaptation_tips": rules["tips"],
+            "note": f"Adapt '{original_content[:50]}...' for {platform} using {rules['style']} style",
+        }
+
+    return {
+        "source_platform": source_platform,
+        "target_platforms": target_platforms,
+        "original_content_preview": original_content[:200] if original_content else topic,
+        "adaptations": adaptations,
+        "repurpose_strategy": [
+            "LinkedIn: Professional angle, add insights",
+            "Twitter: Break into thread, make punchy",
+            "TikTok: Visual/hook-based, trending format",
+            "Facebook: Community angle, personal story",
+            "Instagram: Visual-first, save-worthy",
+        ],
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. DM OUTREACH
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def dm_outreach(
+    purpose: str = "collaboration",
+    platform: str = "instagram",
+    target_audience: str = "micro-influencers",
+    tone: str = "friendly",
+) -> dict[str, Any]:
+    """DM outreach templates and strategy."""
+    templates = {
+        "collaboration": {
+            "instagram": {
+                "friendly": "Hey {name}! 👋 Love your content about {topic}. We're working on something similar and thought a collab could be awesome. Would you be open to chatting? No pressure at all! 😊",
+                "professional": "Hi {name}, I'm from [Brand]. Your {topic} content resonates with our audience. We'd love to explore a potential collaboration. Would you be open to a quick chat?",
+                "casual": "Yo {name}! 🔥 Your {topic} content hits different. Wanna collab on something? Let me know! 🤙",
+            },
+            "linkedin": {
+                "professional": "Hi {name}, I came across your profile and was impressed by your work in {topic}. I'm reaching out because we're exploring collaboration opportunities with thought leaders in this space. Would you be open to a brief conversation?",
+            },
+        },
+        "partnership": {
+            "instagram": {
+                "friendly": "Hey {name}! We've been following your journey and love what you're building. We think there's a great opportunity for us to support each other's audiences. Interested in exploring this? 🚀",
+            },
+        },
+        "shoutout": {
+            "instagram": {
+                "friendly": "Hey {name}! Your {topic} content is 🔥. We'd love to feature you in our stories/newsletter. Would you be cool with that? We'll tag you of course! 😊",
+            },
+        },
+        "ugc": {
+            "instagram": {
+                "friendly": "Hey {name}! We loved your recent post about {topic}. Would you be interested in creating content for our page? We'll compensate you and give full credit! 🙌",
+            },
+        },
+    }
+
+    purpose_templates = templates.get(purpose, templates["collaboration"])
+    platform_templates = purpose_templates.get(platform, purpose_templates.get("instagram", {}))
+    template = platform_templates.get(tone, list(platform_templates.values())[0] if platform_templates else "Hello! Love your content. Let's connect!")
+
+    strategy = {
+        "pre_outreach": [
+            "Engage with their content for 1-2 weeks before DMing",
+            "Leave genuine comments on 5-10 posts",
+            "Share their content in your stories",
+            "Follow them and turn on notifications",
+        ],
+        "during_outreach": [
+            "Personalize every message (mention specific post)",
+            "Keep it short (under 100 words)",
+            "Be clear about what you're offering",
+            "Make it easy to say yes (suggest a quick call)",
+        ],
+        "follow_up": [
+            "Wait 3-5 days before follow-up",
+            "Keep follow-up shorter than original",
+            "Add new value (share their recent post)",
+            "If no response after 2 follow-ups, move on",
+        ],
+        "volume_guide": {
+            "starter": "5-10 DMs per day",
+            "growing": "10-20 DMs per day",
+            "established": "20-30 DMs per day",
+        },
+    }
+
+    return {
+        "purpose": purpose,
+        "platform": platform,
+        "template": template,
+        "placeholders": ["{name}", "{topic}", "[Brand]"],
+        "strategy": strategy,
+        "dos_donts": {
+            "dos": [
+                "Personalize every message",
+                "Be genuine and specific",
+                "Offer value first",
+                "Follow up once (max twice)",
+                "Track response rates",
+            ],
+            "donts": [
+                "Send mass generic messages",
+                "Be pushy or desperate",
+                "Lie about who you are",
+                "Follow up more than twice",
+                "Ignore their boundaries",
+            ],
+        },
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. INFLUENCER RESEARCH
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def influencer_research(
+    niche: str = "",
+    platform: str = "instagram",
+    budget: str = "organic",
+    count: int = 10,
+) -> dict[str, Any]:
+    """Find organic influencers for collaborations."""
+    # Micro-influencer tiers
+    tiers = {
+        "nano": {
+            "follower_range": "1K - 10K",
+            "engagement_rate": "5-10%",
+            "best_for": "Local businesses, niche products",
+            "cost": "Free product / shoutout exchange",
+            "approach": "DM directly, casual tone",
+        },
+        "micro": {
+            "follower_range": "10K - 50K",
+            "engagement_rate": "3-5%",
+            "best_for": "Growing brands, targeted reach",
+            "cost": "Product + small fee or affiliate",
+            "approach": "Email or DM, professional tone",
+        },
+        "mid": {
+            "follower_range": "50K - 500K",
+            "engagement_rate": "2-3%",
+            "best_for": "Brand awareness, credibility",
+            "cost": "Paid collaboration",
+            "approach": "Email, formal proposal",
+        },
+    }
+
+    research_checklist = [
+        "Check engagement rate (not just followers)",
+        "Look at comment quality (real vs bot)",
+        "Check posting consistency (active account)",
+        "Review brand alignment (values match)",
+        "Analyze audience demographics",
+        "Check previous brand collaborations",
+        "Verify no fake followers (use tools)",
+        "Assess content quality and style",
+        "Check for controversial content",
+        "Review response rate to DMs/comments",
+    ]
+
+    search_strategies = {
+        "instagram": [
+            "Search niche hashtags and find top creators",
+            "Check \"Suggested\" accounts in your niche",
+            "Look at who your competitors collaborate with",
+            "Use Instagram's \"Branded Content\" tags",
+            "Search location tags for local influencers",
+        ],
+        "linkedin": [
+            "Search industry hashtags",
+            "Check who posts about your topic frequently",
+            "Look at article authors in your niche",
+            "Find speakers at industry events",
+            "Check who gets most engagement on industry posts",
+        ],
+        "tiktok": [
+            "Search niche hashtags",
+            "Check \"For You\" page creators",
+            "Look at trending sounds and who uses them",
+            "Find duet/stitch partners",
+            "Check creator marketplace",
+        ],
+    }
+
+    return {
+        "niche": niche,
+        "platform": platform,
+        "budget": budget,
+        "tiers": tiers,
+        "recommended_tier": "nano" if budget == "organic" else "micro",
+        "research_checklist": research_checklist,
+        "search_strategies": search_strategies.get(platform, search_strategies["instagram"]),
+        "outreach_tips": [
+            "Start with nano/micro-influencers (higher engagement)",
+            "Build genuine relationship before asking for collaboration",
+            "Offer value (free product, revenue share, exposure)",
+            "Create clear deliverables and expectations",
+            "Track ROI for each collaboration",
+        ],
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. ANALYTICS REPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def analytics_report(
+    platform: str = "instagram",
+    metrics: list[str] = ["followers", "engagement", "reach"],
+    period: str = "weekly",
+) -> dict[str, Any]:
+    """Generate organic performance analytics report."""
+    kpis = {
+        "instagram": {
+            "engagement_rate": {"good": "3-5%", "great": "5-7%", "excellent": ">7%"},
+            "reach_rate": {"good": "20-30% of followers", "great": "30-50%", "excellent": ">50%"},
+            "save_rate": {"good": "1-3%", "great": "3-5%", "excellent": ">5%"},
+            "share_rate": {"good": "0.5-1%", "great": "1-3%", "excellent": ">3%"},
+            "story_completion": {"good": "70%", "great": "80%", "excellent": ">90%"},
+        },
+        "linkedin": {
+            "engagement_rate": {"good": "2-4%", "great": "4-6%", "excellent": ">6%"},
+            "impression_rate": {"good": "10-20% of connections", "great": "20-40%", "excellent": ">40%"},
+            "click_through": {"good": "1-2%", "great": "2-4%", "excellent": ">4%"},
+            "comment_rate": {"good": "1-2%", "great": "2-5%", "excellent": ">5%"},
+        },
+        "twitter": {
+            "engagement_rate": {"good": "1-3%", "great": "3-5%", "excellent": ">5%"},
+            "impression_rate": {"good": "10-20% of followers", "great": "20-40%", "excellent": ">40%"},
+            "retweet_rate": {"good": "1-2%", "great": "2-4%", "excellent": ">4%"},
+            "reply_rate": {"good": "0.5-1%", "great": "1-3%", "excellent": ">3%"},
+        },
+        "tiktok": {
+            "view_rate": {"good": "10-30% of followers", "great": "30-100%", "excellent": ">100%"},
+            "completion_rate": {"good": "30-50%", "great": "50-70%", "excellent": ">70%"},
+            "share_rate": {"good": "1-3%", "great": "3-5%", "excellent": ">5%"},
+            "save_rate": {"good": "2-5%", "great": "5-10%", "excellent": ">10%"},
+        },
+    }
+
+    platform_kpis = kpis.get(platform, kpis["instagram"])
+
+    report_template = {
+        "summary": {
+            "period": period,
+            "platform": platform,
+            "top_performing_content": "Identify posts with highest engagement",
+            "growth_trend": "Compare to previous period",
+            "key_insight": "What worked and what didn't",
+        },
+        "metrics_to_track": [
+            "Follower growth (net new)",
+            "Engagement rate",
+            "Reach / Impressions",
+            "Saves and shares (high-intent actions)",
+            "Best performing content type",
+            "Best posting times",
+            "Hashtag performance",
+        ],
+        "kpis_by_platform": platform_kpis,
+        "action_items": [
+            "Double down on top-performing content type",
+            "Test new posting times based on data",
+            "Refine hashtag strategy based on performance",
+            "Create more content around high-engagement topics",
+            "Engage more with top commenters",
+        ],
+        "reporting_tips": [
+            "Track weekly for pattern recognition",
+            "Compare month-over-month for growth",
+            "Focus on engagement rate, not just followers",
+            "Track saves/shares as high-intent metrics",
+            "Review competitor performance monthly",
+        ],
+    }
+
+    return {
+        "platform": platform,
+        "period": period,
+        "kpis": platform_kpis,
+        "report": report_template,
         "generated_at": _now(),
     }
 
@@ -696,7 +1149,7 @@ SOCIAL_TOOLS = [
                 "properties": {
                     "industry": {"type": "string"},
                     "goals": {"type": "string", "default": "brand awareness"},
-                    "budget": {"type": "string", "description": "organic_only, small_budget, large_budget", "default": "organic_only"},
+                    "budget": {"type": "string", "description": "organic only - no paid ads", "default": "organic"},
                 },
                 "required": [],
             },
@@ -745,7 +1198,93 @@ SOCIAL_TOOLS = [
                     "current_followers": {"type": "integer", "default": 0},
                     "platform": {"type": "string", "default": "instagram"},
                     "niche": {"type": "string"},
-                    "budget": {"type": "string", "description": "organic, small_budget, large_budget", "default": "organic"},
+                    "budget": {"type": "string", "description": "organic only - no paid ads", "default": "organic"},
+                },
+                "required": [],
+            },
+        },
+    },
+    # ── NEW TOOLS (11-15) ──
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_caption",
+            "description": "Generate social media post captions with hashtags and CTA for any platform and tone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Post topic or subject"},
+                    "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok", "default": "instagram"},
+                    "tone": {"type": "string", "description": "engaging, educational, inspirational, behind_scenes, thought_leadership", "default": "engaging"},
+                    "audience": {"type": "string", "description": "Target audience", "default": "general"},
+                    "include_cta": {"type": "boolean", "description": "Include call-to-action", "default": True},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "repurpose_content",
+            "description": "Adapt one piece of content for multiple platforms with platform-specific formatting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "original_content": {"type": "string", "description": "Original content to repurpose"},
+                    "source_platform": {"type": "string", "description": "Platform where original was posted", "default": "instagram"},
+                    "target_platforms": {"type": "array", "items": {"type": "string"}, "description": "Platforms to adapt for"},
+                    "topic": {"type": "string", "description": "Content topic"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dm_outreach",
+            "description": "DM outreach templates and strategy for collaborations, partnerships, and influencer outreach.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "purpose": {"type": "string", "description": "collaboration, partnership, shoutout, ugc", "default": "collaboration"},
+                    "platform": {"type": "string", "description": "instagram, linkedin", "default": "instagram"},
+                    "target_audience": {"type": "string", "description": "micro-influencers, nano-influencers, brands", "default": "micro-influencers"},
+                    "tone": {"type": "string", "description": "friendly, professional, casual", "default": "friendly"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "influencer_research",
+            "description": "Find organic influencers for collaborations with tiers, research checklist, and search strategies.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "niche": {"type": "string", "description": "Client's niche"},
+                    "platform": {"type": "string", "description": "instagram, linkedin, tiktok", "default": "instagram"},
+                    "budget": {"type": "string", "description": "organic, micro_budget", "default": "organic"},
+                    "count": {"type": "integer", "description": "Number of influencers to research", "default": 10},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analytics_report",
+            "description": "Generate organic performance analytics report with KPIs and benchmarks for any platform.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok", "default": "instagram"},
+                    "metrics": {"type": "array", "items": {"type": "string"}, "description": "Metrics to track"},
+                    "period": {"type": "string", "description": "weekly, monthly, quarterly", "default": "weekly"},
                 },
                 "required": [],
             },
@@ -767,10 +1306,15 @@ def execute_social_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "competitor_analysis": lambda a: competitor_analysis(a.get("competitors", []), a.get("platform", "instagram"), a.get("niche", "")),
         "trend_research": lambda a: trend_research(a.get("niche", ""), a.get("platform", "instagram")),
         "engagement_strategy": lambda a: engagement_strategy(a.get("platform", "instagram"), a.get("goals", "community building"), a.get("audience_size", "small")),
-        "platform_strategy": lambda a: platform_strategy(a.get("industry", ""), a.get("goals", "brand awareness"), a.get("budget", "organic_only")),
+        "platform_strategy": lambda a: platform_strategy(a.get("industry", ""), a.get("goals", "brand awareness"), a.get("budget", "organic")),
         "content_gap_analysis": lambda a: content_gap_analysis(a.get("your_content", []), a.get("competitor_content", []), a.get("niche", "")),
         "audience_analysis": lambda a: audience_analysis(a.get("industry", ""), a.get("platform", "instagram"), a.get("location", "India")),
         "growth_tactics": lambda a: growth_tactics(a.get("current_followers", 0), a.get("platform", "instagram"), a.get("niche", ""), a.get("budget", "organic")),
+        "generate_caption": lambda a: generate_caption(a.get("topic", ""), a.get("platform", "instagram"), a.get("tone", "engaging"), a.get("audience", "general"), a.get("include_cta", True)),
+        "repurpose_content": lambda a: repurpose_content(a.get("original_content", ""), a.get("source_platform", "instagram"), a.get("target_platforms", ["linkedin", "twitter", "tiktok", "facebook"]), a.get("topic", "")),
+        "dm_outreach": lambda a: dm_outreach(a.get("purpose", "collaboration"), a.get("platform", "instagram"), a.get("target_audience", "micro-influencers"), a.get("tone", "friendly")),
+        "influencer_research": lambda a: influencer_research(a.get("niche", ""), a.get("platform", "instagram"), a.get("budget", "organic"), a.get("count", 10)),
+        "analytics_report": lambda a: analytics_report(a.get("platform", "instagram"), a.get("metrics", ["followers", "engagement", "reach"]), a.get("period", "weekly")),
     }
     fn = dispatch.get(name)
     if fn:
