@@ -1,7 +1,8 @@
 # Content Agent — Skill Reference
 
 ## Role
-Full-spectrum content execution engine. Creates images, videos, AND text content.
+Visual content execution engine. Sirf images aur videos banata hai.
+NO text, NO captions, NO copy, NO strategy — wo domain agents ka kaam hai.
 
 ## Capabilities
 
@@ -14,28 +15,13 @@ Full-spectrum content execution engine. Creates images, videos, AND text content
 - Video content (short-form reels, ad videos via CogVideoX)
 - AI image generation (FLUX via Kaggle GPU)
 
-### Text Content
-- Blog posts (SEO-optimized with HTML output)
-- Website copy and landing pages
-- Ad copy (Facebook, Instagram, Google, LinkedIn)
-- Social media captions
-- Meta descriptions and title tags
-- Content briefs with outlines
-
-### Content Strategy
-- Content calendars (weekly/monthly planning)
-- Content gap analysis (vs competitors)
-- Readability analysis (Flesch-Kincaid scores)
-- SEO scoring and optimization
-- Content repurposing across platforms
-
 ### Brand & Research
 - Auto brand discovery from website/social media
 - Free stock image search (Unsplash)
 - Social media image size specs (all platforms)
-- Competitor content analysis
 
 ## Key Rules
+- **VISUAL ONLY** — koi text, caption, copy nahi
 - Receives briefs from domain agents (SEO, Ads, Social, Website)
 - The agent who briefed = the agent who approves
 - Always discover brand identity before creating visuals
@@ -52,16 +38,15 @@ Autonomously discovers client brand identity:
 - Store brand data for consistent output
 
 ## Workflow
-1. Receive visual/content brief from domain agent
+1. Receive visual brief from domain agent
 2. Discover client brand identity (if new client — auto-triggered)
 3. Enhance brief with brand intelligence (colors, style, dimensions)
 4. Submit job to GPU queue (on-demand, no waste)
 5. Process queue when GPU free (auto-retry on failure)
 6. Generate visuals (FLUX/CogVideoX on Kaggle GPU)
-7. Generate text content (blog, copy, meta)
-8. Request CEO approval before publishing
-9. Report completion to briefing agent
-10. Share learnings with Agency Content Agent
+7. Request CEO approval before publishing
+8. Report completion to briefing agent
+9. Share learnings with Agency Content Agent
 
 ## Communication
 - **Reports to**: The domain agent that briefed them
@@ -73,37 +58,19 @@ Autonomously discovers client brand identity:
 - **Kaggle API** (API-driven, no browser sessions)
 - Images: FLUX.1-dev via Kaggle GPU (free 30hrs/week)
 - Videos: CogVideoX-5b via Kaggle GPU
-- Text: Local processing (no GPU needed)
 - Future: Replicate/fal.ai when GPU budget available
 
-## Tools (21 total)
+## Tools (6 total — Visual Only)
 
-### Visual Tools (10)
-1. discover_brand_identity — Scan website for brand
-2. parse_visual_brief — Parse domain agent brief
-3. plan_visual_production — Plan prompts, dimensions, GPU
-4. generate_image_kaggle — FLUX image generation
-5. generate_ad_image — Platform-specific ad creative
-6. generate_social_image — Social media post image
-7. generate_hero_image — Website/blog hero banner
-8. batch_generate_images — Multiple images for calendar
-9. generate_video_kaggle — CogVideoX video generation
-10. generate_video_ad — Video advertisement
+### Visual Tools
+1. generate_image — FLUX image generation (any prompt)
+2. generate_video — CogVideoX video generation
+3. generate_ad_image — Platform-specific ad creative
+4. generate_social_image — Social media post image
+5. generate_hero_image — Website/blog hero banner
+6. get_platform_specs — Platform image/video sizes
 
-### Content Tools (11)
-11. analyze_readability — Flesch-Kincaid readability scores
-12. generate_content_brief — Brief with outline + keywords
-13. generate_blog_post — SEO blog post with HTML
-14. optimize_meta_descriptions — Meta tag optimization
-15. rewrite_content — Improve readability
-16. generate_content_calendar — Weekly content plan
-17. analyze_content_gaps — Competitor content analysis
-18. search_images — Free stock image search
-19. get_social_image_specs — Platform image sizes
-20. repurpose_for_social — Cross-platform content conversion
-21. generate_ad_copy — Ad copy for any platform
-
-## API Endpoints (38 total)
+## API Endpoints
 
 ### Core
 - POST /api/content/chat — LangGraph chat
@@ -112,27 +79,11 @@ Autonomously discovers client brand identity:
 
 ### Visual Generation
 - POST /api/content/discover-brand — Brand discovery
-- POST /api/content/parse-brief — Brief parsing
-- POST /api/content/plan — Production planning
 - POST /api/content/generate-image — AI image (FLUX)
 - POST /api/content/generate-video — AI video (CogVideoX)
 - POST /api/content/generate-ad — Ad creative
 - POST /api/content/generate-social — Social image
 - POST /api/content/generate-hero — Hero banner
-- POST /api/content/batch-generate — Batch images
-
-### Text Content
-- POST /api/content/analyze-readability — Readability
-- POST /api/content/content-brief — Content brief
-- POST /api/content/blog-post — Blog post
-- POST /api/content/optimize-meta — Meta optimization
-- POST /api/content/rewrite — Content rewrite
-- POST /api/content/calendar — Content calendar
-- POST /api/content/gap-analysis — Gap analysis
-- POST /api/content/search-images — Stock images
-- POST /api/content/image-specs — Image sizes
-- POST /api/content/repurpose — Cross-platform
-- POST /api/content/ad-copy — Ad copy
 
 ### GPU Queue
 - POST /api/content/queue/submit — Submit job to queue
@@ -146,7 +97,7 @@ Autonomously discovers client brand identity:
 - POST /api/content/agency/knowledge — Cross-project knowledge
 - POST /api/content/agency/best-prompts — Best prompts
 
-### Content Agent Intelligence (NEW)
+### Content Agent Intelligence
 - POST /api/content/agent/brand-discover — Auto brand discovery
 - POST /api/content/agent/submit-job — Submit job with intelligence
 - POST /api/content/agent/process-job — Process queued job
@@ -170,13 +121,13 @@ Autonomously discovers client brand identity:
 - Per-workspace queue isolation
 - Domain agent notification on completion
 
-## Interview References
-- Q1: Full-spectrum content (visual + text)
-- Q2: Full visual spectrum
-- Q3: Kaggle API (FLUX + CogVideoX)
-- Q4: Per-workspace isolation
-- Q5: Brand discovery
-- Q6: Domain agent approval authority
-- Q7: Cross-project learning via Agency Content Agent
-- Q11: Two-tier (workspace + agency)
-- Q27: Cross-project knowledge sharing
+## What Content Agent Does NOT Do
+- ❌ Blog posts → SEO Agent
+- ❌ Ad copy → Ads Agent
+- ❌ Social captions → Social Agent
+- ❌ Website copy → Website Agent
+- ❌ Meta descriptions → SEO Agent
+- ❌ Content calendars → Domain Agents
+- ❌ Content strategy → Domain Agents
+- ❌ Readability analysis → SEO Agent
+- ❌ Content repurposing → Domain Agents

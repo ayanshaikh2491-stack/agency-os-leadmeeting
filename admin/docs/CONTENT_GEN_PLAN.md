@@ -1,197 +1,148 @@
 ═══ TAGS AGENCY OS — CONTENT GENERATION PLAN ═══
 ═══════════════════════════════════════════════════
 
-YEH HAI PURA PLAN — KAISE KAAM KAREGA
-═══════════════════════════════════════════════════
+IMPORTANT: Content Agent = VISUAL ONLY (images + videos)
+Text ka kaam domain agents khud karte hain (SEO, Social, Ads, Website)
 
 ═══ PHASE 1: JO ABHI HAI (ALREADY DONE) ═══
 
-✅ Admin Agent → Agents ko tasks allocate karta hai
-✅ Domain Agents (Ads, Social, SEO, Website) → Brief create karte hain
-✅ Content Agent → Brief receive karta hai
-✅ ChromeTool → Connected hai real Chrome se (CDP)
-✅ chrome_kaggle.py → Notebook code templates ready hain (FLUX + CogVideo)
-✅ _execute_unified_tool → Async hai, Chrome tools route karta hai
+✅ Content Agent (LangGraph pipeline) — content.py (749 lines)
+✅ Workspace Content Store — content_store.py (per-workspace memory)
+✅ Agency Content Agent — content_agent.py (cross-project learning)
+✅ Visual tools — generate_image, generate_video, generate_ad, generate_social, generate_hero
+✅ Kaggle GPU integration — FLUX images + CogVideoX videos
+✅ Brand discovery — website se brand identity scan
+✅ Content API routes — /api/content/* endpoints
+✅ Skill reference — SKILL.md updated (visual only)
+✅ Job queue — on-demand GPU, priority ordering, auto-retry
 
-═══ PHASE 2: KYA BANEGA (NEXT) ═══
+═══ PHASE 2: KYA BAKI HAI ═══
 
-Naya module: admin/tools/local_gen.py
-  → Ollama API se connect hoga (text generation)
-  → Har workspace ka apna model cache
-  → 24/7 background me text generate karega
+1. chrome_kaggle.py — JavaScript injection fix
+   → Abhi character-by-character paste ho raha hai (10 min)
+   → JS injection se 2 sec mein hoga
+   → ChromeTool se Colab notebook mein code paste
 
-Fix: chrome_kaggle.py me colab code paste
-  → JavaScript injection se paste karega (2 sec)
-  → Abhi character-by-character type kar raha hai (10 min)
+2. process_pending_briefs() — Full pipeline wire
+   → Queue se brief uthao
+   → Content Agent sochta hai: image/video kaunsa, kaise
+   → Appropriate visual tool fire karo
+   → Result domain agent ko bhejo
 
-Wire: process_pending_briefs → Content Agent
-  → Queue se brief uthao
-  → Content LLM decide kare: text/image/video
-  → Appropriate tool fire karo
-  → Result wapas b PHASE 3: FINAL USER EXPERIENCE ═══
+3. Brief system ka integration
+   → Domain Agent VisualBrief bhejta hai
+   → Content Agent brief parse karta hai
+   → Brand context add karta hai
+   → GPU pe generate karta hai
 
-──────────────────────────────────────────
-CASE 1: Text Content (Blog, Caption, Copy)
-──────────────────────────────────────────
+4. CEO approval flow
+   → Content Agent generate karta hai
+   → CEO ko approval ke liye bhejta hai
+   → Approved → domain agent ko deliver
 
-Domain Agent: "Social media post chahiye fitness brand ke liye"
-
-↓ Brief queue me jaata hai
-
-Content Agent uthata hai brief:
-  → LLM sochta hai: "Sirf text chahiye, local Ollama se kar skta hoon"
-  → Tool: generate_text(prompt, platform, tone)
-  → Ollama API (localhost:11434) → phi3.5 model CPU pe run
-  → 2-5 sec me caption ready
-  → Result domain agent ko bhejta hai
-
-User dekhega: Kuch nahi — background me ho gaya
+═══ FLOW: DOMAIN AGENT → CONTENT AGENT ═══
 
 ──────────────────────────────────────────
-CASE 2: Image Content (Poster, Ad, Social──
+CASE 1: Image Content (Poster, Ad, Social Post)
+──────────────────────────────────────────
 
 Domain Agent: "Fitness Instagram post ke liye image chahiye, motivational"
 
-↓ Brief queue me jaata hai
+↓ VisualBrief queue me jaata hai
 
 Content Agent uthata hai brief:
-  → LLM sochta hai: "Image bhi chahiye text bhi"
-  → Step 1: Text → Ollama (caption likh diya, 2 sec)
-  → Step 2: Image generate_image_via_colab_chrome()
-
-      ChromeTool → Chrome opens colab.research.google.com
-      │
-      ├── File → New notebook (Control+N)
-      ├── Wait 3 sec for load
-      ├── Code cell find karo
-      ├── JavaScript injection → FLUX code paste (2 sec!)
-      ├── Runtime → Change runtime type → T4 GPU
-     +Enter → Run cell
-      │
-      │   Colab ke ANDAR:
-      │   ┌──────────────────────────────────┐
-      │   │ pip install diffusers...         │ (30 sec)
-      │   │ GPU: T4 detected                  │
-      │   │ Loading FLUX.1-dev model...       │ (2-3 min)
-      │   │ Generating image...               │ (30 sec)
-      │   │ ✅ SUCCESS: output.png           │
-      │   │ files.download(output.png) → DL  │
-      │   └──────────────────────────────────┘
-      │
-      ├── Chrome download trigger hota hai
-      ├── Download complete (5-10 sec)
-      │
-      ↓ Result: {"status": "completed", "file": "output.png"}
-
-  → Step 3: Dono combine karo (image + caption)
-  → Result domain agent ko bhejo
-
-User dekhega:
-  → Chrome window dikhegi (Colab open hote hue)
-  → Code paste hote hue dikhega
-  → Notebook run hote hue dikhega
-  → Download hote hue dikhega
-  → Phir Chrome tab close ho jayega
+  → LLM sochta hai: "Image chahiye, FLUX se karunga"
+  → Brand context dekhta hai (client ke colors, style)
+  → Expert prompt banata hai FLUX ke liye
+  → Tool: generate_image(prompt, platform="instagram")
+  → Kaggle GPU pe FLUX run hota hai
+  → Image generate hoti hai (30 sec)
+  → Result domain agent ko bhejta hai
 
 ──────────────────────────────────────────
-CASE 3: Video Content (Reel, Ad Video)
+CASE 2: Video Content (Reel, Ad Video)
 ──────────────────────────────────────────
 
 Domain Agent: "Product launch ke liye 6 sec video chahiye"
 
-↓ Same flow as image
+↓ VisualBrief queue me jaata hai
 
 Content Agent:
-  → Tool: generate_video_via_colab_chrome()
-  → ChromeTool → Colab open
-  → CogVideoX code paste
-  → GPU run → 5-10 min wait
-  → MP4 download
+  → LLM sochta hai: "Video chahiye, CogVideoX se karunga"
+  → Tool: generate_video(prompt, duration=6)
+  → Kaggle GPU pe CogVideoX run hota hai
+  → Video generate hoti hai (5-10 min)
+  → MP4 download hota hai
+  → Result domain agent ko bhejta hai
 
-═══ ARCHITECTURE DIAGRAM ═══
+──────────────────────────────────────────
+CASE 3: Ad Creative (Multi-platform)
+──────────────────────────────────────────
+
+Ads Agent: "Facebook ad ke liye 3 sizes chahiye — 1200x628, 1080x1080, 1200x1500"
+
+↓ VisualBrief queue me jaata hai
+
+Content Agent:
+  → Tool: generate_ad_image(prompt, platform="facebook")
+  → 3 alag-alag sizes generate karta hai
+  → Brand consistent rakhta hai
+  → Results Ads Agent ko bhejta hai
+
+═══ ARCHITECTURE ═══
 
 ┌─────────────────────────────────────────────────────────┐
-│                     E2C WORKER (24/7)                     │
+│                  CONTENT AGENT (LangGraph)                │
 │                                                          │
-│  ┌──────────────┐    ┌──────────────┐                    │
-│  │  Redis Queue  │    │  File System  │                   │
-│  │  (briefs in)  │    │  (outputs)    │                   │
-│  └──────┬──────▲────────┘                   │
-│         │                   │                            │
-│         ▼───────────────────┘                            │
 │  ┌──────────────────────────────────┐                    │
-│  │       CONTENT AGENT (LangGraph)   │                    │
-│  │                                  │                    │
-│  │  Node: content_call_llm          │                    │
- LLM decides tools           │                    │
-│  │                                  │                    │
-│  │  Node: content_execute_tools     │                    │
-│  │    → _execute_unified_tool()     │                    │
+│  │  Step 1: Brief samjhe            │                    │
+│  │  Step 2: Brand context dekhe     │                    │
+│  │  Step 3: Visual plan banaye      │                    │
+│  │  Step 4: Expert prompt likhe     │                    │
+│  │  Step 5: Generate kare           │                    │
+│  │  Step 6: Report kare             │                    │
 │  └────────┬────────────┬───────────┘                    │
 │           │            │                                │
 │           ▼            ▼                                │
 │  ┌────────────┐ ┌──────────────────┐                    │
-│  │  Ollama     │ │  ChromeTool      │                    │
-│  │  (localhost)│ │  (CDP -> Chrome)  │                   │
-│  │  phi3.5     │ │                   │                    │
-│  │  text only  │ │  goto, click,     │                    │
-│  │  2-5 sec    │ │  fill, eval,      │                    │
-│  │            │ │  screenshot       │                    │
-│  └────────────┘ └────────┬──────────┘                    │
-│                          │                               │
-│                          ▼                               │
-│               ┌────────────────────┐                     │
-│               │  Google Colab       │                     │
-│               │  (free T4 GPU)      │                     │
-│               │                     │                     │
-│               │  FLUX -> Image      │                     │
-│               │  CogVideoX -> Video  │                    │
-│               └────────────────────┘                     │
+│  │  FLUX       │ │  CogVideoX       │                   │
+│  │  (Images)   │ │  (Videos)        │                   │
+│  └────────────┘ └──────────────────┘                    │
+│                                                          │
+│  ┌──────────────────────────────────┐                    │
+│  │  Workspace Content Store          │                   │
+│  │  (per-client memory)              │                   │
+│  └──────────────────────────────────┘                    │
+│                                                          │
+│  ┌──────────────────────────────────┐                    │
+│  │  Agency Content Agent             │                   │
+│  │  (cross-project learning)         │                   │
+│  └──────────────────────────────────┘                    │
 └─────────────────────────────────────────────────────────┘
 
-═══ FILES JO CHANGE HONGE ═══
+═══ JO CHANGE KARNA HAI ═══
 
-1. NEW: admin/tools/local_gen.py
-     → Ollama API client
-     → generate_text() function
-     → TEXT_TOOLS definitions
-     → execute_text_tool() dispatch
+1. admin/tools/chrome_kaggle.py
+   → JavaScript injection fix (fast paste)
 
-2. MODIFY: admin/tools/chrome_kaggle.py
-     → colab_paste_code → JavaScript injection (fast)
-     → _build_flux_code → better error handling
-     → COLAB_GPU_SELECTORS → updated selectors
+2. admin/workspace/agents/content.py
+   → process_pending_briefs() complete karo
+   → Brief system properly wire karo
 
-3. MODIFY: admin/workspace/agents/content.py
-     → Import local_gen tools
-     → Add TEXT_TOOLS to ALL_CONTENT_TOOLS
-     → _execute_unified_tool → route to Ollama text tools
-     → Wire process_pending_briefs() → full pipeline
-     → System prompt → updated tools list
+═══ SETUP ═══
 
-═══ SETUP EK BAAR KARNA HOGA ═══
+1. Kaggle API token configured hona chahiye
+2. Chrome running hona chahiye (ChromeTool ke liye)
+3. Colab me login: https://colab.research.google.com
 
-1. Download Ollama: https://ollama.com/download
-2. CMD me run:
-     ollama pull phi3.5:3.8b-mini
-     (sirf 2 GB download, CPU pe chalega)
-3. ChromeTool ke liye Chrome daemon already chal raha hoga
-4. Colab me login: https://colab.research.google.com
-     (ek baar login karo, cookies save ho jayengi)
+═══ WHAT CONTENT AGENT DOES NOT DO ═══
 
-═══ TIMELINE ═══
-
-Day 1:
- local_gen.py banao (Ollama text)
-  → chrome_kaggle.py fix karo (JS injection)
-  → Sab compile verify karo
-
-Day 2:
-  → content.py wire karo
-  → process_pending_briefs() complete karo
-  → System prompt update karo
-
-Day 3:
-  → Test karo real Chrome + Colab
-  → Test karo Ollama text
-  → Test full flow domain agent → content agent → output
+❌ Blog posts → SEO Agent
+❌ Ad copy → Ads Agent
+❌ Social captions → Social Agent
+❌ Website copy → Website Agent
+❌ Meta descriptions → SEO Agent
+❌ Content calendars → Domain Agents
+❌ Content strategy → Domain Agents
+❌ Readability analysis → SEO Agent
+❌ Content repurposing → Domain Agents
