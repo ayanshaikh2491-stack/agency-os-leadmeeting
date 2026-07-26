@@ -599,3 +599,243 @@ def generate_hero_image(topic: str, style: str = "modern") -> dict[str, Any]:
 def check_status(kernel_slug: str) -> str:
     """Notebook status check karo."""
     return poll_status(kernel_slug)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FALLBACK + BATCH + SMART RETRY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def generate_with_fallback(
+    prompt: str,
+    platform: str = "instagram",
+    width: int = 0,
+    height: int = 0,
+    steps: int = 20,
+    content_type: str = "image",
+    frames: int = 49,
+) -> dict[str, Any]:
+    """Try generate_visual; on failure simplify prompt and retry (max 3 attempts).
+
+    Attempt 1: Original prompt.
+    Attempt 2: Remove adjectives (simplified prompt).
+    Attempt 3: Switch content_type to "image" with SDXL model.
+    """
+    _ADJECTIVE_WORDS = {
+        "beautiful", "stunning", "amazing", "gorgeous", "elegant",
+        "gorgeous", "vibrant", "mesmerizing", "breathtaking", "captivating",
+        "exquisite", "luminous", "radiant", "glorious", "magnificent",
+        "fantastic", "brilliant", "wonderful", "spectacular", "fabulous",
+        "luxurious", "premium", "high-quality", "ultra", "professional",
+    }
+
+    def _simplify_prompt(original: str) -> str:
+        """Remove adjectives from prompt to reduce model confusion."""
+        words = original.split()
+        simplified = [w for w in words if w.lower().strip(",.!?;:") not in _ADJECTIVE_WORDS]
+        return " ".join(simplified) if simplified else original
+
+    last_error = ""
+
+    for attempt in range(1, 4):
+        current_prompt = prompt
+        current_type = content_type
+        current_steps = steps
+
+        if attempt == 2:
+            # Attempt 2: simplified prompt (adjectives removed)
+            current_prompt = _simplify_prompt(prompt)
+            logger.info("Fallback attempt 2: simplified prompt '%s'", current_prompt[:80])
+        elif attempt == 3:
+            # Attempt 3: force image with SDXL-compatible settings
+            current_type = "image"
+            current_prompt = _simplify_prompt(prompt)
+            current_steps = 25
+            width = width or 1024
+            height = height or 1024
+            logger.info("Fallback attempt 3: force image mode with simplified prompt")
+
+        result = generate_visual(
+            content_type=current_type,
+            prompt=current_prompt,
+            platform=platform,
+            width=width,
+            height=height,
+            steps=current_steps,
+            frames=frames,
+        )
+
+        if result.get("status") == "success":
+            result["attempts"] = attempt
+            if attempt > 1:
+                result["fallback_used"] = True
+                result["fallback_reason"] = f"Attempt {attempt}: {'simplified prompt' if attempt == 2 else 'forced image mode'}"
+            return result
+
+        last_error = result.get("error", f"Attempt {attempt} failed")
+        logger.warning(
+            "generate_with_fallback attempt %d failed: %s", attempt, last_error,
+        )
+
+    return {
+        "status": "error",
+        "error": f"All 3 attempts failed. Last error: {last_error}",
+        "attempts": 3,
+        "fallback_used": True,
+    }
+
+
+def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Generate visuals for a list of prompt dicts sequentially.
+
+    Each dict should contain:
+        prompt (str): The AI prompt.
+        platform (str, optional): Target platform.
+        width (int, optional): Image width.
+        height (int, optional): Image height.
+        steps (int, optional): Inference steps.
+        content_type (str, optional): "image" or "video".
+        frames (int, optional): Video frames.
+
+    Returns:
+        {status, results: [...], success_count, failure_count}
+
+    Used for content calendars where multiple assets are needed.
+    """
+    results: list[dict[str, Any]] = []
+    success_count = 0
+    failure_count = 0
+
+    for i, item in enumerate(prompts):
+        prompt_text = item.get("prompt", "")
+        if not prompt_text:
+            results.append({"index": i, "status": "skipped", "error": "Empty prompt"})
+            failure_count += 1
+            continue
+
+        logger.info("batch_generate [%d/%d]: %s", i + 1, len(prompts), prompt_text[:60])
+
+        result = generate_with_fallback(
+            prompt=prompt_text,
+            platform=item.get("platform", "instagram"),
+            width=item.get("width", 0),
+            height=item.get("height", 0),
+            steps=item.get("steps", 20),
+            content_type=item.get("content_type", "image"),
+            frames=item.get("frames", 49),
+        )
+
+        result["index"] = i
+        results.append(result)
+
+        if result.get("status") == "success":
+            success_count += 1
+        else:
+            failure_count += 1
+
+        # Small delay between submissions to avoid Kaggle rate limits
+        if i < len(prompts) - 1:
+            time.sleep(5)
+
+    return {
+        "status": "completed",
+        "results": results,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "total": len(prompts),
+    }
+
+
+def smart_retry(
+    kernel_slug: str, max_retries: int = 2, timeout: int = 600
+) -> dict[str, Any]:
+    """If a notebook fails, resubmit with simplified code and check status.
+
+    Args:
+        kernel_slug: The original kernel slug that failed.
+        max_retries: Maximum retry attempts (default 2).
+        timeout: Max wait per attempt in seconds.
+
+    Returns:
+        {status, kernel_slug, retries_used, ...}
+    """
+    for attempt in range(1, max_retries + 1):
+        logger.info("smart_retry attempt %d/%d for %s", attempt, max_retries, kernel_slug)
+
+        # Check current status first
+        status = poll_status(kernel_slug)
+        if status == "complete":
+            return {
+                "status": "complete",
+                "kernel_slug": kernel_slug,
+                "retries_used": attempt - 1,
+            }
+        elif status != "error":
+            # Still running or queued -- wait
+            wait_result = wait_for_completion(kernel_slug, timeout=timeout)
+            if wait_result["status"] == "complete":
+                return {
+                    "status": "complete",
+                    "kernel_slug": kernel_slug,
+                    "retries_used": attempt - 1,
+                }
+
+        # Notebook errored -- attempt resubmission with simplified code
+        logger.warning(
+            "Kernel %s failed (attempt %d). Resubmitting...", kernel_slug, attempt,
+        )
+
+        # Extract username and base slug to create a new submission
+        username = _get_username()
+        if not username:
+            return {
+                "status": "error",
+                "error": "Kaggle credentials not found for retry",
+                "retries_used": attempt,
+            }
+
+        # Build simplified notebook -- reduce steps, use smaller size
+        simplified_code = FLUX_CODE.format(
+            prompt="a simple clear photograph",
+            width=512,
+            height=512,
+            steps=15,
+        )
+        title = f"retry-{attempt}"
+
+        submit = _submit_notebook(simplified_code, title)
+        if submit["status"] == "error":
+            return {
+                "status": "error",
+                "error": f"Retry {attempt} submission failed: {submit.get('error', '')}",
+                "retries_used": attempt,
+            }
+
+        kernel_slug = submit["kernel_slug"]
+        logger.info("Retry %d submitted as %s", attempt, kernel_slug)
+
+        # Wait for retry to complete
+        wait_result = wait_for_completion(kernel_slug, timeout=timeout)
+        if wait_result["status"] == "complete":
+            # Download output
+            download = download_output(kernel_slug)
+            if download["status"] == "downloaded":
+                output_files = download.get("files", [])
+                output_file = ""
+                for f in output_files:
+                    if f.endswith((".png", ".jpg", ".jpeg", ".mp4", ".webm")):
+                        output_file = os.path.join(download["dir"], f)
+                        break
+                return {
+                    "status": "complete",
+                    "kernel_slug": kernel_slug,
+                    "file": output_file,
+                    "retries_used": attempt,
+                }
+
+    return {
+        "status": "error",
+        "kernel_slug": kernel_slug,
+        "error": f"All {max_retries} retries exhausted",
+        "retries_used": max_retries,
+    }

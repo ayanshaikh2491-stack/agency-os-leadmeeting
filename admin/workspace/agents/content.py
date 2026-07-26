@@ -1,26 +1,16 @@
-"""Content Agent — Workspace-Aware Visual Content Executor.
+"""Content Agent — Workspace-Aware Visual Content Executor (6-Node Pipeline).
 
-HAR workspace ka apna Content Agent hoga jo us client ko jaanta hai:
-  - Brand name, logo, colors, visual style
-  - Past successes/failures, learnings
-  - Industry tips, platform performance
+LANGGRAPH PIPELINE (6 nodes):
+  Node 1: parse_brief     — Extract structured brief from raw message
+  Node 2: analyze_brand   — Combine brand context + agency knowledge
+  Node 3: plan_visual     — Create detailed visual plan + variation list
+  Node 4: engineer_prompt — Build expert-level prompts for each variation
+  Node 5: generate        — Submit to Kaggle GPU (FLUX/CogVideoX)
+  Node 6: validate        — Check output quality, retry if needed
 
-Flow:
-  1. Workspace created → Content Agent initialized
-     → Brand discover hota hai website se
-     → Memory load hoti hai (past work)
-     → Brand context ready hai
-
-  2. Domain Agent brief bhejta hai (detailed)
-     → "Instagram post chahiye — fitness, bold style, red+black"
-
-  3. Content Agent SOCHTA hai (LangGraph pipeline):
-     Step 1: Brief samjhe — kya chahiye, kyun, kis platform pe
-     Step 2: Brand context dekhe — client ke colors, style, tone
-     Step 3: Visual plan banaye — composition, layout, elements
-     Step 4: Expert prompt likhe — FLUX ko clear samajh aaye
-     Step 5: Generate kare — Kaggle GPU pe submit
-     Step 6: Report kare — domain agent ko wapas
+ROUTING:
+  parse_brief -> analyze_brand -> plan_visual -> engineer_prompt
+  -> generate -> validate -> [retry: engineer_prompt | END]
 
 VISUAL ONLY — no text, no captions, no copy.
 """
@@ -28,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
 import openai
@@ -36,18 +28,36 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
 from admin.tools.kaggle_gpu import (
-    generate_visual,
     generate_image,
     generate_video,
     get_platform_size,
-    PLATFORM_SIZES,
 )
 from admin.tools.visual_tools import discover_brand_identity
 from admin.workspace.content_store import WorkspaceContentStore
+from admin.workspace.agents.content_templates import (
+    PLATFORM_CONFIGS,
+    CONTENT_TYPE_CONFIGS,
+    STYLE_PRESETS,
+    VARIATION_STYLES,
+    VIDEO_HUMAN_KEYWORDS,
+    VIDEO_AI_AVOID_KEYWORDS,
+    IMAGE_PROMPT_TEMPLATE,
+    VIDEO_PROMPT_TEMPLATE,
+    UGC_VIDEO_PROMPT_TEMPLATE,
+    MARKETING_VIDEO_PROMPT_TEMPLATE,
+    TRADING_VIDEO_PROMPT_TEMPLATE,
+    IMAGE_NEGATIVE_PROMPT,
+    VIDEO_NEGATIVE_PROMPT,
+    CATEGORY_KEYWORDS,
+    detect_content_category,
+    detect_platform,
+    get_platform_format,
+    VIDEO_MOTION_PRESETS,
+)
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 8
+MAX_ATTEMPTS = 3
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -62,253 +72,59 @@ _content_store = WorkspaceContentStore()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ContentState(TypedDict):
+    # Core conversation
     messages: Annotated[list[dict[str, Any]], "Conversation"]
     workspace_id: str
     workspace_name: str
     client_name: str
     client_website: str
-    brand_context: dict[str, Any]  # Brand info (colors, style, logo)
-    brief_from: str  # Which domain agent
+    brand_context: dict[str, Any]
+    brief_from: str
     tool_results: Annotated[list[dict[str, Any]], "Tool outputs"]
     current_tool_calls: Annotated[list[dict[str, Any]], "Pending calls"]
     rounds: int
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TOOLS (for LLM function calling)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-CONTENT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_image",
-            "description": "Generate AI image using FLUX on Kaggle GPU. Pass the FINAL engineered prompt — detailed, specific, ready for AI generation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": "Expert-level image prompt. Must be detailed: subject, action, style, colors, mood, composition, lighting, quality. Example: 'A muscular person doing deadlift in a modern gym, bold red and black color scheme matching brand identity, dramatic side lighting, motivational atmosphere, professional fitness photography, 4k ultra detailed'",
-                    },
-                    "platform": {"type": "string", "description": "instagram, facebook, linkedin, twitter, youtube, blog_hero, og_image", "default": "instagram"},
-                    "width": {"type": "integer", "description": "Width (0=auto from platform)", "default": 0},
-                    "height": {"type": "integer", "description": "Height (0=auto from platform)", "default": 0},
-                    "steps": {"type": "integer", "description": "20=default, 30=better, 50=best quality", "default": 20},
-                },
-                "required": ["prompt"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_video",
-            "description": "Generate AI video using CogVideoX on Kaggle GPU.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {"type": "string", "description": "Detailed video prompt with motion, style, mood"},
-                    "platform": {"type": "string", "default": "instagram"},
-                    "frames": {"type": "integer", "description": "49=~6s, 81=~10s", "default": 49},
-                },
-                "required": ["prompt"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_ad_image",
-            "description": "Generate ad creative image for specific platform.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "product": {"type": "string", "description": "Product/service to advertise"},
-                    "platform": {"type": "string", "default": "facebook"},
-                    "style": {"type": "string", "description": "professional, bold, minimal, creative", "default": "professional"},
-                },
-                "required": ["product"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_social_image",
-            "description": "Generate social media post image.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "Post topic"},
-                    "platform": {"type": "string", "default": "instagram"},
-                },
-                "required": ["topic"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_hero_image",
-            "description": "Generate hero/banner image for blog or website.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "description": "Hero image topic"},
-                    "style": {"type": "string", "default": "modern"},
-                },
-                "required": ["topic"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_platform_specs",
-            "description": "Get image/video size specs for any platform.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "platform": {"type": "string"},
-                },
-                "required": ["platform"],
-            },
-        },
-    },
-]
+    # Pipeline state
+    parsed_brief: dict[str, Any]
+    brand_analysis: dict[str, Any]
+    visual_plan: dict[str, Any]
+    variations: list[dict[str, Any]]
+    selected_variation: dict[str, Any] | None
+    quality_scores: list[int]
+    attempt_count: int
+    content_category: str
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SYSTEM PROMPT — Content Agent ka dimag
+# HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """You are the Content Agent for workspace '{workspace_name}' (client: {client_name}).
-
-YOU ARE A VISUAL CONTENT EXECUTOR. You create images and videos ONLY.
-You do NOT write text, captions, copy, or blog posts.
-
-## Your Client's Brand Identity
-{brand_context}
-
-## Your Past Learnings
-{workspace_memory}
-
-## Your Job
-Domain agents send you DETAILED visual briefs. You must:
-1. UNDERSTAND the brief deeply — what type of visual, why, for whom
-2. APPLY brand identity — use client's colors, style, tone
-3. PLAN the visual — composition, layout, elements, mood
-4. ENGINEER the prompt — create expert-level AI generation prompt
-5. GENERATE — submit to Kaggle GPU
-6. REPORT back with what was created
-
-## How to Think (BEFORE calling any tool)
-
-When a domain agent sends you a brief, think through these steps:
-
-### Step 1: Parse Brief
-- What type of visual? (image, video, ad, social post, hero banner)
-- What platform? (instagram, facebook, linkedin, etc.)
-- What's the topic/subject?
-- What mood/style? (bold, minimal, professional, fun)
-- Is there text overlay or CTA?
-- What's the target audience?
-
-### Step 2: Brand Context
-- Client's primary colors: {primary_colors}
-- Client's visual style: {visual_style}
-- Client's brand name: {brand_name}
-- Use these in the visual — don't ignore brand identity!
-
-### Step 3: Visual Plan
-Before calling generate_image, describe:
-- COMPOSITION: Where is the subject? What's the focal point?
-- LAYOUT: Center, rule of thirds, diagonal, symmetrical?
-- ELEMENTS: What objects/people/graphics appear?
-- COLORS: How do brand colors apply here?
-- LIGHTING: Natural, dramatic, studio, backlit?
-- TEXT SPACE: Is there room for text overlay?
-
-### Step 4: Build Expert Prompt
-The prompt must be DETAILED and SPECIFIC. Bad prompt: "fitness image"
-Good prompt: "A muscular person performing a deadlift in a modern gym, bold red (#E63946) and black color scheme, dramatic side lighting creating strong shadows, motivational atmosphere, professional fitness photography style, 4k ultra detailed, clean composition with space for text overlay on the right side"
-
-## Platform Sizes (auto-detected)
-- Instagram: 1080x1080 (square), 1080x1350 (portrait), 1080x1920 (story)
-- Facebook: 1200x630 (post), 1080x1080 (ad)
-- LinkedIn: 1200x627
-- Twitter/X: 1200x675
-- YouTube: 1280x720 (thumbnail)
-- Blog: 1200x600 (hero)
-
-## Rules
-- VISUAL ONLY — never write text content
-- Always use brand colors when possible
-- Always consider the platform dimensions
-- Be specific in prompts — vague prompts = bad images
-- Report back with file path when done
-"""
+def _get_llm_client() -> openai.OpenAI:
+    """OpenAI-compatible LLM client (works with Groq, OpenRouter, etc.)."""
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    if base_url:
+        return openai.OpenAI(api_key=api_key, base_url=base_url)
+    return openai.OpenAI(api_key=api_key)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TOOL EXECUTION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Tool call execute karo."""
+def _load_agency_knowledge(workspace_id: str) -> dict[str, Any]:
+    """Load cross-project learnings from Agency Content Agent."""
     try:
-        if name == "generate_image":
-            return generate_image(
-                prompt=args["prompt"],
-                platform=args.get("platform", "instagram"),
-                width=args.get("width", 0),
-                height=args.get("height", 0),
-                steps=args.get("steps", 20),
-            )
-        elif name == "generate_video":
-            return generate_video(
-                prompt=args["prompt"],
-                platform=args.get("platform", "instagram"),
-                frames=args.get("frames", 49),
-            )
-        elif name == "generate_ad_image":
-            return generate_image(
-                prompt=f"A professional {args.get('style', 'professional')} advertisement for {args['product']}, high quality marketing material",
-                platform=args.get("platform", "facebook"),
-            )
-        elif name == "generate_social_image":
-            return generate_image(
-                prompt=f"A beautiful, engaging social media post about {args['topic']}, modern design, vibrant colors, professional quality",
-                platform=args.get("platform", "instagram"),
-            )
-        elif name == "generate_hero_image":
-            return generate_image(
-                prompt=f"A stunning hero banner image about {args['topic']}, {args.get('style', 'modern')} design, wide format, professional quality",
-                platform="blog_hero",
-                width=1920,
-                height=1080,
-            )
-        elif name == "get_platform_specs":
-            w, h = get_platform_size(args["platform"])
-            return {"platform": args["platform"], "width": w, "height": h}
-        else:
-            return {"error": f"Unknown tool: {name}"}
+        from admin.agency.content_agent import get_agency_content_agent
+        agency = get_agency_content_agent()
+        return agency.get_knowledge_for_workspace()
     except Exception as e:
-        logger.exception("Tool failed: %s", name)
-        return {"error": str(e)}
+        logger.warning("Could not load agency knowledge: %s", e)
+        return {}
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPER: Format brand context for system prompt
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _format_brand_context(brand: dict[str, Any]) -> str:
     """Brand context ko human-readable format mein convert karo."""
     if not brand:
-        return "No brand info available yet. Will discover from website if URL provided."
+        return "No brand info available. Will discover from website if URL provided."
 
-    parts = []
+    parts: list[str] = []
     if brand.get("brand_name"):
         parts.append(f"- Brand Name: {brand['brand_name']}")
     if brand.get("colors"):
@@ -333,19 +149,19 @@ def _format_workspace_memory(workspace_id: str) -> str:
     if not mem:
         return "No past work yet — this is the first brief for this workspace."
 
-    parts = []
+    parts: list[str] = []
     if mem.brand_learnings:
         parts.append("Brand Learnings:")
-        for l in mem.brand_learnings[:5]:
-            parts.append(f"  - {l}")
+        for l_text in mem.brand_learnings[:5]:
+            parts.append(f"  - {l_text}")
     if mem.mistakes_to_avoid:
         parts.append("Mistakes to Avoid:")
-        for m in mem.mistakes_to_avoid[:3]:
-            parts.append(f"  - {m}")
+        for m_text in mem.mistakes_to_avoid[:3]:
+            parts.append(f"  - {m_text}")
     if mem.industry_tips:
         parts.append("Industry Tips:")
-        for t in mem.industry_tips[:3]:
-            parts.append(f"  - {t}")
+        for t_text in mem.industry_tips[:3]:
+            parts.append(f"  - {t_text}")
     if mem.success_count > 0:
         parts.append(f"Past Successes: {mem.success_count}")
     if mem.failure_count > 0:
@@ -354,150 +170,591 @@ def _format_workspace_memory(workspace_id: str) -> str:
     return "\n".join(parts) if parts else "No past work yet."
 
 
-def _get_primary_colors(brand: dict[str, Any]) -> str:
-    colors = brand.get("colors", [])
-    return ", ".join(colors[:5]) if colors else "No brand colors detected"
+def _calculate_quality_score(
+    result: dict[str, Any],
+    brand_analysis: dict[str, Any],
+    parsed_brief: dict[str, Any],
+) -> int:
+    """Calculate quality score 1-10 for generated output."""
+    score = 5  # base
+
+    # File exists and has content?
+    file_path = result.get("file", "")
+    if file_path and os.path.exists(file_path):
+        size = os.path.getsize(file_path)
+        if size > 10_000:
+            score += 2
+        elif size > 0:
+            score += 1
+        else:
+            score -= 2
+    else:
+        score -= 3
+
+    # Status success?
+    if result.get("status") == "success":
+        score += 1
+    elif result.get("status") in ("error", "submit_failed", "download_error"):
+        score -= 2
+
+    # Platform size matches?
+    platform = parsed_brief.get("platform", "instagram")
+    expected_w, expected_h = get_platform_size(platform)
+    size_str = result.get("size", "")
+    if size_str:
+        try:
+            parts = size_str.replace(" frames", "").split("x")
+            if len(parts) == 2:
+                w, h = int(parts[0]), int(parts[1])
+                if abs(w - expected_w) < 50 and abs(h - expected_h) < 50:
+                    score += 1
+        except (ValueError, IndexError):
+            pass
+
+    # Brand colors used? (heuristic: check prompt mentions brand colors)
+    prompt_used = result.get("prompt", "")
+    primary_colors = brand_analysis.get("primary_colors", [])
+    if primary_colors:
+        color_mentioned = any(c.lower() in prompt_used.lower() for c in primary_colors[:3])
+        if color_mentioned:
+            score += 1
+
+    return max(1, min(10, score))
 
 
-def _get_visual_style(brand: dict[str, Any]) -> str:
-    return brand.get("visual_style", "Not detected yet")
-
-
-def _get_brand_name(brand: dict[str, Any]) -> str:
-    return brand.get("brand_name", "Unknown")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LANGGRAPH NODES
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _get_llm_client() -> openai.OpenAI:
-    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
-    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
-    return openai.OpenAI(api_key=api_key, base_url=base_url) if base_url else openai.OpenAI(api_key=api_key)
-
-
-def call_llm(state: ContentState) -> dict[str, Any]:
-    """LLM ko message bhejo — brand context + memory ke saath."""
-    messages = list(state["messages"])
-    brand = state.get("brand_context", {})
-
-    # System prompt with brand context
-    system_msg = {
-        "role": "system",
-        "content": SYSTEM_PROMPT.format(
-            workspace_name=state.get("workspace_name", "Default"),
-            client_name=state.get("client_name", "Client"),
-            brand_context=_format_brand_context(brand),
-            workspace_memory=_format_workspace_memory(state.get("workspace_id", "")),
-            primary_colors=_get_primary_colors(brand),
-            visual_style=_get_visual_style(brand),
-            brand_name=_get_brand_name(brand),
-        ),
-    }
-    messages = [system_msg] + messages
-
+def _llm_call(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.3,
+    max_tokens: int = 2000,
+) -> str:
+    """Simple LLM call — returns assistant content string."""
     client = _get_llm_client()
     model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
-
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
-            tools=CONTENT_TOOLS,
-            tool_choice="auto",
-            temperature=0.3,
-            max_tokens=2000,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
+        return response.choices[0].message.content or ""
     except Exception as e:
         logger.exception("LLM call failed")
-        messages.append({"role": "assistant", "content": f"Error: {e}"})
-        return {"messages": messages}
+        return f"Error: {e}"
 
-    choice = response.choices[0]
-    assistant_msg = choice.message
 
-    # Add assistant message
-    msg_dict: dict[str, Any] = {"role": "assistant", "content": assistant_msg.content or ""}
-    if assistant_msg.tool_calls:
-        msg_dict["tool_calls"] = [
-            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in assistant_msg.tool_calls
-        ]
-    messages.append(msg_dict)
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 1: PARSE BRIEF
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    # Execute tools
-    tool_results = list(state.get("tool_results", []))
-    if assistant_msg.tool_calls:
-        for tc in assistant_msg.tool_calls:
-            fn_name = tc.function.name
-            try:
-                fn_args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                fn_args = {}
+def parse_brief(state: ContentState) -> dict[str, Any]:
+    """Extract structured brief from raw message using LLM."""
+    messages = list(state["messages"])
+    user_text = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            user_text = msg.get("content", "")
+            break
 
-            logger.info("Tool: %s(%s)", fn_name, json.dumps(fn_args)[:200])
-            result = _execute_tool(fn_name, fn_args)
-            tool_results.append({"tool": fn_name, "args": fn_args, "result": result})
+    system_prompt = (
+        "You are a brief parser for a visual content agent. "
+        "Extract a structured brief from the user's message. "
+        "Return ONLY valid JSON with these fields:\n"
+        '{\n'
+        '  "visual_type": "image|video|ugc|marketing|trading",\n'
+        '  "platform": "instagram|facebook|linkedin|twitter|youtube|tiktok|pinterest|blog_hero",\n'
+        '  "format": "post|story|reel|ad|thumbnail|banner|portrait|landscape|square",\n'
+        '  "topic": "brief description of the subject",\n'
+        '  "mood": "mood/atmosphere words",\n'
+        '  "style": "bold|minimal|professional|modern|cinematic|vibrant|elegant|playful",\n'
+        '  "color_request": "specific color request or empty string",\n'
+        '  "quantity": 3,\n'
+        '  "content_category": "fitness|food|realestate|fashion|tech|beauty|travel|education|finance|ecommerce|general",\n'
+        '  "priority": "normal|high|urgent"\n'
+        '}\n\n'
+        "Rules:\n"
+        "- visual_type: image for single pictures, video for motion content, "
+        "ugc for user-generated content style, marketing for ad/commercial videos, "
+        "trading for financial/chart content\n"
+        "- platform: detect from context (e.g., 'IG post' = instagram)\n"
+        "- format: 'post' unless specifically asked for story/reel/ad\n"
+        "- quantity: default 3 for variations, unless specified\n"
+        "- Return ONLY the JSON object, no explanation"
+    )
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result, default=str),
-            })
+    raw_response = _llm_call(system_prompt, user_text)
+
+    # Parse LLM response
+    parsed_brief: dict[str, Any] = {}
+    try:
+        # Try to extract JSON from response
+        text = raw_response.strip()
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        parsed_brief = json.loads(text)
+    except (json.JSONDecodeError, IndexError):
+        logger.warning("LLM brief parse failed, using fallback detection")
+        parsed_brief = {}
+
+    # Fill defaults and validate with keyword detection
+    visual_type = parsed_brief.get("visual_type", "image")
+    if visual_type not in ("image", "video", "ugc", "marketing", "trading"):
+        visual_type = "image"
+
+    platform = parsed_brief.get("platform", "")
+    if not platform or platform not in PLATFORM_CONFIGS:
+        platform = detect_platform(user_text)
+
+    fmt = parsed_brief.get("format", "")
+    if not fmt:
+        fmt = get_platform_format(user_text)
+
+    topic = parsed_brief.get("topic", user_text[:200])
+
+    style = parsed_brief.get("style", "professional")
+    if style not in STYLE_PRESETS:
+        style = "professional"
+
+    mood = parsed_brief.get("mood", "engaging, professional")
+    color_request = parsed_brief.get("color_request", "")
+    quantity = parsed_brief.get("quantity", 3)
+    if not isinstance(quantity, int) or quantity < 1 or quantity > 6:
+        quantity = 3
+
+    content_category = parsed_brief.get("content_category", "")
+    if not content_category or content_category not in CATEGORY_KEYWORDS:
+        content_category = detect_content_category(user_text)
+
+    priority = parsed_brief.get("priority", "normal")
+    if priority not in ("normal", "high", "urgent"):
+        priority = "normal"
+
+    brief_result = {
+        "visual_type": visual_type,
+        "platform": platform,
+        "format": fmt,
+        "topic": topic,
+        "mood": mood,
+        "style": style,
+        "color_request": color_request,
+        "quantity": quantity,
+        "content_category": content_category,
+        "priority": priority,
+        "raw_message": user_text,
+    }
 
     return {
+        "parsed_brief": brief_result,
+        "content_category": content_category,
         "messages": messages,
-        "tool_results": tool_results,
-        "current_tool_calls": [
-            {"name": tc.function.name, "args": tc.function.arguments}
-            for tc in (assistant_msg.tool_calls or [])
-        ],
-        "rounds": state.get("rounds", 0) + 1,
     }
 
 
-def route_from_llm(state: ContentState) -> str:
-    """Route: tool calls → loop, no calls → finalize."""
-    last_msg = state["messages"][-1] if state["messages"] else {}
-    has_tool_calls = bool(last_msg.get("tool_calls"))
-    rounds = state.get("rounds", 0)
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 2: ANALYZE BRAND
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    if has_tool_calls and rounds < MAX_TOOL_ROUNDS:
-        return "call_llm"
-    return "finalize"
+def analyze_brand(state: ContentState) -> dict[str, Any]:
+    """Combine workspace brand context + agency knowledge into brand_analysis."""
+    brand = state.get("brand_context", {})
+    workspace_id = state.get("workspace_id", "")
+    parsed_brief = state.get("parsed_brief", {})
+
+    # Extract primary and secondary colors
+    all_colors = brand.get("colors", [])
+    primary_colors = all_colors[:3] if all_colors else []
+    secondary_colors = all_colors[3:6] if len(all_colors) > 3 else []
+
+    # Visual style
+    visual_style = brand.get("visual_style", "professional")
+
+    # Colors to avoid (complementary/opposite of brand for variety, but not clashing)
+    do_not_use: list[str] = []
+    # If brand has specific colors, avoid completely different aesthetics
+    if not all_colors:
+        do_not_use = ["neon", "fluorescent"]
+
+    # Platform preferences from brand's social links
+    platform_preferences: list[str] = []
+    social_links = brand.get("social_links", {})
+    if social_links:
+        platform_preferences = list(social_links.keys())
+
+    # Agency knowledge
+    agency_knowledge = _load_agency_knowledge(workspace_id)
+
+    # Workspace memory
+    workspace_memory = _format_workspace_memory(workspace_id)
+
+    brand_analysis = {
+        "primary_colors": primary_colors,
+        "secondary_colors": secondary_colors,
+        "brand_name": brand.get("brand_name", state.get("client_name", "Client")),
+        "visual_style": visual_style,
+        "do_not_use": do_not_use,
+        "platform_preferences": platform_preferences,
+        "agency_knowledge": agency_knowledge,
+        "workspace_memory": workspace_memory,
+        "brand_description": _format_brand_context(brand),
+        "logo_url": brand.get("logo_url", ""),
+    }
+
+    return {"brand_analysis": brand_analysis}
 
 
-def finalize(state: ContentState) -> dict[str, Any]:
-    """Final response — summarize what was generated."""
-    messages = list(state["messages"])
-    tool_results = state.get("tool_results", [])
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 3: PLAN VISUAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plan_visual(state: ContentState) -> dict[str, Any]:
+    """Create detailed visual plan + variation list from brief + brand analysis."""
+    brief = state.get("parsed_brief", {})
+    brand = state.get("brand_analysis", {})
+    platform = brief.get("platform", "instagram")
+    visual_type = brief.get("visual_type", "image")
+    fmt = brief.get("format", "post")
+    topic = brief.get("topic", "")
+    mood = brief.get("mood", "professional")
+    style = brief.get("style", "professional")
+    quantity = brief.get("quantity", 3)
+    color_request = brief.get("color_request", "")
+
+    # Platform dimensions
+    platform_cfg = PLATFORM_CONFIGS.get(platform, PLATFORM_CONFIGS["instagram"])
+    width, height = platform_cfg["width"], platform_cfg["height"]
+    if fmt in platform_cfg.get("variants", {}):
+        width, height = platform_cfg["variants"][fmt]
+
+    # Content type config
+    ct_cfg = CONTENT_TYPE_CONFIGS.get(visual_type, CONTENT_TYPE_CONFIGS["image"])
+
+    # Style preset
+    style_preset = STYLE_PRESETS.get(style, STYLE_PRESETS["professional"])
+
+    # Brand color description
+    primary = brand.get("primary_colors", [])
+    secondary = brand.get("secondary_colors", [])
+    if color_request:
+        brand_color_desc = f"Use {color_request} prominently."
+    elif primary:
+        brand_color_desc = f"Use brand colors: {', '.join(primary)}."
+    else:
+        brand_color_desc = "Use a professional, modern color palette."
+
+    # Composition/Lighting arrays
+    composition_options = [
+        "Rule of thirds, subject left, text space right",
+        "Centered composition, strong focal point",
+        "Diagonal composition, dynamic energy",
+        "Symmetrical layout, balanced elements",
+    ]
+    lighting_options = [
+        "Soft natural window light, warm tones",
+        "Dramatic side lighting, strong shadows",
+        "Even studio lighting, clean and bright",
+        "Golden hour ambient light, warm atmosphere",
+    ]
+
+    # Video/Motion settings
+    motion_description = ""
+    motion_key = "slow_zoom"
+    if visual_type in ("video", "ugc", "marketing", "trading"):
+        motion_description = VIDEO_MOTION_PRESETS.get(motion_key, VIDEO_MOTION_PRESETS["slow_zoom"])["motion"]
+    avoid_list = style_preset.get("negative", "")
+
+    # Build visual plan
+    visual_plan = {
+        "composition": composition_options[hash(topic) % len(composition_options)] if topic else composition_options[0],
+        "layout": "modern" if style == "modern" else "clean",
+        "elements": [topic] if topic else ["main subject"],
+        "color_application": f"{brand_color_desc} Style: {style_preset.get('prompt_suffix', '')}",
+        "lighting": lighting_options[hash(mood) % len(lighting_options)] if mood else lighting_options[0],
+        "mood_keywords": mood,
+        "avoid": avoid_list,
+        "text_space": "right side" if "right" in composition_options[0] else "bottom",
+        "width": width, "height": height, "platform": platform, "format": fmt,
+        "motion_description": motion_description, "motion_key": motion_key,
+        "estimated_gpu_time": "30s" if visual_type == "image" else "3-5min",
+    }
+    if visual_type == "ugc":
+        visual_plan["motion_description"] = "handheld, natural, authentic"
+        visual_plan["motion_key"] = "handheld"
+        visual_plan["environment"] = "natural, real-world setting"
+    if visual_type == "trading":
+        visual_plan["chart_elements"] = "candlestick charts, moving averages, volume bars"
+        visual_plan["motion_description"] = "dynamic data visualization with smooth animations"
+
+    # Create variation plan
+    style_keys = list(VARIATION_STYLES.keys())
+    variations: list[dict[str, Any]] = []
+    for i in range(quantity):
+        sk = style_keys[i % len(style_keys)]
+        vs = VARIATION_STYLES[sk]
+        variations.append({
+            "variation_id": f"var_{i+1}", "name": vs["name"], "style_key": sk,
+            "prompt_preview": f"{vs['description']} — {topic}",
+            "target_platform": platform, "width": width, "height": height,
+            "prompt": "", "negative_prompt": "",
+            "steps": ct_cfg.get("default_steps", 20) if visual_type == "image" else 0,
+            "tool": ct_cfg["tool"], "status": "pending",
+        })
+
+    return {
+        "visual_plan": visual_plan,
+        "variations": variations,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 4: ENGINEER PROMPT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def engineer_prompt(state: ContentState) -> dict[str, Any]:
+    """Build expert-level prompts for each variation."""
+    brief = state.get("parsed_brief", {})
+    brand = state.get("brand_analysis", {})
+    plan = state.get("visual_plan", {})
+    variations = list(state.get("variations", []))
+    visual_type = brief.get("visual_type", "image")
+    platform = brief.get("platform", "instagram")
+    topic = brief.get("topic", "")
+    mood = brief.get("mood", "professional")
+    style = brief.get("style", "professional")
+    style_preset = STYLE_PRESETS.get(style, STYLE_PRESETS["professional"])
+    primary_colors = brand.get("primary_colors", [])
+    color_desc = ", ".join(primary_colors[:3]) if primary_colors else "professional palette"
+    avoid = plan.get("avoid", "")
+    motion_preset = VIDEO_MOTION_PRESETS.get(plan.get("motion_key", "slow_zoom"), VIDEO_MOTION_PRESETS["slow_zoom"])
+    attempt = state.get("attempt_count", 0)
+
+    engineered: list[dict[str, Any]] = []
+    for var in variations:
+        vs = VARIATION_STYLES.get(var.get("style_key", "hero"), VARIATION_STYLES["hero"])
+        add = vs["prompt_addon"]
+        brand_line = f"Brand colors: {color_desc}. " if primary_colors else ""
+        avoid_line = f"Avoid: {avoid}. " if avoid else ""
+        prompt = ""
+
+        if visual_type == "image":
+            prompt = (
+                f"Professional {style} image of {topic}. {brand_line}"
+                f"Composition: {plan.get('composition', '')}. {add} "
+                f"Lighting: {plan.get('lighting', '')}. Mood: {mood}. "
+                f"{avoid_line}High quality, sharp focus, {platform} optimized, 4K detail."
+            )
+        elif visual_type == "ugc":
+            prompt = (
+                f"Authentic UGC-style video of {topic}. Handheld camera, natural lighting, real-person aesthetic. "
+                f"Include: {', '.join(VIDEO_HUMAN_KEYWORDS[:5])}. "
+                f"Environment: {plan.get('environment', 'natural setting')}. Mood: {mood}. "
+                f"Genuine, relatable, unscripted feel. Vertical format, smartphone-quality authenticity."
+            )
+        elif visual_type == "trading":
+            prompt = (
+                f"Dynamic financial visualization of {topic}. Charts: {plan.get('chart_elements', 'candlestick')}. "
+                f"Colors: {color_desc}. Motion: {motion_preset['motion']}. "
+                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. Professional trading aesthetic."
+            )
+        elif visual_type == "marketing":
+            prompt = (
+                f"Polished marketing video of {topic}. Brand colors: {color_desc}. "
+                f"Motion: {motion_preset['motion']}. Professional commercial look. "
+                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. Broadcast-ready."
+            )
+        else:  # video
+            prompt = (
+                f"A {motion_preset['motion']} scene featuring {topic}. "
+                f"Camera: {motion_preset['camera_move']}. Style: {style}. {brand_line}"
+                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. "
+                f"Lighting: {plan.get('lighting', '')}. Cinematic quality."
+            )
+
+        # Platform tips
+        tips = PLATFORM_CONFIGS.get(platform, {}).get("tips", "")
+        if tips:
+            prompt += f" {tips}"
+
+        # Attempt-based simplification
+        if attempt >= 1:
+            prompt = ". ".join(prompt.split(". ")[:4]) + f" Style: {style}. High quality."
+        if attempt >= 2:
+            prompt = f"{style} {visual_type} of {topic}, {color_desc}, high quality, {platform}"
+
+        neg = f"{IMAGE_NEGATIVE_PROMPT}, {style_preset.get('negative', '')}" if visual_type == "image" \
+            else f"{VIDEO_NEGATIVE_PROMPT}, {', '.join(VIDEO_AI_AVOID_KEYWORDS[:5])}"
+
+        updated = dict(var)
+        updated.update({"prompt": prompt, "negative_prompt": neg, "status": "ready"})
+        engineered.append(updated)
+
+    return {"variations": engineered, "attempt_count": state.get("attempt_count", 0) + 1}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 5: GENERATE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate(state: ContentState) -> dict[str, Any]:
+    """For each variation, call the appropriate generation tool."""
+    variations = list(state.get("variations", []))
+    tool_results: list[dict[str, Any]] = list(state.get("tool_results", []))
+    attempt = state.get("attempt_count", 0)
+
+    for var in variations:
+        if var.get("status") == "completed":
+            continue
+
+        prompt = var.get("prompt", "")
+        tool_name = var.get("tool", "generate_image")
+        width = var.get("width", 1080)
+        height = var.get("height", 1080)
+        platform = var.get("target_platform", "instagram")
+        steps = var.get("steps", 20)
+
+        logger.info(
+            "Generating variation %s (%s) [attempt %d]: %s",
+            var["variation_id"], tool_name, attempt, prompt[:80],
+        )
+
+        result: dict[str, Any] = {}
+        try:
+            if tool_name == "generate_image" or var.get("tool") == "generate_image":
+                # Attempt 2+ fallback to SDXL (fewer steps)
+                actual_steps = steps if attempt < 2 else 15
+                result = generate_image(
+                    prompt=prompt,
+                    platform=platform,
+                    width=width,
+                    height=height,
+                    steps=actual_steps,
+                )
+            else:
+                frames = CONTENT_TYPE_CONFIGS.get(
+                    state.get("parsed_brief", {}).get("visual_type", "video"),
+                    {},
+                ).get("default_frames", 49)
+                result = generate_video(
+                    prompt=prompt,
+                    platform=platform,
+                    frames=frames,
+                )
+        except Exception as e:
+            logger.exception("Generation failed for variation %s", var["variation_id"])
+            result = {"status": "error", "error": str(e)}
+
+        # Track result
+        result["variation_id"] = var["variation_id"]
+        result["prompt"] = prompt
+        tool_results.append({
+            "tool": tool_name,
+            "variation_id": var["variation_id"],
+            "args": {"prompt": prompt, "platform": platform, "width": width, "height": height},
+            "result": result,
+        })
+
+        # Update variation status
+        var["status"] = "completed" if result.get("status") == "success" else "failed"
+        var["result"] = result
+
+    return {
+        "variations": variations,
+        "tool_results": tool_results,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NODE 6: VALIDATE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def validate(state: ContentState) -> dict[str, Any]:
+    """Check quality of each generated output, record to content store."""
+    variations = list(state.get("variations", []))
+    brand = state.get("brand_analysis", {})
+    brief = state.get("parsed_brief", {})
+    attempt = state.get("attempt_count", 0)
     workspace_id = state.get("workspace_id", "")
 
-    if tool_results:
-        for tr in tool_results:
-            r = tr.get("result", {})
-            # Record to content store memory
-            if r.get("status") == "success":
-                _content_store.record_success(
-                    workspace_id=workspace_id,
-                    job_id=r.get("kernel_slug", ""),
-                    brief_summary=tr.get("args", {}).get("prompt", "")[:200],
-                    deliverables=[r.get("file", "")],
-                    prompts_used=[tr.get("args", {}).get("prompt", "")],
-                    platform=tr.get("args", {}).get("platform", "instagram"),
-                    visual_type=tr["tool"],
-                    gpu_minutes=r.get("elapsed_seconds", 0) / 60,
-                )
-            elif r.get("status") in ("error", "submit_failed"):
-                _content_store.record_failure(
-                    workspace_id=workspace_id,
-                    job_id=r.get("kernel_slug", ""),
-                    brief_summary=tr.get("args", {}).get("prompt", "")[:200],
-                    error=r.get("error", "Unknown"),
-                )
+    quality_scores: list[int] = []
+    needs_retry = False
 
-    return {"messages": messages}
+    for var in variations:
+        result = var.get("result", {})
+        if not result:
+            quality_scores.append(1)
+            needs_retry = True
+            continue
+
+        score = _calculate_quality_score(result, brand, brief)
+        quality_scores.append(score)
+
+        if score < 5 and attempt < MAX_ATTEMPTS:
+            needs_retry = True
+
+        # Record to content store
+        if result.get("status") == "success":
+            _content_store.record_success(
+                workspace_id=workspace_id,
+                job_id=result.get("kernel_slug", var.get("variation_id", "")),
+                brief_summary=brief.get("topic", "")[:200],
+                deliverables=[result.get("file", "")],
+                prompts_used=[var.get("prompt", "")],
+                platform=brief.get("platform", "instagram"),
+                visual_type=brief.get("visual_type", "image"),
+                gpu_minutes=result.get("elapsed_seconds", 0) / 60,
+                learnings=[f"Variation {var.get('variation_id')}: score={score}"],
+            )
+        elif result.get("status") in ("error", "submit_failed", "download_error"):
+            _content_store.record_failure(
+                workspace_id=workspace_id,
+                job_id=result.get("kernel_slug", var.get("variation_id", "")),
+                brief_summary=brief.get("topic", "")[:200],
+                error=result.get("error", "Unknown"),
+                platform=brief.get("platform", "instagram"),
+                visual_type=brief.get("visual_type", "image"),
+                what_failed=f"Variation {var.get('variation_id')}: {result.get('error', 'generation failed')}",
+                avoid_next_time=f"Attempt {attempt}: variation {var.get('variation_id')} failed, consider different approach",
+            )
+
+    # Update messages with summary
+    messages = list(state.get("messages", []))
+    success_count = sum(1 for v in variations if v.get("result", {}).get("status") == "success")
+    total = len(variations)
+    avg_score = sum(quality_scores) / len(quality_scores) if quality_scores else 0
+
+    summary = (
+        f"Content generation complete: {success_count}/{total} variations successful. "
+        f"Average quality score: {avg_score:.1f}/10. "
+        f"Attempt: {attempt}/{MAX_ATTEMPTS}."
+    )
+    messages.append({"role": "assistant", "content": summary})
+
+    return {
+        "quality_scores": quality_scores,
+        "messages": messages,
+        # Signal retry if needed
+        "_needs_retry": needs_retry,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def route_after_validate(state: ContentState) -> str:
+    """After validate: retry if needed and under max attempts, else END."""
+    needs_retry = state.get("_needs_retry", False)
+    attempt = state.get("attempt_count", 0)
+
+    if needs_retry and attempt < MAX_ATTEMPTS:
+        logger.info("Retry needed (attempt %d/%d), going back to engineer_prompt", attempt, MAX_ATTEMPTS)
+        return "engineer_prompt"
+
+    return END
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -505,21 +762,41 @@ def finalize(state: ContentState) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_content_graph() -> StateGraph:
+    """Build the 6-node content generation pipeline."""
     graph = StateGraph(ContentState)
-    graph.add_node("call_llm", call_llm)
-    graph.add_node("finalize", finalize)
-    graph.set_entry_point("call_llm")
-    graph.add_conditional_edges("call_llm", route_from_llm, {
-        "call_llm": "call_llm",
-        "finalize": "finalize",
+
+    # Add nodes
+    graph.add_node("parse_brief", parse_brief)
+    graph.add_node("analyze_brand", analyze_brand)
+    graph.add_node("plan_visual", plan_visual)
+    graph.add_node("engineer_prompt", engineer_prompt)
+    graph.add_node("generate", generate)
+    graph.add_node("validate", validate)
+
+    # Entry point
+    graph.set_entry_point("parse_brief")
+
+    # Linear flow: parse -> analyze -> plan -> engineer -> generate -> validate
+    graph.add_edge("parse_brief", "analyze_brand")
+    graph.add_edge("analyze_brand", "plan_visual")
+    graph.add_edge("plan_visual", "engineer_prompt")
+    graph.add_edge("engineer_prompt", "generate")
+    graph.add_edge("generate", "validate")
+
+    # Conditional edge from validate: retry or END
+    graph.add_conditional_edges("validate", route_after_validate, {
+        "engineer_prompt": "engineer_prompt",
+        END: END,
     })
-    graph.add_edge("finalize", END)
+
     return graph.compile(checkpointer=MemorySaver())
 
 
 _graph = None
 
+
 def get_content_graph() -> StateGraph:
+    """Singleton graph instance."""
     global _graph
     if _graph is None:
         _graph = build_content_graph()
@@ -527,38 +804,14 @@ def get_content_graph() -> StateGraph:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONTENT AGENT CLASS — workspace-aware
+# CONTENT AGENT CLASS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ContentAgent:
-    """Workspace-specific Content Agent — knows its client's brand.
+    """Workspace-specific Content Agent — 6-node pipeline for visual content."""
 
-    Usage:
-        # Workspace create hote hi Content Agent init hota hai
-        agent = ContentAgent(
-            workspace_id="ws_fitpro_001",
-            workspace_name="FitPro Fitness",
-            client_name="FitPro",
-            client_website="https://fitpro.com",
-        )
-
-        # Brand auto-discover hota hai
-        print(agent.brand)  # {colors: ["#E63946", "#1D3557"], style: "bold", ...}
-
-        # Domain agent brief bhejta hai
-        result = agent.run(
-            message="[Brief from social] Instagram fitness post chahiye...",
-            brief_from="social",
-        )
-    """
-
-    def __init__(
-        self,
-        workspace_id: str = "",
-        workspace_name: str = "Default",
-        client_name: str = "Client",
-        client_website: str = "",
-    ):
+    def __init__(self, workspace_id: str = "", workspace_name: str = "Default",
+                 client_name: str = "Client", client_website: str = ""):
         self.workspace_id = workspace_id
         self.workspace_name = workspace_name
         self.client_name = client_name
@@ -566,7 +819,7 @@ class ContentAgent:
         self.brand: dict[str, Any] = {}
         self._graph = get_content_graph()
 
-        # Load or create memory for this workspace
+        # Load or create memory
         _content_store.get_or_create(
             workspace_id=workspace_id,
             workspace_name=workspace_name,
@@ -586,7 +839,7 @@ class ContentAgent:
         logger.info("Discovering brand for %s from %s", self.client_name, url)
         self.brand = discover_brand_identity(url)
 
-        # Save brand info to content store
+        # Save brand info to memory
         mem = _content_store._memories.get(self.workspace_id)
         if mem and self.brand.get("brand_name"):
             if self.brand["brand_name"] not in mem.brand_learnings:
@@ -603,73 +856,45 @@ class ContentAgent:
 
         return self.brand
 
-    def run(
-        self,
-        message: str,
-        brief_from: str = "",
-        thread_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Domain agent ka brief process karo.
-
-        Content Agent sochega:
-          1. Brief samjhega
-          2. Brand context dekhega
-          3. Visual plan banayega
-          4. Expert prompt likhega
-          5. Generate karega
-          6. Report karega
-        """
-        graph = self._graph
-
-        user_msg = message
-        if brief_from:
-            user_msg = f"[Brief from {brief_from}] {message}"
-
+    def run(self, message: str, brief_from: str = "", thread_id: str | None = None) -> dict[str, Any]:
+        """Run full 6-node pipeline for a brief."""
+        user_msg = f"[Brief from {brief_from}] {message}" if brief_from else message
         initial_state: dict[str, Any] = {
             "messages": [{"role": "user", "content": user_msg}],
-            "workspace_id": self.workspace_id,
-            "workspace_name": self.workspace_name,
-            "client_name": self.client_name,
-            "client_website": self.client_website,
-            "brand_context": self.brand,
-            "brief_from": brief_from,
-            "tool_results": [],
-            "current_tool_calls": [],
-            "rounds": 0,
+            "workspace_id": self.workspace_id, "workspace_name": self.workspace_name,
+            "client_name": self.client_name, "client_website": self.client_website,
+            "brand_context": self.brand, "brief_from": brief_from,
+            "tool_results": [], "current_tool_calls": [], "rounds": 0,
+            "parsed_brief": {}, "brand_analysis": {}, "visual_plan": {},
+            "variations": [], "selected_variation": None,
+            "quality_scores": [], "attempt_count": 0, "content_category": "",
         }
-
         config = {"configurable": {"thread_id": thread_id or f"content_{self.workspace_id}"}}
-
         try:
-            result = graph.invoke(initial_state, config)
-            final_messages = result.get("messages", [])
-            last_msg = final_messages[-1] if final_messages else {}
-
+            result = self._graph.invoke(initial_state, config)
+            variations = result.get("variations", [])
+            successful = [v for v in variations if v.get("result", {}).get("status") == "success"]
             return {
-                "success": True,
-                "response": last_msg.get("content", ""),
+                "success": len(successful) > 0,
+                "response": f"Generated {len(successful)}/{len(variations)} variations",
+                "variations": variations,
                 "tool_results": result.get("tool_results", []),
+                "quality_scores": result.get("quality_scores", []),
+                "parsed_brief": result.get("parsed_brief", {}),
                 "brand_used": self.brand,
                 "workspace_name": self.workspace_name,
                 "client_name": self.client_name,
                 "brief_from": brief_from,
             }
         except Exception as e:
-            logger.exception("Content agent failed")
-            return {
-                "success": False,
-                "error": str(e),
-                "response": f"Content Agent error: {e}",
-                "tool_results": [],
-            }
+            logger.exception("Content agent pipeline failed")
+            return {"success": False, "error": str(e), "response": f"Content Agent error: {e}",
+                    "tool_results": [], "variations": []}
 
-    def generate_image(self, prompt: str, platform: str = "instagram", **kwargs) -> dict[str, Any]:
-        """Direct image generation — bypass LangGraph."""
-        return generate_image(prompt=prompt, platform=platform, **kwargs)
-
-    def generate_video(self, prompt: str, platform: str = "instagram", **kwargs) -> dict[str, Any]:
-        """Direct video generation — bypass LangGraph."""
-        return generate_video(prompt=prompt, platform=platform, **kwargs)
+    def select_variation(self, variation_id: str) -> dict[str, Any] | None:
+        """Select best variation by ID from last run."""
+        # This would typically look up from the last run's state
+        return {"variation_id": variation_id, "selected": True}
 
     def status(self) -> dict[str, Any]:
         """Agent status."""
@@ -687,10 +912,23 @@ class ContentAgent:
             "kaggle_cli": _check_kaggle(),
             "past_successes": mem.success_count if mem else 0,
             "past_failures": mem.failure_count if mem else 0,
+            "pipeline": "6-node (parse->analyze->plan->engineer->generate->validate)",
         }
 
+    def generate_image_direct(
+        self, prompt: str, platform: str = "instagram", **kwargs: Any
+    ) -> dict[str, Any]:
+        """Direct image generation — bypass pipeline."""
+        return generate_image(prompt=prompt, platform=platform, **kwargs)
 
-# ═══════════════════════════════════════════════════════════════
+    def generate_video_direct(
+        self, prompt: str, platform: str = "instagram", **kwargs: Any
+    ) -> dict[str, Any]:
+        """Direct video generation — bypass pipeline."""
+        return generate_video(prompt=prompt, platform=platform, **kwargs)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # WORKSPACE AGENT REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
 

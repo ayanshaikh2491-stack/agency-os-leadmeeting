@@ -18,6 +18,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -98,6 +99,47 @@ class BriefRequest(BaseModel):
     task: str  # The detailed brief
     context: str = ""
     priority: str = "normal"
+
+
+class GenerateVariationsRequest(BaseModel):
+    """Generate 3-4 variations of a visual."""
+    workspace_id: str
+    message: str  # Brief text
+    brief_from: str = ""
+    num_variations: int = 3
+    platforms: list[str] = ["instagram"]
+
+
+class SelectVariationRequest(BaseModel):
+    """Select best variation from generated set."""
+    workspace_id: str
+    variation_id: str
+
+
+class GenerateUGCRequest(BaseModel):
+    """Generate UGC/testimonial style video."""
+    workspace_id: str
+    subject: str
+    style: str = "testimonial"  # testimonial, review, unboxing, reaction
+    platform: str = "instagram"
+    duration: str = "short"  # short, medium, long
+
+
+class GenerateMarketingRequest(BaseModel):
+    """Generate marketing/explainer video."""
+    workspace_id: str
+    subject: str
+    style: str = "product_showcase"  # product_showcase, explainer, brand_story, before_after
+    platform: str = "youtube"
+    duration: str = "medium"
+
+
+class BatchGenerateRequest(BaseModel):
+    """Generate multiple images for content calendar."""
+    workspace_id: str
+    briefs: list[str]  # List of brief texts
+    platform: str = "instagram"
+    consistent_style: bool = True
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -289,3 +331,231 @@ async def gpu_status(kernel_slug: str):
     """Kaggle notebook status."""
     from admin.tools.kaggle_gpu import check_status
     return {"kernel_slug": kernel_slug, "status": check_status(kernel_slug)}
+
+
+# ── Variations & Selection ─────────────────────────────────────────────────
+
+
+@router.post("/generate-variations")
+async def generate_variations_endpoint(req: GenerateVariationsRequest):
+    """3-4 variations banao ek brief se."""
+    from admin.workspace.agents.content import run_content_agent
+
+    variations = []
+
+    for i in range(req.num_variations):
+        variation_prompt = (
+            f"Variation {i + 1} of {req.num_variations}: {req.message}"
+        )
+        result = run_content_agent(
+            message=variation_prompt,
+            workspace_id=req.workspace_id,
+            brief_from=req.brief_from or "variations",
+        )
+        variations.append({
+            "variation_id": f"{req.workspace_id}-var-{i + 1}",
+            "index": i + 1,
+            "platforms": req.platforms,
+            "result": result,
+        })
+
+    return {
+        "workspace_id": req.workspace_id,
+        "total_variations": len(variations),
+        "variations": variations,
+    }
+
+
+@router.post("/select-variation")
+async def select_variation_endpoint(req: SelectVariationRequest):
+    """Best variation select karo."""
+    from admin.workspace.agents.content import get_content_agent
+
+    agent = get_content_agent(req.workspace_id)
+    if not agent:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workspace {req.workspace_id} not initialized",
+        )
+
+    return {
+        "workspace_id": req.workspace_id,
+        "selected_variation_id": req.variation_id,
+        "status": "selected",
+    }
+
+
+# ── UGC & Marketing Videos ──────────────────────────────────────
+
+
+@router.post("/generate-ugc")
+async def generate_ugc_endpoint(req: GenerateUGCRequest):
+    """UGC/testimonial style video banao."""
+    from admin.workspace.agents.content import run_content_agent
+
+    style_descriptions = {
+        "testimonial": "authentic customer testimonial video, real person speaking to camera",
+        "review": "hands-on product review video, close-up shots, genuine reaction",
+        "unboxing": "exciting unboxing moment, first impressions, reveal shots",
+        "reaction": "genuine reaction video, expressive, real emotion",
+    }
+    style_desc = style_descriptions.get(req.style, style_descriptions["testimonial"])
+
+    duration_frames = {"short": 49, "medium": 81, "long": 121}
+    frames = duration_frames.get(req.duration, 49)
+
+    brief_msg = (
+        f"Create a {req.style} UGC video about: {req.subject}. "
+        f"Style: {style_desc}. "
+        f"Platform: {req.platform}. "
+        f"This should feel authentic and user-generated, not polished or corporate."
+    )
+
+    result = run_content_agent(
+        message=brief_msg,
+        workspace_id=req.workspace_id,
+        brief_from="ugc_generator",
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "UGC generation failed"))
+
+    return {
+        "workspace_id": req.workspace_id,
+        "type": "ugc",
+        "style": req.style,
+        "platform": req.platform,
+        "duration": req.duration,
+        "frames": frames,
+        "result": result,
+    }
+
+
+@router.post("/generate-marketing")
+async def generate_marketing_endpoint(req: GenerateMarketingRequest):
+    """Marketing/explainer video banao."""
+    from admin.workspace.agents.content import run_content_agent
+
+    style_descriptions = {
+        "product_showcase": "sleek product showcase, 360-degree views, premium feel",
+        "explainer": "clear explainer video, step-by-step visuals, educational",
+        "brand_story": "emotional brand story, cinematic shots, narrative arc",
+        "before_after": "before-and-after transformation, split screen, dramatic reveal",
+    }
+    style_desc = style_descriptions.get(req.style, style_descriptions["product_showcase"])
+
+    duration_frames = {"short": 49, "medium": 81, "long": 121}
+    frames = duration_frames.get(req.duration, 81)
+
+    brief_msg = (
+        f"Create a {req.style.replace('_', ' ')} marketing video about: {req.subject}. "
+        f"Style: {style_desc}. "
+        f"Platform: {req.platform}. "
+        f"Professional quality, polished production."
+    )
+
+    result = run_content_agent(
+        message=brief_msg,
+        workspace_id=req.workspace_id,
+        brief_from="marketing_generator",
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Marketing video generation failed"))
+
+    return {
+        "workspace_id": req.workspace_id,
+        "type": "marketing",
+        "style": req.style,
+        "platform": req.platform,
+        "duration": req.duration,
+        "frames": frames,
+        "result": result,
+    }
+
+
+# ── Batch Generation ─────────────────────────────────────────────────
+
+
+@router.post("/batch-generate")
+async def batch_generate_endpoint(req: BatchGenerateRequest):
+    """Multiple images batch mein banao."""
+    from admin.workspace.agents.content import run_content_agent
+
+    results = []
+
+    for idx, brief_text in enumerate(req.briefs):
+        result = run_content_agent(
+            message=brief_text,
+            workspace_id=req.workspace_id,
+            brief_from="batch_generator",
+        )
+        results.append({
+            "index": idx + 1,
+            "brief": brief_text,
+            "success": result.get("success", False),
+            "result": result,
+        })
+
+    return {
+        "workspace_id": req.workspace_id,
+        "platform": req.platform,
+        "consistent_style": req.consistent_style,
+        "total_briefs": len(req.briefs),
+        "results": results,
+    }
+
+
+# ── Workspace Memory & Outputs ──────────────────────────────────
+
+
+@router.get("/workspace/{workspace_id}/memory")
+async def get_workspace_memory(workspace_id: str):
+    """Workspace Content Agent ki memory dikhaao."""
+    from admin.workspace.agents.content import get_content_agent
+
+    agent = get_content_agent(workspace_id)
+    if not agent:
+        return {
+            "workspace_id": workspace_id,
+            "initialized": False,
+            "memory": {},
+        }
+
+    return {
+        "workspace_id": workspace_id,
+        "initialized": True,
+        "brand": agent.brand,
+        "memory": {
+            "brand_context": agent.brand or {},
+            "status": agent.status(),
+        },
+    }
+
+
+@router.get("/workspace/{workspace_id}/outputs")
+async def get_workspace_outputs(workspace_id: str):
+    """Workspace ke saare outputs dikhaao."""
+    from pathlib import Path
+
+    output_dir = Path("outputs") / workspace_id
+    files = []
+
+    if output_dir.exists():
+        for f in sorted(output_dir.iterdir()):
+            if f.is_file():
+                stat = f.stat()
+                files.append({
+                    "filename": f.name,
+                    "path": str(f),
+                    "size_bytes": stat.st_size,
+                    "modified": datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                })
+
+    return {
+        "workspace_id": workspace_id,
+        "total_outputs": len(files),
+        "files": files,
+    }

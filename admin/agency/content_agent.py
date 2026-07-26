@@ -231,6 +231,26 @@ class AgencyContentAgent:
                 )
             )
 
+        # Extract and store failure patterns from unsuccessful jobs
+        if not report.success:
+            industry = self._guess_industry(report.client_name)
+            # Store as a brand insight of type "failure_pattern" for avoidance
+            failure_insight_parts: list[str] = []
+            if report.error:
+                failure_insight_parts.append(f"Error: {report.error[:200]}")
+            if report.learnings:
+                for learning in report.learnings:
+                    failure_insight_parts.append(f"Learning: {learning[:200]}")
+            if failure_insight_parts:
+                self.brand_insights.append(
+                    BrandInsight(
+                        insight_id=f"fi_{len(self.brand_insights)+1}",
+                        industry=industry,
+                        insight_type="failure_pattern",
+                        insight=" | ".join(failure_insight_parts),
+                    )
+                )
+
         # Update industry stats
         industry = self._guess_industry(report.client_name)
         if industry not in self.industry_stats:
@@ -455,3 +475,166 @@ def get_agency_content_agent() -> AgencyContentAgent:
     if _agency_content_agent is None:
         _agency_content_agent = AgencyContentAgent()
     return _agency_content_agent
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXTENDED AGENT METHODS (industry/platform insights, failure patterns)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _get_industry_insights(self: AgencyContentAgent, industry: str) -> dict[str, Any]:
+    """Return all accumulated knowledge for a specific industry."""
+    result: dict[str, Any] = {
+        "industry": industry,
+        "total_jobs": 0,
+        "platforms_used": [],
+        "visual_types_used": [],
+        "prompt_patterns": [],
+        "brand_insights": [],
+        "failure_patterns": [],
+    }
+
+    # Industry stats
+    if industry in self.industry_stats:
+        istat = self.industry_stats[industry]
+        result["total_jobs"] = istat["total_jobs"]
+        result["platforms_used"] = istat.get("platforms_used", [])
+        result["visual_types_used"] = istat.get("visual_types_used", [])
+
+    # Prompt patterns for this industry
+    for pp in self.prompt_patterns:
+        if pp.industry == industry:
+            result["prompt_patterns"].append({
+                "prompt_template": pp.prompt_template,
+                "visual_type": pp.visual_type,
+                "platform": pp.platform,
+                "success_count": pp.success_count,
+                "avg_quality": pp.avg_quality,
+            })
+
+    # Brand insights for this industry
+    for bi in self.brand_insights:
+        if bi.industry == industry:
+            result["brand_insights"].append({
+                "type": bi.insight_type,
+                "insight": bi.insight,
+                "evidence_count": bi.evidence_count,
+            })
+
+    # Failure patterns for this industry
+    for report in self.reports:
+        if not report.success and self._guess_industry(report.client_name) == industry:
+            result["failure_patterns"].append({
+                "error": report.error,
+                "platform": report.platform,
+                "visual_type": report.visual_type,
+                "learnings": report.learnings,
+                "brief_summary": report.brief_summary[:100],
+            })
+
+    return result
+
+
+def _get_platform_insights(self: AgencyContentAgent, platform: str) -> dict[str, Any]:
+    """Return accumulated knowledge for a specific platform."""
+    result: dict[str, Any] = {
+        "platform": platform,
+        "total_jobs": 0,
+        "gpu_minutes": 0.0,
+        "avg_gpu_minutes": 0.0,
+        "common_visual_types": {},
+        "prompt_patterns": [],
+        "failure_patterns": [],
+    }
+
+    # Platform stats
+    if platform in self.platform_stats:
+        ps = self.platform_stats[platform]
+        result["total_jobs"] = ps["total_jobs"]
+        result["gpu_minutes"] = ps["total_gpu_minutes"]
+        result["avg_gpu_minutes"] = (
+            ps["total_gpu_minutes"] / max(ps["total_jobs"], 1)
+        )
+        result["common_visual_types"] = ps.get("common_visual_types", {})
+
+    # Prompt patterns for this platform
+    for pp in self.prompt_patterns:
+        if pp.platform == platform:
+            result["prompt_patterns"].append({
+                "prompt_template": pp.prompt_template,
+                "visual_type": pp.visual_type,
+                "industry": pp.industry,
+                "success_count": pp.success_count,
+                "avg_quality": pp.avg_quality,
+            })
+
+    # Failure patterns for this platform
+    for report in self.reports:
+        if not report.success and report.platform == platform:
+            result["failure_patterns"].append({
+                "error": report.error,
+                "visual_type": report.visual_type,
+                "learnings": report.learnings,
+                "brief_summary": report.brief_summary[:100],
+            })
+
+    return result
+
+
+def _get_failure_patterns(self: AgencyContentAgent) -> list[dict[str, Any]]:
+    """Return all failure patterns across all workspaces to avoid repeating mistakes."""
+    patterns: list[dict[str, Any]] = []
+
+    for report in self.reports:
+        if not report.success:
+            pattern: dict[str, Any] = {
+                "workspace": report.workspace_name,
+                "client": report.client_name,
+                "error": report.error,
+                "platform": report.platform,
+                "visual_type": report.visual_type,
+                "brief_summary": report.brief_summary[:100],
+                "learnings": report.learnings,
+                "timestamp": report.timestamp,
+            }
+            patterns.append(pattern)
+
+    return patterns
+
+
+def _get_best_prompts_for(
+    self: AgencyContentAgent,
+    industry: str = "",
+    platform: str = "",
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return best performing prompts filtered by industry and/or platform."""
+    candidates = self.prompt_patterns
+
+    if industry:
+        candidates = [p for p in candidates if p.industry == industry]
+    if platform:
+        candidates = [p for p in candidates if p.platform == platform]
+
+    # Sort by success_count descending, then avg_quality descending
+    candidates.sort(key=lambda p: (p.success_count, p.avg_quality), reverse=True)
+
+    return [
+        {
+            "prompt_template": p.prompt_template,
+            "success_count": p.success_count,
+            "avg_quality": p.avg_quality,
+            "visual_type": p.visual_type,
+            "platform": p.platform,
+            "industry": p.industry,
+        }
+        for p in candidates[:limit]
+    ]
+
+
+# ── Monkey-patch methods onto AgencyContentAgent ──────────────────────────────
+
+AgencyContentAgent.get_industry_insights = _get_industry_insights  # type: ignore[attr-defined]
+AgencyContentAgent.get_platform_insights = _get_platform_insights  # type: ignore[attr-defined]
+AgencyContentAgent.get_failure_patterns = _get_failure_patterns  # type: ignore[attr-defined]
+AgencyContentAgent.get_best_prompts_for = _get_best_prompts_for  # type: ignore[attr-defined]

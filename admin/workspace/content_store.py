@@ -80,6 +80,15 @@ class ContentAgentMemory:
     # Agency knowledge received (from previous projects)
     agency_knowledge_received: list[dict[str, Any]] = field(default_factory=list)
 
+    # Variation history (tracks all variations generated per brief)
+    variations_history: list[dict[str, Any]] = field(default_factory=list)
+    # Quality scores for generated content (0.0 - 1.0 scale)
+    quality_scores: list[float] = field(default_factory=list)
+    # Best performing prompts ranked by quality score
+    best_prompts: list[dict[str, Any]] = field(default_factory=list)
+    # Styles that worked well for this workspace
+    style_history: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -352,6 +361,24 @@ class WorkspaceContentStore:
         if mem.industry_tips:
             parts.append(f"Industry tips: {'; '.join(mem.industry_tips[:3])}")
 
+        # Style memory
+        if mem.style_history:
+            parts.append(f"Best styles: {'; '.join(mem.style_history[:5])}")
+
+        # Best prompts
+        if mem.best_prompts:
+            top = mem.best_prompts[:3]
+            prompt_summaries = [
+                f"\"{p['prompt'][:60]}\" (score: {p['quality_score']:.2f})"
+                for p in top
+            ]
+            parts.append(f"Top prompts: {'; '.join(prompt_summaries)}")
+
+        # Variation count
+        if mem.variations_history:
+            total_variations = sum(len(v.get("variations", [])) for v in mem.variations_history)
+            parts.append(f"Total variations generated: {total_variations}")
+
         if not parts:
             return ""
 
@@ -377,6 +404,111 @@ class WorkspaceContentStore:
     def list_all_stats(self) -> list[dict[str, Any]]:
         """Get stats for all workspace Content Agents."""
         return [self.get_stats(wid) for wid in self._memories]
+
+    # ── Variation Tracking ──────────────────────────────────────────────────
+
+    def record_variation(
+        self,
+        workspace_id: str,
+        brief_summary: str,
+        variations: list[dict[str, Any]],
+        quality_scores: list[float] | None = None,
+    ) -> None:
+        """Record variations generated for a brief and their quality scores.
+
+        Args:
+            workspace_id: Target workspace.
+            brief_summary: Summary of the brief.
+            variations: List of variation dicts with prompt, file, settings etc.
+            quality_scores: Optional parallel list of scores (0.0-1.0).
+        """
+        mem = self._memories.get(workspace_id)
+        if not mem:
+            return
+
+        entry = {
+            "brief_summary": brief_summary,
+            "variations": variations,
+            "quality_scores": quality_scores or [],
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        mem.variations_history.append(entry)
+
+        # Merge quality scores into global quality_scores
+        if quality_scores:
+            mem.quality_scores.extend(quality_scores)
+
+            # Update best_prompts: pair prompts with their scores and keep top
+            for i, variation in enumerate(variations):
+                if i < len(quality_scores) and quality_scores[i] > 0.0:
+                    mem.best_prompts.append({
+                        "prompt": variation.get("prompt", ""),
+                        "quality_score": quality_scores[i],
+                        "platform": variation.get("platform", ""),
+                        "brief_summary": brief_summary,
+                        "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            # Keep only top 50 best prompts sorted by score descending
+            mem.best_prompts.sort(key=lambda x: x["quality_score"], reverse=True)
+            mem.best_prompts = mem.best_prompts[:50]
+
+        mem.last_active = datetime.now(timezone.utc).isoformat()
+        self._save(workspace_id)
+
+    def record_style_preference(
+        self,
+        workspace_id: str,
+        style_name: str,
+        score: float = 1.0,
+    ) -> None:
+        """Track which visual styles the client responds well to.
+
+        Args:
+            workspace_id: Target workspace.
+            style_name: Style identifier (e.g. "minimal", "bold", "flat").
+            score: Preference score (0.0 = bad, 1.0 = great).
+        """
+        mem = self._memories.get(workspace_id)
+        if not mem:
+            return
+
+        # Add to style_history if score is positive and style not yet listed
+        if score >= 0.5 and style_name not in mem.style_history:
+            mem.style_history.append(style_name)
+
+        # Also store structured style data in best_prompts as a style entry
+        if score >= 0.5:
+            mem.best_prompts.append({
+                "prompt": f"[STYLE] {style_name}",
+                "quality_score": score,
+                "platform": "",
+                "brief_summary": f"Style preference: {style_name}",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            })
+            mem.best_prompts.sort(key=lambda x: x["quality_score"], reverse=True)
+            mem.best_prompts = mem.best_prompts[:50]
+
+        mem.last_active = datetime.now(timezone.utc).isoformat()
+        self._save(workspace_id)
+
+    def get_best_prompts(
+        self, workspace_id: str, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """Return top prompts by quality score for this workspace."""
+        mem = self._memories.get(workspace_id)
+        if not mem:
+            return []
+        return [
+            {k: v for k, v in p.items() if k != "recorded_at"}
+            for p in mem.best_prompts[:limit]
+        ]
+
+    def get_style_memory(self, workspace_id: str) -> list[str]:
+        """Return the list of styles that worked best for this workspace."""
+        mem = self._memories.get(workspace_id)
+        if not mem:
+            return []
+        return list(mem.style_history)
 
 
 # ── Global Store ──────────────────────────────────────────────────────────────

@@ -678,3 +678,325 @@ VISUAL_TOOLS = [
         },
     },
 ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. COMPETITOR & REFERENCE STYLE ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def analyze_competitor_style(competitor_urls: list[str]) -> dict:
+    """Scan competitor websites and extract their visual style patterns.
+
+    Analyzes colors, imagery types, layout patterns across multiple
+    competitor sites and returns an aggregated style analysis.
+
+    Args:
+        competitor_urls: List of competitor website URLs to scan.
+
+    Returns:
+        Aggregated dict with color_frequencies, imagery_types,
+        layout_patterns, common_styles, and per-site breakdowns.
+    """
+    all_colors: list[str] = []
+    all_image_urls: list[str] = []
+    all_styles: list[str] = []
+    site_results: list[dict] = []
+
+    for url in competitor_urls:
+        site_data = discover_brand_identity(url)
+        site_results.append(site_data)
+        all_colors.extend(site_data.get("colors", []))
+        all_image_urls.extend(site_data.get("image_urls", []))
+        style = site_data.get("visual_style", "")
+        if style:
+            all_styles.append(style)
+
+    # Aggregate color frequencies
+    color_freq: dict[str, int] = {}
+    for c in all_colors:
+        key = c.lower().strip()
+        color_freq[key] = color_freq.get(key, 0) + 1
+    sorted_colors = sorted(color_freq.items(), key=lambda x: x[1], reverse=True)
+
+    # Aggregate style frequencies
+    style_freq: dict[str, int] = {}
+    for s in all_styles:
+        style_freq[s] = style_freq.get(s, 0) + 1
+    common_styles = sorted(style_freq.items(), key=lambda x: x[1], reverse=True)
+
+    # Infer imagery types from image count and site styles
+    imagery_types: list[str] = []
+    for site in site_results:
+        img_count = len(site.get("image_urls", []))
+        vs = site.get("visual_style", "")
+        if img_count > 10:
+            imagery_types.append("photography-heavy")
+        if "video" in vs.lower():
+            imagery_types.append("video-forward")
+        if "minimal" in vs.lower():
+            imagery_types.append("minimalist imagery")
+    imagery_freq: dict[str, int] = {}
+    for it in imagery_types:
+        imagery_freq[it] = imagery_freq.get(it, 0) + 1
+    sorted_imagery = sorted(imagery_freq.items(), key=lambda x: x[1], reverse=True)
+
+    # Layout pattern inference
+    layout_patterns: list[str] = []
+    for site in site_results:
+        vs = site.get("visual_style", "")
+        img_count = len(site.get("image_urls", []))
+        if "bold" in vs.lower():
+            layout_patterns.append("large hero images")
+        if "minimal" in vs.lower():
+            layout_patterns.append("whitespace-heavy")
+        if img_count > 15:
+            layout_patterns.append("image grid layouts")
+        if "dark" in vs.lower():
+            layout_patterns.append("dark theme")
+    layout_freq: dict[str, int] = {}
+    for lp in layout_patterns:
+        layout_freq[lp] = layout_freq.get(lp, 0) + 1
+    sorted_layouts = sorted(layout_freq.items(), key=lambda x: x[1], reverse=True)
+
+    return {
+        "analyzed_at": _now(),
+        "competitor_count": len(competitor_urls),
+        "color_frequencies": [{"color": c, "count": n} for c, n in sorted_colors[:10]],
+        "imagery_types": [{"type": t, "count": n} for t, n in sorted_imagery],
+        "layout_patterns": [{"pattern": p, "count": n} for p, n in sorted_layouts],
+        "common_styles": [{"style": s, "count": n} for s, n in common_styles],
+        "total_images_scanned": len(all_image_urls),
+        "per_site": [
+            {
+                "url": sr.get("website_url", ""),
+                "brand_name": sr.get("brand_name", ""),
+                "colors": sr.get("colors", []),
+                "visual_style": sr.get("visual_style", ""),
+                "image_count": len(sr.get("image_urls", [])),
+            }
+            for sr in site_results
+        ],
+    }
+
+
+def get_reference_style(reference_image_url: str) -> dict:
+    """Analyze a reference image URL for style attributes.
+
+    Fetches the page containing the reference image and extracts
+    style attributes from image metadata, surrounding context, and
+    page-level visual signals.
+
+    Args:
+        reference_image_url: URL of the reference image or page containing it.
+
+    Returns:
+        Dict with colors, composition hints, mood, and metadata.
+    """
+    result: dict[str, Any] = {
+        "url": reference_image_url,
+        "analyzed_at": _now(),
+        "colors": [],
+        "composition": "unknown",
+        "mood": "neutral",
+        "content_type": "image",
+        "metadata": {},
+    }
+
+    try:
+        # Determine if this is a direct image URL
+        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg")
+        is_direct_image = any(
+            reference_image_url.lower().split("?")[0].endswith(ext)
+            for ext in image_exts
+        )
+
+        if is_direct_image:
+            # Direct image -- extract metadata from URL/path
+            result["content_type"] = "direct_image"
+            result["metadata"]["source_url"] = reference_image_url
+            parsed = urlparse(reference_image_url)
+            result["metadata"]["host"] = parsed.netloc
+        else:
+            # Page containing the image -- fetch and parse
+            resp = requests.get(
+                reference_image_url, headers=_HEADERS, timeout=15
+            )
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Extract colors from the page context
+            result["colors"] = _extract_colors(soup)
+
+            # Extract composition hints from page structure
+            images = soup.find_all("img", src=True)
+            result["metadata"]["nearby_image_count"] = len(images)
+
+            # Check for aspect ratio hints in image attributes
+            for img in images:
+                w = img.get("width", "")
+                h = img.get("height", "")
+                if w and h:
+                    try:
+                        ratio = int(w) / max(int(h), 1)
+                        if ratio > 1.5:
+                            result["composition"] = "landscape/wide"
+                        elif ratio < 0.67:
+                            result["composition"] = "portrait/tall"
+                        else:
+                            result["composition"] = "square/balanced"
+                        break
+                    except (ValueError, ZeroDivisionError):
+                        pass
+
+            # Mood from visual style
+            result["mood"] = _infer_visual_style(soup)
+
+            # Meta info
+            result["metadata"]["title"] = ""
+            if soup.title and soup.title.string:
+                result["metadata"]["title"] = soup.title.string.strip()
+
+            og_desc = soup.find("meta", property="og:description")
+            if og_desc and og_desc.get("content"):
+                result["metadata"]["description"] = og_desc["content"][:200]
+
+    except Exception as e:
+        result["error"] = str(e)
+        logger.warning("Reference style analysis failed for %s: %s", reference_image_url, e)
+
+    return result
+
+
+def suggest_visual_variations(
+    brief: dict,
+    brand: dict,
+    count: int = 3,
+) -> list[dict]:
+    """Generate variation suggestions based on a brief and brand identity.
+
+    Creates distinct visual direction suggestions, each with a name,
+    style key, mood, description, and prompt hint for image generation.
+
+    Args:
+        brief: Parsed brief dict (from parse_visual_brief) or similar.
+        brand: Brand identity dict (from discover_brand_identity) or similar.
+        count: Number of variations to suggest (default 3).
+
+    Returns:
+        List of variation dicts, each containing:
+        name, style_key, mood, description, prompt_hint.
+    """
+    style = brief.get("style", "professional")
+    platform = brief.get("platform", "general")
+    visual_type = brief.get("visual_type", "image")
+    raw_brief = brief.get("raw_brief", "")
+    brand_name = brand.get("brand_name", "") if brand else ""
+    brand_colors = brand.get("colors", []) if brand else []
+
+    color_hint = ""
+    if brand_colors:
+        color_hint = f" using brand colors ({', '.join(brand_colors[:3])})"
+
+    # Define variation archetypes
+    archetypes = [
+        {
+            "name": "Bold & Vibrant",
+            "style_key": "bold",
+            "mood": "energetic",
+            "description": "High-contrast, eye-catching design with vivid colors and dynamic composition.",
+            "prompt_template": "bold vibrant {visual_type} for {platform}, high contrast, dynamic composition{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Clean & Minimal",
+            "style_key": "minimal",
+            "mood": "calm",
+            "description": "Elegant, whitespace-focused design that lets the subject breathe.",
+            "prompt_template": "minimalist clean {visual_type} for {platform}, elegant whitespace, simple composition{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Warm & Authentic",
+            "style_key": "warm",
+            "mood": "inviting",
+            "description": "Warm tones, natural feel, approachable and human-centered.",
+            "prompt_template": "warm authentic {visual_type} for {platform}, natural warm tones, approachable{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Sleek & Premium",
+            "style_key": "premium",
+            "mood": "sophisticated",
+            "description": "Polished, premium aesthetic with refined details and luxury feel.",
+            "prompt_template": "sleek premium {visual_type} for {platform}, luxury feel, refined details{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Playful & Fun",
+            "style_key": "playful",
+            "mood": "joyful",
+            "description": "Colorful, energetic, friendly design that puts a smile on the viewer.",
+            "prompt_template": "playful fun {visual_type} for {platform}, colorful, friendly, energetic{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Dark & Moody",
+            "style_key": "dark",
+            "mood": "dramatic",
+            "description": "Dark palette with rich accents, dramatic lighting and atmosphere.",
+            "prompt_template": "dark moody {visual_type} for {platform}, dramatic lighting, rich dark palette{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Corporate & Trustworthy",
+            "style_key": "corporate",
+            "mood": "professional",
+            "description": "Clean corporate aesthetic, trustworthy, business-appropriate.",
+            "prompt_template": "corporate professional {visual_type} for {platform}, trustworthy, clean business aesthetic{color_hint}, {raw_brief}",
+        },
+        {
+            "name": "Creative & Artistic",
+            "style_key": "creative",
+            "mood": "inspiring",
+            "description": "Artistic composition with unique angles and creative flair.",
+            "prompt_template": "creative artistic {visual_type} for {platform}, unique composition, artistic flair{color_hint}, {raw_brief}",
+        },
+    ]
+
+    # Match current style to boost matching archetype to first position
+    style_to_key = {
+        "bold": "bold",
+        "minimal": "minimal",
+        "creative": "creative",
+        "corporate": "corporate",
+        "playful": "playful",
+        "professional": "corporate",
+    }
+    preferred_key = style_to_key.get(style, "bold")
+
+    # Reorder: put preferred style first, then pick diverse others
+    matched = [a for a in archetypes if a["style_key"] == preferred_key]
+    others = [a for a in archetypes if a["style_key"] != preferred_key]
+    ordered = matched + others
+
+    # Ensure we return at least `count` variations (loop if fewer archetypes)
+    variations = []
+    seen_keys: set[str] = set()
+    for archetype in ordered:
+        if len(variations) >= count:
+            break
+        if archetype["style_key"] in seen_keys:
+            continue
+        seen_keys.add(archetype["style_key"])
+        prompt_hint = archetype["prompt_template"].format(
+            visual_type=visual_type,
+            platform=platform,
+            color_hint=color_hint,
+            raw_brief=raw_brief or "marketing visual",
+        )
+        if brand_name:
+            prompt_hint = f"{brand_name} brand, {prompt_hint}"
+        variations.append({
+            "name": archetype["name"],
+            "style_key": archetype["style_key"],
+            "mood": archetype["mood"],
+            "description": archetype["description"],
+            "prompt_hint": prompt_hint,
+        })
+
+    return variations
