@@ -222,7 +222,7 @@ try:
         width=WIDTH,
         height=HEIGHT,
         num_inference_steps=STEPS,
-        guidance_scale=7.5,
+        guidance_scale=3.5,
     ).images[0]
     output_path = "output.png"
     image.save(output_path)

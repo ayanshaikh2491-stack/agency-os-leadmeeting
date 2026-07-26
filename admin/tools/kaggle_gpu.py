@@ -134,12 +134,12 @@ except Exception as e:
 PROMPT = "{prompt}"
 WIDTH = {width}
 HEIGHT = {height}
-STEPS = {steps}
+STEPS = {steps} if {steps} >= 20 else 30
 
 print(f"Generating: {{PROMPT[:100]}} ({{WIDTH}}x{{HEIGHT}}, steps={{STEPS}})")
 sys.stdout.flush()
 try:
-    image = pipe(PROMPT, width=WIDTH, height=HEIGHT, num_inference_steps=STEPS, guidance_scale=7.5).images[0]
+    image = pipe(PROMPT, width=WIDTH, height=HEIGHT, num_inference_steps=STEPS, guidance_scale=3.5).images[0]
     image.save("output.png")
     sz = os.path.getsize("output.png")
     print(json.dumps({{"status": "success", "file": "output.png", "size_bytes": sz, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu", "device": DEVICE}}))
