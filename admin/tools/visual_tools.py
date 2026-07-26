@@ -501,10 +501,25 @@ def execute_visual_tool(tool_name: str, params: dict[str, Any]) -> dict[str, Any
     if tool_name in tool_map:
         return tool_map[tool_name](params)
 
-    # Delegate to Kaggle tools for actual generation
+    # Delegate to Kaggle GPU tools for actual generation
     try:
-        from admin.tools.kaggle_tools import execute_kaggle_tool
-        return execute_kaggle_tool(tool_name, params)
+        from admin.tools.kaggle_gpu import (
+            generate_image as _kimg,
+            generate_video as _kvid,
+            generate_ad_image as _kad,
+            generate_social_image as _ksoc,
+            generate_hero_image as _khero,
+        )
+        _dispatch = {
+            "generate_image": lambda p: _kimg(p["prompt"], p.get("platform", "instagram"), p.get("width", 0), p.get("height", 0)),
+            "generate_video": lambda p: _kvid(p["prompt"], p.get("platform", "instagram"), p.get("frames", 49)),
+            "generate_ad_image": lambda p: _kad(p["product"], p.get("platform", "facebook"), p.get("style", "professional")),
+            "generate_social_image": lambda p: _ksoc(p["topic"], p.get("platform", "instagram")),
+            "generate_hero_image": lambda p: _khero(p["topic"], p.get("style", "modern")),
+        }
+        if tool_name in _dispatch:
+            return _dispatch[tool_name](params)
+        return {"error": f"Tool '{tool_name}' not found in Kaggle GPU tools"}
     except ImportError:
         return {"error": f"Tool '{tool_name}' not found"}
 

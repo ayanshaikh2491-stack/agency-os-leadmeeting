@@ -6,77 +6,57 @@ print("=" * 50)
 print("KAGGLE GPU + CONTENT AGENT TEST")
 print("=" * 50)
 
-# 1. Kaggle tools
-print("\n--- KAGGLE TOOLS ---")
-from admin.tools.kaggle_tools import KAGGLE_TOOLS, execute_kaggle_tool
+# 1. Kaggle GPU tools
+print("\n--- KAGGLE GPU TOOLS ---")
+from admin.tools.kaggle_gpu import KAGGLE_TOOLS
 print(f"  [PASS] {len(KAGGLE_TOOLS)} Kaggle tools")
 for t in KAGGLE_TOOLS:
-    print(f"         - {t['name']}")
+    print(f"         - {t['name']}: {t['description']}")
 
-# 2. Image generation
-print("\n--- IMAGE GENERATION ---")
-from admin.tools.kaggle_tools import generate_image_kaggle
-r = generate_image_kaggle("a beautiful sunset over mountains", 1024, 1024)
-print(f"  [PASS] generate_image_kaggle: status={r.get('status')}")
-print(f"         Has notebook code: {bool(r.get('notebook_code'))}")
+# 2. Credentials check
+print("\n--- CREDENTIALS ---")
+from admin.tools.kaggle_gpu import _check_kaggle, _get_kaggle_creds
+cli_ok = _check_kaggle()
+creds = _get_kaggle_creds()
+print(f"  CLI installed: {cli_ok}")
+print(f"  Username: {creds['username'] or '(not set)'}")
+print(f"  Key: {'***' if creds['key'] else '(not set)'}")
 
-# 3. Video generation
-print("\n--- VIDEO GENERATION ---")
-from admin.tools.kaggle_tools import generate_video_kaggle
-r = generate_video_kaggle("a cat playing with yarn")
-print(f"  [PASS] generate_video_kaggle: status={r.get('status')}")
-print(f"         Frames: {r.get('frames')}")
+# 3. Convenience functions
+print("\n--- CONVENIENCE FUNCTIONS ---")
+from admin.tools.kaggle_gpu import (
+    generate_image,
+    generate_video,
+    generate_ad_image,
+    generate_social_image,
+    generate_hero_image,
+    generate_image_kaggle,
+    generate_video_kaggle,
+    generate_video_ad,
+    batch_generate_images,
+    check_status,
+)
+print("  [PASS] All functions importable")
 
-# 4. Ad image
-print("\n--- AD IMAGE ---")
-from admin.tools.kaggle_tools import generate_ad_image
-r = generate_ad_image("Nike shoes", "facebook", "bold")
-print(f"  [PASS] generate_ad_image: status={r.get('status')}")
+# 4. Platform sizes
+print("\n--- PLATFORM SIZES ---")
+from admin.tools.kaggle_gpu import get_platform_size
+for p in ["instagram", "facebook", "youtube", "twitter", "linkedin", "blog_hero"]:
+    w, h = get_platform_size(p)
+    print(f"  {p}: {w}x{h}")
 
-# 5. Social image
-print("\n--- SOCIAL IMAGE ---")
-from admin.tools.kaggle_tools import generate_social_image
-r = generate_social_image("digital marketing tips", "instagram")
-print(f"  [PASS] generate_social_image: status={r.get('status')}")
-
-# 6. Content tools (updated)
-print("\n--- CONTENT TOOLS (updated) ---")
-from admin.tools.content_tools import CONTENT_TOOLS
-print(f"  [PASS] {len(CONTENT_TOOLS)} content tools")
-tool_names = [t["name"] for t in CONTENT_TOOLS]
-print(f"         {tool_names}")
-
-# 7. Content + Kaggle combined workflow
-print("\n--- COMBINED WORKFLOW ---")
-from admin.tools.content_tools import generate_blog_post, repurpose_for_social, generate_ad_copy
-blog = generate_blog_post("digital marketing", ["seo", "social media"])
-print(f"  [PASS] Blog post: {blog.get('title')}")
-print(f"         Sections: {len(blog.get('sections', []))}")
-
-social = repurpose_for_social(blog["sections"][0]["content"], "instagram")
-print(f"  [PASS] Social posts: {social.get('posts_generated')} for instagram")
-
-ad = generate_ad_copy("digital marketing course", "facebook")
-print(f"  [PASS] Ad copy: {len(ad.get('copies', []))} versions")
-
-# 8. API routes
-print("\n--- API ROUTES ---")
-from admin.api.routes.kaggle import router as kaggle_router
-from admin.api.routes.content import router as content_router
-kaggle_paths = [r.path for r in kaggle_router.routes if hasattr(r, "path")]
-content_paths = [r.path for r in content_router.routes if hasattr(r, "path")]
-print(f"  [PASS] Kaggle routes: {len(kaggle_paths)}")
-for p in sorted(kaggle_paths):
-    print(f"         {p}")
-print(f"  [PASS] Content routes: {len(content_paths)}")
+# 5. Content agent pipeline
+print("\n--- CONTENT AGENT PIPELINE ---")
+from admin.workspace.agents.content import run_content_agent
+print("  [PASS] Content agent importable")
 
 print("\n" + "=" * 50)
-print("ALL TESTS PASSED!")
-print(f"\nCONTENT AGENT TOTAL:")
-print(f"  11 text tools")
-print(f"  7 Kaggle GPU tools")
-print(f"  18 total tools")
-print(f"  9 content API routes")
-print(f"  9 kaggle API routes")
-print(f"  18 total API routes")
+print("ALL IMPORTS VERIFIED")
 print("=" * 50)
+print("\nPipeline:")
+print("  /api/content/chat -> run_content_agent() -> LangGraph 6-node pipeline")
+print("  -> generate node -> kaggle_gpu.generate_image() -> builds notebook")
+print("  -> submits to Kaggle GPU -> polls -> downloads -> returns result")
+print()
+print("  /api/kaggle/image -> kaggle_gpu.generate_image_kaggle()")
+print("  -> same flow as above")

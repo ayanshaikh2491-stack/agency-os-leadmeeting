@@ -316,11 +316,8 @@ def _get_username() -> str:
     username = os.getenv("KAGGLE_USERNAME", "")
     if username:
         return username
-    kaggle_json = os.path.expanduser("~/.kaggle/kaggle.json")
-    if os.path.exists(kaggle_json):
-        with open(kaggle_json) as f:
-            return json.load(f).get("username", "")
-    return ""
+    data = _read_kaggle_json()
+    return data.get("username", "")
 
 
 def _run_kaggle(args: list[str], timeout: int = 30) -> dict[str, Any]:
@@ -777,3 +774,69 @@ def batch_generate(prompts: list[dict[str, Any]]) -> dict[str, Any]:
         "failure_count": failure_count,
         "total": len(prompts),
     }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BACKWARD-COMPAT ALIASES (for kaggle routes + tool registry)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _read_kaggle_json() -> dict[str, str]:
+    """Read kaggle.json, handling escaped quotes gracefully."""
+    kaggle_json = os.path.expanduser("~/.kaggle/kaggle.json")
+    if not os.path.exists(kaggle_json):
+        return {}
+    with open(kaggle_json) as f:
+        raw = f.read().strip()
+    raw = raw.replace('\"', '"')
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _get_kaggle_creds() -> dict[str, str]:
+    """Kaggle credentials dict return karo."""
+    username = _get_username()
+    key = os.getenv("KAGGLE_KEY", "")
+    if not key:
+        data = _read_kaggle_json()
+        key = data.get("key", "")
+    return {"username": username, "key": key}
+
+
+def generate_image_kaggle(prompt: str, width: int = 1024, height: int = 1024, steps: int = 4) -> dict[str, Any]:
+    """Alias for generate_image (kaggle routes backward compat)."""
+    return generate_image(prompt=prompt, platform="custom", width=width, height=height, steps=steps)
+
+
+def generate_video_kaggle(prompt: str, frames: int = 49) -> dict[str, Any]:
+    """Alias for generate_video (kaggle routes backward compat)."""
+    return generate_video(prompt=prompt, frames=frames)
+
+
+def generate_video_ad(product: str, duration: str = "short") -> dict[str, Any]:
+    """Video ad generate karo -- CogVideoX on-demand."""
+    duration_frames = {"short": 49, "medium": 81, "long": 121}
+    frames = duration_frames.get(duration, 49)
+    prompt = (
+        f"A professional video advertisement for {product}, "
+        f"cinematic, high quality, marketing material"
+    )
+    return generate_video(prompt=prompt, frames=frames)
+
+
+def batch_generate_images(prompts: list[str], platform: str = "instagram") -> dict[str, Any]:
+    """Batch generate images from prompt strings (backward compat)."""
+    items = [{"prompt": p, "platform": platform} for p in prompts]
+    return batch_generate(items)
+
+
+KAGGLE_TOOLS: list[dict[str, Any]] = [
+    {"name": "generate_image", "description": "FLUX.1-schnell image generation (4 steps, T4x2 GPU)"},
+    {"name": "generate_video", "description": "CogVideoX-2b video generation (T4x2 GPU)"},
+    {"name": "generate_ad_image", "description": "Ad creative image with text-in-image support"},
+    {"name": "generate_social_image", "description": "Social media post image"},
+    {"name": "generate_hero_image", "description": "Hero/banner image"},
+    {"name": "generate_video_ad", "description": "Video advertisement"},
+    {"name": "batch_generate", "description": "Batch generate multiple visuals"},
+    {"name": "generate_with_fallback", "description": "Generate with auto-retry on failure"},
+]
