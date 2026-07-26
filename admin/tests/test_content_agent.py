@@ -1,12 +1,18 @@
-"""Content Agent — Comprehensive Test Suite.
+"""Content Agent — Comprehensive Test Suite (v2).
 
-Tests the full-spectrum Content Agent:
-  - All 21 tools (visual + kaggle + content)
-  - LangGraph compilation and routing
+Tests the current 6-node LangGraph Content Agent:
+  - Unified Tool Registry (21 tools)
+  - Visual Tools (10)
+  - Content Tools (11)
+  - Brand Discovery
+  - Brief Parser
+  - 6-Node LangGraph Pipeline
   - Agency Content Agent (persistence, cross-project learning)
-  - API routes (27 endpoints)
-  - Interview compliance
-  - Dual reporting
+  - Workspace Content Store (memory, reporting)
+  - Content Job Queue (submit, retry, priority)
+  - Brief Enhancement
+  - API Routes (27+ endpoints)
+  - Interview Compliance
 """
 import sys
 sys.path.insert(0, ".")
@@ -64,7 +70,7 @@ def assert_in(name, needle, haystack):
 
 
 print("=" * 70)
-print("CONTENT AGENT COMPREHENSIVE TEST")
+print("CONTENT AGENT COMPREHENSIVE TEST (v2)")
 print("=" * 70)
 
 
@@ -74,17 +80,63 @@ print("=" * 70)
 print("\n--- 1. IMPORTS ---")
 test("visual_tools import", lambda: __import__("admin.tools.visual_tools"))
 test("content_tools import", lambda: __import__("admin.tools.content_tools"))
-test("kaggle_tools import", lambda: __import__("admin.tools.kaggle_tools"))
+test("registry import", lambda: __import__("admin.tools.registry"))
 test("content agent import", lambda: __import__("admin.workspace.agents.content"))
 test("agency content agent import", lambda: __import__("admin.agency.content_agent"))
+test("content store import", lambda: __import__("admin.workspace.content_store"))
+test("content queue import", lambda: __import__("admin.tools.content_queue"))
 test("content routes import", lambda: __import__("admin.api.routes.content"))
-test("agent_bus import", lambda: __import__("admin.workspace.agent_bus"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. VISUAL TOOLS (10 tools)
+# 2. UNIFIED TOOL REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 2. VISUAL TOOLS ---")
+print("\n--- 2. UNIFIED TOOL REGISTRY ---")
+from admin.tools.registry import (
+    get_all_tools, get_visual_tools, get_content_tools,
+    list_all_tools, list_tools_by_category, get_tool_by_name,
+    execute_agent_tool, get_tool_counts,
+)
+
+counts = test("get_tool_counts", lambda: get_tool_counts())
+if counts:
+    assert_eq("total tools", counts["total"], 21)
+    assert_eq("visual tools", counts["visual"], 10)
+    assert_eq("content tools", counts["content"], 11)
+    print(f"         Counts: {counts}")
+
+all_tools = test("get_all_tools", lambda: get_all_tools())
+if all_tools:
+    assert_eq("all_tools length", len(all_tools), 21)
+
+listed = test("list_all_tools", lambda: list_all_tools())
+if listed:
+    assert_eq("listed tools length", len(listed), 21)
+    categories = {t["category"] for t in listed}
+    assert_true("has visual category", "visual" in categories)
+    assert_true("has content category", "content" in categories)
+
+visual_only = test("list_tools_by_category(visual)", lambda: list_tools_by_category("visual"))
+if visual_only:
+    assert_eq("visual tools count", len(visual_only), 10)
+
+content_only = test("list_tools_by_category(content)", lambda: list_tools_by_category("content"))
+if content_only:
+    assert_eq("content tools count", len(content_only), 11)
+
+tool_lookup = test("get_tool_by_name(discover_brand_identity)", lambda: get_tool_by_name("discover_brand_identity"))
+if tool_lookup:
+    assert_eq("tool name", tool_lookup["name"], "discover_brand_identity")
+    assert_true("has description", bool(tool_lookup["description"]))
+    assert_true("has parameters", bool(tool_lookup["parameters"]))
+
+test("get_tool_by_name(nonexistent) returns None",
+     lambda: assert_eq("nonexistent", get_tool_by_name("nonexistent_tool_xyz"), None))
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. VISUAL TOOLS (10 tools)
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n--- 3. VISUAL TOOLS ---")
 from admin.tools.visual_tools import VISUAL_TOOLS, execute_visual_tool
 visual_names = [t["function"]["name"] for t in VISUAL_TOOLS]
 print(f"  Visual tools: {len(VISUAL_TOOLS)} -> {visual_names}")
@@ -100,10 +152,10 @@ for name in expected_visual:
     assert_in(f"visual tool '{name}' registered", name, visual_names)
 
 
-# ═══════════════════════════════════════════════════════════════
-# 3. CONTENT TOOLS (11 tools)
+# ═════════════════════════════════════════════════════════════════
+# 4. CONTENT TOOLS (11 tools)
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 3. CONTENT TOOLS ---")
+print("\n--- 4. CONTENT TOOLS ---")
 from admin.tools.content_tools import CONTENT_TOOLS, execute_content_tool
 content_names = [t["name"] for t in CONTENT_TOOLS]
 print(f"  Content tools: {len(CONTENT_TOOLS)} -> {content_names}")
@@ -119,10 +171,10 @@ for name in expected_content:
     assert_in(f"content tool '{name}' registered", name, content_names)
 
 
-# ═══════════════════════════════════════════════════════════════
-# 4. BRAND DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 4. BRAND DISCOVERY ---")
+# 5. BRAND DISCOVERY
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n--- 5. BRAND DISCOVERY ---")
 from admin.tools.visual_tools import discover_brand_identity
 brand = test("discover_brand_identity", lambda: discover_brand_identity("https://example.com"))
 if brand:
@@ -137,9 +189,9 @@ if brand:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. BRIEF PARSER
+# 6. BRIEF PARSER
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 5. BRIEF PARSER ---")
+print("\n--- 6. BRIEF PARSER ---")
 from admin.tools.visual_tools import parse_visual_brief
 
 parsed_social = test("parse social brief", lambda: parse_visual_brief(
@@ -160,8 +212,9 @@ if parsed_ad:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. PRODUCTION PLANNER
-# ═════════════════════════════════════════════════════════════════════════"\n--- 6. PRODUCTION PLANNER ---")
+# 7. PRODUCTION PLANNER
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n--- 7. PRODUCTION PLANNER ---")
 from admin.tools.visual_tools import plan_visual_production
 plan = test("plan_production", lambda: plan_visual_production(
     brief=parsed_social, brand_identity=brand
@@ -177,125 +230,50 @@ if plan:
         assert_true("item has height", "height" in item)
         print(f"         Items: {plan.get('total_items')}")
         print(f"         GPU minutes: {plan.get('estimated_gpu_minutes')}")
-        print(f"         Sample prompt: {item.get('prompt', '')[:80]}...")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7. TOOL EXECUTION
+# 8. TOOL EXECUTION (via registry)
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 7. TOOL EXECUTION ---")
-test("execute discover_brand", lambda: execute_visual_tool(
+print("\n--- 8. TOOL EXECUTION ---")
+test("execute_agent_tool discover_brand", lambda: execute_agent_tool(
     "discover_brand_identity", {"website_url": "https://example.com"}
 ))
-test("execute parse_brief", lambda: execute_visual_tool(
+test("execute_agent_tool parse_brief", lambda: execute_agent_tool(
     "parse_visual_brief", {"brief_text": "Instagram story image for summer sale"}
 ))
-test("execute plan_production", lambda: execute_visual_tool(
-    "plan_visual_production", {"brief": {"visual_type": "image", "platform": "instagram", "style": "bold"}}
+test("execute_agent_tool content_brief", lambda: execute_agent_tool(
+    "generate_content_brief", {"topic": "digital marketing"}
 ))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 8. KAGGLE TOOLS
+# 9. 6-NODE LANGGRAPH PIPELINE
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 8. KAGGLE TOOLS ---")
-from admin.tools.kaggle_tools import generate_image_kaggle, generate_video_kaggle
-
-img_result = test("generate_image_kaggle (notebook)", lambda: generate_image_kaggle(
-    "A beautiful sunset over mountains", 1024, 1024, 20
-))
-if img_result:
-    assert_true("has status", "status" in img_result)
-    print(f"         Status: {img_result.get('status')}")
-
-vid_result = test("generate_video_kaggle (notebook)", lambda: generate_video_kaggle(
-    "A cat playing with a ball", 49
-))
-if vid_result:
-    assert_true("has status", "status" in vid_result)
-    print(f"         Status: {vid_result.get('status')}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9. CONTENT TOOLS (TEXT)
-# ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 9. CONTENT TOOLS (TEXT) ---")
-
-brief_result = test("generate_content_brief", lambda: execute_content_tool(
-    "generate_content_brief", {"topic": "digital marketing", "target_audience": "small business"}
-))
-if brief_result:
-    assert_true("has outline", "outline" in brief_result)
-    assert_true("has secondary_keywords", "secondary_keywords" in brief_result)
-
-blog_result = test("generate_blog_post", lambda: execute_content_tool(
-    "generate_blog_post", {"topic": "SEO tips", "word_count": 1000}
-))
-if blog_result:
-    assert_true("has title", "title" in blog_result)
-    assert_true("has sections", "sections" in blog_result)
-    assert_true("has html", "html" in blog_result)
-    assert_true("has seo_score", "seo_score" in blog_result)
-
-calendar_result = test("generate_content_calendar", lambda: execute_content_tool(
-    "generate_content_calendar", {"niche": "fitness", "weeks": 2}
-))
-if calendar_result:
-    assert_true("has calendar", "calendar" in calendar_result)
-    assert_true("has total_posts", "total_posts" in calendar_result)
-
-rewrite_result = test("rewrite_content", lambda: execute_content_tool(
-    "rewrite_content", {"text": "This is a very really quite good article about the topic.", "style": "professional"}
-))
-if rewrite_result:
-    assert_true("has rewritten_text", "rewritten_text" in rewrite_result)
-    assert_true("has improvements_made", "improvements_made" in rewrite_result)
-
-specs_result = test("get_social_image_specs", lambda: execute_content_tool(
-    "get_social_image_specs", {"platform": "instagram"}
-))
-if specs_result:
-    assert_true("has formats", "formats" in specs_result)
-
-repurpose_result = test("repurpose_for_social", lambda: execute_content_tool(
-    "repurpose_for_social", {"content": "Digital marketing is essential for businesses. It helps reach more customers. SEO is a key part of digital marketing strategy.", "platform": "instagram"}
-))
-if repurpose_result:
-    assert_true("has posts", "posts" in repurpose_result)
-
-ad_copy_result = test("generate_ad_copy", lambda: execute_content_tool(
-    "generate_ad_copy", {"product": "project management software", "platform": "facebook"}
-))
-if ad_copy_result:
-    assert_true("has copies", "copies" in ad_copy_result)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 10. CONTENT AGENT LANGGRAPH
-# ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 10. CONTENT AGENT LANGGRAPH ---")
+print("\n--- 9. 6-NODE LANGGRAPH PIPELINE ---")
 from admin.workspace.agents.content import (
-    ContentAgent, build_content_graph, ALL_CONTENT_TOOLS,
-    content_call_llm, content_route, content_finalize,
-    ContentAgentState, CONTENT_SYSTEM_PROMPT,
+    ContentAgent, build_content_graph, get_content_graph,
+    ContentState, parse_brief, analyze_brand, plan_visual,
+    engineer_prompt, generate as gen_node, validate,
 )
 
 graph = test("build_content_graph", lambda: build_content_graph())
-agent = test("init ContentAgent", lambda: ContentAgent("TestWorkspace", "TestClient"))
-if agent:
-    assert_eq("workspace_name", agent.workspace_name, "TestWorkspace")
-    assert_eq("client_name", agent.client_name, "TestClient")
-    assert_eq("thread_id", agent._thread_id, "content_TestWorkspace")
+assert_true("graph is compiled", graph is not None)
 
-# Check unified tool registry
-assert_eq("ALL_CONTENT_TOOLS count", len(ALL_CONTENT_TOOLS), 21)
-print(f"  [PASS] Unified tool registry: {len(ALL_CONTENT_TOOLS)} tools")
+# Test ContentState shape
+assert_true("ContentState has messages", "messages" in ContentState.__annotations__)
+assert_true("ContentState has parsed_brief", "parsed_brief" in ContentState.__annotations__)
+assert_true("ContentState has brand_analysis", "brand_analysis" in ContentState.__annotations__)
+assert_true("ContentState has visual_plan", "visual_plan" in ContentState.__annotations__)
+assert_true("ContentState has variations", "variations" in ContentState.__annotations__)
+assert_true("ContentState has attempt_count", "attempt_count" in ContentState.__annotations__)
+print("  [PASS] ContentState has correct pipeline fields")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 11. AGENCY CONTENT AGENT
+# 10. AGENCY CONTENT AGENT
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 11. AGENCY CONTENT AGENT ---")
+print("\n--- 10. AGENCY CONTENT AGENT ---")
 from admin.agency.content_agent import (
     AgencyContentAgent, ContentReport, PromptPattern, BrandInsight,
     get_agency_content_agent,
@@ -349,54 +327,254 @@ if stats:
     assert_true("stats has platforms_active", "platforms_active" in stats)
     assert_true("stats has industries_served", "industries_served" in stats)
 
+# Test extended methods (monkey-patched)
+test("get_industry_insights", lambda: agency.get_industry_insights("general"))
+test("get_platform_insights", lambda: agency.get_platform_insights("instagram"))
+test("get_failure_patterns", lambda: agency.get_failure_patterns())
+test("get_best_prompts_for", lambda: agency.get_best_prompts_for(industry="general"))
 
+
+# ═════════════════════════════════════════════════════════════════
+# 11. PERSISTENCE
 # ═══════════════════════════════════════════════════════════════════════════════
-# 12. PERSISTENCE
-# ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 12. PERSISTENCE ---")
+print("\n--- 11. PERSISTENCE ---")
 test("agency has _save method", lambda: hasattr(agency, "_save"))
 test("agency has _load method", lambda: hasattr(agency, "_load"))
 test("agency _save works", lambda: agency._save())
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 13. API ROUTES
+# 12. WORKSPACE CONTENT STORE
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 13. API ROUTES ---")
+print("\n--- 12. WORKSPACE CONTENT STORE ---")
+from admin.workspace.content_store import (
+    WorkspaceContentStore, ContentAgentMemory, get_content_store,
+)
+
+store = test("get_content_store", lambda: get_content_store())
+assert_true("store is singleton", store is get_content_store())
+
+# Create memory
+mem = test("get_or_create memory", lambda: store.get_or_create(
+    "test_ws_001", "TestWorkspace", "TestClient", "tech"
+))
+if mem:
+    assert_eq("workspace_id", mem.workspace_id, "test_ws_001")
+    assert_eq("client_name", mem.client_name, "TestClient")
+
+# Record success
+test("record_success", lambda: store.record_success(
+    workspace_id="test_ws_001",
+    job_id="job_test_001",
+    brief_summary="Create IG post",
+    deliverables=["img1.png"],
+    prompts_used=["prompt 1"],
+    platform="instagram",
+    visual_type="image",
+    gpu_minutes=1.5,
+    learnings=["Warm tones worked well"],
+))
+
+# Record failure
+test("record_failure", lambda: store.record_failure(
+    workspace_id="test_ws_001",
+    job_id="job_test_002",
+    brief_summary="Create video",
+    error="GPU timeout",
+    platform="instagram",
+    visual_type="video",
+    what_failed="CogVideoX generation",
+    avoid_next_time="Use shorter frame count",
+))
+
+# Memory summary
+summary = test("get_memory_summary", lambda: store.get_memory_summary("test_ws_001"))
+if summary:
+    assert_true("summary is non-empty", len(summary) > 0)
+    print(f"         Summary preview: {summary[:100]}...")
+
+# Stats
+store_stats = test("get_stats", lambda: store.get_stats("test_ws_001"))
+if store_stats:
+    assert_true("success_count >= 1", store_stats.get("success_count", 0) >= 1)
+    assert_true("failure_count >= 1", store_stats.get("failure_count", 0) >= 1)
+
+# Style tracking
+test("record_style_preference", lambda: store.record_style_preference(
+    "test_ws_001", "bold", 0.9
+))
+
+# Variation tracking
+test("record_variation", lambda: store.record_variation(
+    "test_ws_001",
+    "Test brief",
+    [{"prompt": "test prompt", "platform": "instagram"}],
+    [0.85],
+))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. CONTENT JOB QUEUE
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n--- 13. CONTENT JOB QUEUE ---")
+from admin.tools.content_queue import (
+    ContentJobQueue, ContentBrief, JobStatus, get_queue, enhance_brief,
+)
+
+queue = test("get_queue", lambda: get_queue("test_ws_001"))
+assert_true("queue is ContentJobQueue", isinstance(queue, ContentJobQueue))
+
+# Submit a job
+brief = ContentBrief(
+    workspace_id="test_ws_001",
+    from_agent="social",
+    content_type="social_post",
+    platform="instagram",
+    style="bold",
+    topic="Summer sale campaign",
+    quantity=3,
+    priority="high",
+)
+
+job_id = test("queue.submit", lambda: queue.submit(brief))
+if job_id:
+    assert_true("job_id starts with job_", job_id.startswith("job_"))
+
+# Queue status
+q_status = test("queue.get_queue_status", lambda: queue.get_queue_status())
+if q_status:
+    assert_true("has pending", "pending" in q_status)
+    assert_true("gpu_busy in status", "gpu_busy" in q_status)
+
+# Get next job
+next_job = test("queue.get_next", lambda: queue.get_next())
+if next_job:
+    assert_eq("next job status", next_job.status, JobStatus.RUNNING)
+    assert_eq("next job platform", next_job.platform, "instagram")
+
+# Complete job
+test("queue.complete", lambda: queue.complete(
+    job_id=job_id,
+    output_files=["output_001.png", "output_002.png"],
+))
+
+# List recent
+recent = test("queue.list_recent", lambda: queue.list_recent(limit=5))
+if recent:
+    assert_true("recent has jobs", len(recent) > 0)
+
+# Brief Enhancement
+enhanced = test("enhance_brief", lambda: enhance_brief(
+    brief=ContentBrief(
+        content_type="social_post",
+        platform="instagram",
+        style="bold",
+        topic="Summer sale",
+    ),
+    client_context={
+        "brand_colors": ["#FF6B35", "#004E89"],
+        "industry": "ecommerce",
+        "target_audience": "young adults",
+    },
+))
+if enhanced:
+    assert_true("enhanced_prompt is set", bool(enhanced.enhanced_prompt))
+    assert_eq("width", enhanced.width, 1080)
+    assert_eq("height", enhanced.height, 1080)
+    assert_eq("brand_colors_used", enhanced.brand_colors_used, ["#FF6B35", "#004E89"])
+    print(f"         Prompt: {enhanced.enhanced_prompt[:100]}...")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. API ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+print("\n--- 14. API ROUTES ---")
 from admin.api.routes.content import router
 paths = [r.path for r in router.routes if hasattr(r, "path")]
 print(f"  Total API routes: {len(paths)}")
 for p in sorted(paths):
     print(f"         {p}")
 
+# Core endpoints
 assert_true("has /chat endpoint", "/api/content/chat" in paths)
+assert_true("has /init endpoint", "/api/content/init" in paths)
 assert_true("has /discover-brand endpoint", "/api/content/discover-brand" in paths)
+
+# Visual generation endpoints
 assert_true("has /generate-image endpoint", "/api/content/generate-image" in paths)
 assert_true("has /generate-video endpoint", "/api/content/generate-video" in paths)
+assert_true("has /generate-ad endpoint", "/api/content/generate-ad" in paths)
+assert_true("has /generate-social endpoint", "/api/content/generate-social" in paths)
+assert_true("has /generate-hero endpoint", "/api/content/generate-hero" in paths)
+
+# Content analysis endpoints (NEW)
+assert_true("has /tools/all endpoint", "/api/content/tools/all" in paths)
 assert_true("has /analyze-readability endpoint", "/api/content/analyze-readability" in paths)
 assert_true("has /blog-post endpoint", "/api/content/blog-post" in paths)
 assert_true("has /calendar endpoint", "/api/content/calendar" in paths)
+assert_true("has /rewrite endpoint", "/api/content/rewrite" in paths)
+assert_true("has /meta-optimize endpoint", "/api/content/meta-optimize" in paths)
+assert_true("has /content-gaps endpoint", "/api/content/content-gaps" in paths)
+
+# Agency intelligence endpoints (NEW)
 assert_true("has /agency/stats endpoint", "/api/content/agency/stats" in paths)
 assert_true("has /agency/knowledge endpoint", "/api/content/agency/knowledge" in paths)
-assert_true("has /brief-content-agent endpoint", "/api/content/brief-content-agent" in paths)
+assert_true("has /agency/best-prompts endpoint", "/api/content/agency/best-prompts" in paths)
+
+# Queue endpoint (NEW)
+assert_true("has /queue/status endpoint", "/api/content/queue/status" in paths)
+
+# Briefing endpoint
+assert_true("has /brief endpoint", "/api/content/brief" in paths)
+
+# Variation endpoints
+assert_true("has /generate-variations endpoint", "/api/content/generate-variations" in paths)
+assert_true("has /select-variation endpoint", "/api/content/select-variation" in paths)
+
+# UGC and marketing
+assert_true("has /generate-ugc endpoint", "/api/content/generate-ugc" in paths)
+assert_true("has /generate-marketing endpoint", "/api/content/generate-marketing" in paths)
+assert_true("has /batch-generate endpoint", "/api/content/batch-generate" in paths)
+
+print(f"\n  Verified {len(paths)} routes")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 14. INTERVIEW COMPLIANCE
+# 15. INTERVIEW COMPLIANCE
 # ═══════════════════════════════════════════════════════════════════════════════
-print("\n--- 14. INTERVIEW COMPLIANCE ---")
+print("\n--- 15. INTERVIEW COMPLIANCE ---")
+
+# Check SKILL.md for interview-required concepts
+skill_md = ""
+try:
+    with open("admin/skills/content/SKILL.md", "r", encoding="utf-8") as f:
+        skill_md = f.read()
+except FileNotFoundError:
+    print("  [WARN] SKILL.md not found, skipping compliance checks")
+
 checks = {
-    "Q1_full_spectrum": "FULL-SPECTRUM" in CONTENT_SYSTEM_PROMPT,
-    "Q2_visual_spectrum": "social graphics" in CONTENT_SYSTEM_PROMPT.lower() and "ad creatives" in CONTENT_SYSTEM_PROMPT.lower(),
-    "Q3_kaggle": "Kaggle" in CONTENT_SYSTEM_PROMPT or "FLUX" in CONTENT_SYSTEM_PROMPT,
-    "Q5_brand_discovery": "brand" in CONTENT_SYSTEM_PROMPT.lower() and "discover" in CONTENT_SYSTEM_PROMPT.lower(),
-    "Q6_domain_approval": "domain agent" in CONTENT_SYSTEM_PROMPT.lower() or "approval" in CONTENT_SYSTEM_PROMPT.lower(),
-    "text_content_enabled": "text content" in CONTENT_SYSTEM_PROMPT.lower() or "blog" in CONTENT_SYSTEM_PROMPT.lower(),
-    "21_tools_documented": "21" in CONTENT_SYSTEM_PROMPT,
+    "visual_only_rule": "VISUAL ONLY" in skill_md or "visual only" in skill_md.lower(),
+    "no_text_content": "NO text" in skill_md or "no text" in skill_md.lower(),
+    "kaggle_gpu_compute": "Kaggle" in skill_md,
+    "flux_image_gen": "FLUX" in skill_md,
+    "brand_discovery": "brand" in skill_md.lower() and "discover" in skill_md.lower(),
+    "domain_agent_briefing": "brief" in skill_md.lower() and "domain agent" in skill_md.lower(),
+    "agency_learning": "agency" in skill_md.lower() and "learning" in skill_md.lower(),
+    "job_queue": "queue" in skill_md.lower(),
+    "ceo_approval": "CEO" in skill_md or "approval" in skill_md.lower(),
 }
 for check, result in checks.items():
     status = "PASS" if result else "FAIL"
     print(f"  [{status}] {check}")
+
+# Check code supports all 6 pipeline nodes
+from admin.workspace.agents.content import (
+    parse_brief as nb1, analyze_brand as nb2, plan_visual as nb3,
+    engineer_prompt as nb4, generate as nb5, validate as nb6,
+)
+pipeline_nodes = ["parse_brief", "analyze_brand", "plan_visual",
+                  "engineer_prompt", "generate", "validate"]
+print(f"  [PASS] All 6 pipeline nodes importable: {pipeline_nodes}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

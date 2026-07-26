@@ -89,6 +89,45 @@ class GenerateHeroRequest(BaseModel):
     style: str = "modern"
 
 
+class AnalyzeReadabilityRequest(BaseModel):
+    url: str
+
+
+class GenerateBlogPostRequest(BaseModel):
+    topic: str
+    keywords: list[str] | None = None
+    word_count: int = 1500
+
+
+class GenerateCalendarRequest(BaseModel):
+    niche: str
+    weeks: int = 4
+
+
+class RewriteContentRequest(BaseModel):
+    text: str
+    style: str = "professional"
+
+
+class MetaOptimizeRequest(BaseModel):
+    url: str
+
+
+class ContentGapsRequest(BaseModel):
+    url: str
+    competitors: list[str] | None = None
+
+
+class AgencyKnowledgeRequest(BaseModel):
+    industry: str = ""
+    platform: str = ""
+    visual_type: str = ""
+
+
+class QueueStatusRequest(BaseModel):
+    workspace_id: str
+
+
 class BriefRequest(BaseModel):
     """Domain agent sends detailed visual brief."""
     from_agent: str  # seo, ads, social, website
@@ -559,3 +598,108 @@ async def get_workspace_outputs(workspace_id: str):
         "total_outputs": len(files),
         "files": files,
     }
+
+
+# ── Unified Tool List ──────────────────────────────────────────────────────────
+
+
+@router.get("/tools/all")
+async def list_all_tools():
+    """Get all 21 tools with schemas — unified registry."""
+    from admin.tools.registry import list_all_tools as _list_all_tools
+    tools = _list_all_tools()
+    return {
+        "total": len(tools),
+        "visual": sum(1 for t in tools if t["category"] == "visual"),
+        "content": sum(1 for t in tools if t["category"] == "content"),
+        "tools": tools,
+    }
+
+
+# ── Content Analysis Endpoints ─────────────────────────────────────────────────
+
+
+@router.post("/analyze-readability")
+async def analyze_readability_endpoint(req: AnalyzeReadabilityRequest):
+    """URL ki content readability analyze karo."""
+    from admin.tools.content_tools import analyze_readability
+    return analyze_readability(req.url)
+
+
+@router.post("/blog-post")
+async def generate_blog_post_endpoint(req: GenerateBlogPostRequest):
+    """SEO-optimized blog post generate karo."""
+    from admin.tools.content_tools import generate_blog_post
+    return generate_blog_post(req.topic, req.keywords, req.word_count)
+
+
+@router.post("/calendar")
+async def generate_calendar_endpoint(req: GenerateCalendarRequest):
+    """Content calendar generate karo."""
+    from admin.tools.content_tools import generate_content_calendar
+    return generate_content_calendar(req.niche, req.weeks)
+
+
+@router.post("/rewrite")
+async def rewrite_content_endpoint(req: RewriteContentRequest):
+    """Content rewrite karo for better readability."""
+    from admin.tools.content_tools import rewrite_content
+    return rewrite_content(req.text, req.style)
+
+
+@router.post("/meta-optimize")
+async def meta_optimize_endpoint(req: MetaOptimizeRequest):
+    """Meta descriptions optimize karo."""
+    from admin.tools.content_tools import optimize_meta_descriptions
+    return optimize_meta_descriptions(req.url)
+
+
+@router.post("/content-gaps")
+async def content_gaps_endpoint(req: ContentGapsRequest):
+    """Content gaps analyze karo competitors ke saath."""
+    from admin.tools.content_tools import analyze_content_gaps
+    return analyze_content_gaps(req.url, req.competitors)
+
+
+# ── Agency Intelligence Endpoints ──────────────────────────────────────────────
+
+
+@router.get("/agency/stats")
+async def agency_stats_endpoint():
+    """Agency-level content stats — dashboard ke liye."""
+    from admin.agency.content_agent import get_agency_content_agent
+    agency = get_agency_content_agent()
+    return agency.get_stats()
+
+
+@router.post("/agency/knowledge")
+async def agency_knowledge_endpoint(req: AgencyKnowledgeRequest):
+    """Cross-project knowledge get karo for workspace."""
+    from admin.agency.content_agent import get_agency_content_agent
+    agency = get_agency_content_agent()
+    return agency.get_knowledge_for_workspace(
+        industry=req.industry,
+        platform=req.platform,
+        visual_type=req.visual_type,
+    )
+
+
+@router.get("/agency/best-prompts")
+async def agency_best_prompts_endpoint():
+    """Best performing prompts across all workspaces."""
+    from admin.agency.content_agent import get_agency_content_agent
+    agency = get_agency_content_agent()
+    return {
+        "best_prompts": agency.get_best_prompts(top_n=10),
+    }
+
+
+# ── Queue Status Endpoint ──────────────────────────────────────────────────────
+
+
+@router.get("/queue/status")
+async def queue_status_endpoint(workspace_id: str = "default"):
+    """GPU queue overview for a workspace."""
+    from admin.tools.content_queue import get_queue
+    queue = get_queue(workspace_id)
+    return queue.get_queue_status()
