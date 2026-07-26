@@ -45,42 +45,73 @@ def _now() -> str:
 FLUX_CODE = '''# TAGS Content Agent — FLUX Image Generation
 import subprocess, sys, json, os, traceback
 
-# P100 check (Kaggle free tier)
-P100_MODE = False
+# ── GPU Detection (handles ALL Kaggle GPU types) ──
+GPU_NAME = "unknown"
+GPU_MODE = "unsupported"  # supported | unsupported | cpu_fallback
 try:
     out = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"],
         text=True, timeout=10
     ).strip().lower()
-    print(f"GPU: {out}")
-    if "p100" in out:
-        P100_MODE = True
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        print("P100 detected — no sm_60 support, using CPU")
+    print(f"GPU raw: {out}")
+    GPU_NAME = out.split(",")[0].strip() if "," in out else out
+
+    # P100 (sm_60) — no CUDA kernel support in modern PyTorch
+    if "p100" in out or "sm_60" in out or "sm_6.0" in out:
+        GPU_MODE = "unsupported"
+        print("P100 detected — sm_60 not supported by PyTorch, using CPU")
+    # G100 / unknown Ampere+ — should work but test compute capability
+    elif "g100" in out or "a100" in out or "l4" in out or "t4" in out:
+        GPU_MODE = "supported"
+        print(f"GPU detected: {GPU_NAME} — will use CUDA")
+    # Any other GPU — check compute capability
+    else:
+        GPU_MODE = "check_cap"
+        print(f"Unknown GPU: {GPU_NAME} — checking compute capability")
 except Exception as e:
-    print(f"GPU check: {e}")
+    print(f"GPU check failed: {e}")
+    GPU_MODE = "cpu_fallback"
 
 import torch
 from diffusers import DiffusionPipeline
 from PIL import Image
 
+# ── Device selection based on GPU ──
 DEVICE = "cpu"
 DTYPE = torch.float32
-if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+
+if torch.cuda.is_available() and torch.cuda.device_count() > 0 and GPU_MODE != "unsupported":
     try:
         cap = torch.cuda.get_device_capability(0)
-        if cap[0] >= 7 and not P100_MODE:
+        gpu_name_full = torch.cuda.get_device_name(0)
+        print(f"CUDA GPU: {gpu_name_full} (sm_{cap[0]}{cap[1]})")
+
+        if cap[0] >= 8:
+            # Ampere+ (A100, L4, T4x2): best performance, bfloat16
             DEVICE = "cuda"
             DTYPE = torch.bfloat16
-        elif cap[0] >= 6 and not P100_MODE:
+            print(f"Ampere+ GPU (sm_{cap[0]}{cap[1]}) — bfloat16 mode")
+        elif cap[0] >= 7:
+            # Turing (T4): good performance, bfloat16 or float16
+            DEVICE = "cuda"
+            DTYPE = torch.bfloat16 if cap[1] >= 5 else torch.float16
+            print(f"Turing GPU (sm_{cap[0]}{cap[1]}) — {DTYPE} mode")
+        elif cap[0] >= 6:
+            # Pascal (except P100 which is already filtered)
             DEVICE = "cuda"
             DTYPE = torch.float16
-    except Exception:
-        pass
+            print(f"Pascal GPU (sm_{cap[0]}{cap[1]}) — float16 mode")
+        else:
+            print(f"GPU too old (sm_{cap[0]}{cap[1]}) — falling back to CPU")
+    except Exception as e:
+        print(f"CUDA detection failed: {e}")
+else:
+    reason = "P100/unsupported" if GPU_MODE == "unsupported" else "no CUDA"
+    print(f"Running on CPU ({reason})")
 
-print(f"Device: {DEVICE}, dtype: {DTYPE}")
+print(f"Final: device={DEVICE}, dtype={DTYPE}")
 
-# Model selection
+# ── Model selection ──
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HF_TOKEN_READ", "")
 if HF_TOKEN:
     try:
@@ -116,7 +147,7 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-# Generate
+# ── Generate ──
 PROMPT = "{prompt}"
 WIDTH = {width}
 HEIGHT = {height}
@@ -128,7 +159,7 @@ try:
     image = pipe(PROMPT, width=WIDTH, height=HEIGHT, num_inference_steps=STEPS, guidance_scale=7.5).images[0]
     image.save("output.png")
     sz = os.path.getsize("output.png")
-    print(json.dumps({{"status": "success", "file": "output.png", "size_bytes": sz}}))
+    print(json.dumps({{"status": "success", "file": "output.png", "size_bytes": sz, "gpu": GPU_NAME, "device": DEVICE}}))
 except Exception as e:
     print(f"GENERATION ERROR: {e}")
     traceback.print_exc()
@@ -138,35 +169,48 @@ except Exception as e:
 COGVIDEO_CODE = '''# TAGS Content Agent — CogVideoX Video Generation
 import subprocess, sys, json, os, traceback
 
-P100_MODE = False
+# ── GPU Detection (handles ALL Kaggle GPU types) ──
+GPU_NAME = "unknown"
+GPU_OK = False
 try:
     out = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"],
         text=True, timeout=10
     ).strip().lower()
-    print(f"GPU: {out}")
-    if "p100" in out:
-        P100_MODE = True
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        print("P100 — CogVideo needs T4+. Skipping.")
+    print(f"GPU raw: {out}")
+    GPU_NAME = out.split(",")[0].strip() if "," in out else out
+
+    if "p100" in out or "sm_60" in out or "sm_6.0" in out:
+        print("P100 detected — CogVideo needs sm_70+. Skipping.")
+        GPU_OK = False
+    elif "g100" in out:
+        # G100 — unknown exact arch, check compute capability
+        print(f"G100 detected — will check compute capability")
+        GPU_OK = "check"  # will check below
+    else:
+        GPU_OK = True  # assume OK, check capability below
 except Exception as e:
-    print(f"GPU check: {e}")
+    print(f"GPU check failed: {e}")
 
 import torch
 from diffusers import CogVideoXPipeline
 import imageio
 
-if P100_MODE or not torch.cuda.is_available():
-    print(json.dumps({{"status": "skipped", "reason": "CogVideo needs T4+ GPU"}}))
+if not torch.cuda.is_available():
+    print(json.dumps({{"status": "skipped", "reason": "No CUDA GPU available"}}))
     sys.exit(0)
 
 cap = torch.cuda.get_device_capability(0)
+gpu_full = torch.cuda.get_device_name(0)
+print(f"CUDA GPU: {gpu_full} (sm_{cap[0]}{cap[1]})")
+
+# CogVideoX needs sm_70+ (Turing/Ampere/Ada)
 if cap[0] < 7:
-    print(json.dumps({{"status": "skipped", "reason": f"GPU sm_{cap[0]}{cap[1]} too old for CogVideo"}}))
+    print(json.dumps({{"status": "skipped", "reason": f"GPU sm_{cap[0]}{cap[1]} too old for CogVideo (needs sm_70+)"}}))
     sys.exit(0)
 
-DTYPE = torch.bfloat16 if cap[0] >= 7 else torch.float16
-print(f"GPU: {{torch.cuda.get_device_name(0)}} (sm_{{cap[0]}}{{cap[1]}})")
+DTYPE = torch.bfloat16 if cap[0] >= 8 else torch.float16
+print(f"Using {DTYPE} for sm_{cap[0]}{cap[1]}")
 
 print("Loading THUDM/CogVideoX-2b...")
 sys.stdout.flush()
@@ -189,7 +233,7 @@ try:
     video = pipe(PROMPT, num_videos_per_prompt=1, num_inference_steps=50, num_frames=NUM_FRAMES, guidance_scale=6.0).videos[0]
     imageio.mimsave("output.mp4", video, fps=8)
     sz = os.path.getsize("output.mp4")
-    print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": NUM_FRAMES}}))
+    print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": NUM_FRAMES, "gpu": gpu_full}}))
 except Exception as e:
     print(f"VIDEO ERROR: {e}")
     traceback.print_exc()
@@ -337,6 +381,7 @@ def _build_metadata(username: str, title: str) -> dict[str, Any]:
         "enable_internet": True,
         "kernel_sources": [],
         "dataset_sources": [],
+        "gpuType": "T4",  # Request T4 GPU specifically
     }
 
 
