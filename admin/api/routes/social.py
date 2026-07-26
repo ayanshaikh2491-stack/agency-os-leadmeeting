@@ -161,6 +161,7 @@ class AnalyticsRequest(BaseModel):
 
 
 class CreatePostRequest(BaseModel):
+    workspace_id: str = "default"
     platform: str = "instagram"
     topic: str = ""
     content_type: str = "single_image"
@@ -172,33 +173,36 @@ class CreatePostRequest(BaseModel):
 
 
 class SchedulePostRequest(BaseModel):
+    workspace_id: str = "default"
     platform: str = "instagram"
     caption: str = ""
     scheduled_at: str = ""
     media_url: str = ""
     hashtags: list[str] = []
-    account_id: str = ""
 
 
 class PostNowRequest(BaseModel):
+    workspace_id: str = "default"
     platform: str = "instagram"
     caption: str = ""
     media_url: str = ""
     hashtags: list[str] = []
-    account_id: str = ""
 
 
 class SocialAccountsRequest(BaseModel):
+    workspace_id: str = "default"
     action: str = "list"
     provider: str = ""
 
 
 class ContentQueueRequest(BaseModel):
+    workspace_id: str = "default"
     platform: str = "all"
     status: str = "all"
 
 
 class PostAnalyticsRequest(BaseModel):
+    workspace_id: str = "default"
     platform: str = "instagram"
     post_id: str = ""
     period: str = "7d"
@@ -342,42 +346,42 @@ async def analytics(req: AnalyticsRequest):
 async def create_post(req: CreatePostRequest):
     """Create a complete post."""
     from admin.tools.social_tools import create_post
-    return create_post(req.platform, req.topic, req.content_type, req.tone, req.caption, req.hashtags, req.media_url, req.cta)
+    return create_post(req.workspace_id, req.platform, req.topic, req.content_type, req.tone, req.caption, req.hashtags, req.media_url, req.cta)
 
 
 @router.post("/schedule-post")
 async def schedule_post(req: SchedulePostRequest):
     """Schedule a post for future publishing."""
     from admin.tools.social_tools import schedule_post
-    return schedule_post(req.platform, req.caption, req.scheduled_at, req.media_url, req.hashtags, req.account_id)
+    return schedule_post(req.workspace_id, req.platform, req.caption, req.scheduled_at, req.media_url, req.hashtags)
 
 
 @router.post("/post-now")
 async def post_now(req: PostNowRequest):
     """Publish a post immediately."""
     from admin.tools.social_tools import post_now
-    return post_now(req.platform, req.caption, req.media_url, req.hashtags, req.account_id)
+    return post_now(req.workspace_id, req.platform, req.caption, req.media_url, req.hashtags)
 
 
 @router.post("/accounts")
 async def accounts(req: SocialAccountsRequest):
     """Manage social accounts."""
     from admin.tools.social_tools import social_accounts
-    return social_accounts(req.action, req.provider)
+    return social_accounts(req.workspace_id, req.action, req.provider)
 
 
 @router.post("/queue")
 async def queue(req: ContentQueueRequest):
     """View scheduled posts queue."""
     from admin.tools.social_tools import content_queue
-    return content_queue(req.platform, req.status)
+    return content_queue(req.workspace_id, req.platform, req.status)
 
 
 @router.post("/post-analytics")
 async def post_analytics(req: PostAnalyticsRequest):
     """Track post performance."""
     from admin.tools.social_tools import post_analytics
-    return post_analytics(req.platform, req.post_id, req.period)
+    return post_analytics(req.workspace_id, req.platform, req.post_id, req.period)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

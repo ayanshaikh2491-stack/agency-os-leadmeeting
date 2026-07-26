@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -1299,6 +1300,7 @@ SOCIAL_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
                     "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok, facebook", "default": "instagram"},
                     "topic": {"type": "string", "description": "Post topic or subject"},
                     "content_type": {"type": "string", "description": "single_image, carousel, reel, story, text_post, thread", "default": "single_image"},
@@ -1316,16 +1318,16 @@ SOCIAL_TOOLS = [
         "type": "function",
         "function": {
             "name": "schedule_post",
-            "description": "Schedule a post for future publishing via SocialClaw. Validates and queues the post.",
+            "description": "Schedule a post for future publishing. Uses stored token to post directly to client's account.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
                     "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok, facebook", "default": "instagram"},
                     "caption": {"type": "string", "description": "Post caption/text"},
                     "scheduled_at": {"type": "string", "description": "ISO datetime for when to publish (e.g. 2026-08-01T10:00:00Z)"},
                     "media_url": {"type": "string", "description": "URL to image/video"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
-                    "account_id": {"type": "string", "description": "SocialClaw account ID"},
                 },
                 "required": ["caption"],
             },
@@ -1335,15 +1337,15 @@ SOCIAL_TOOLS = [
         "type": "function",
         "function": {
             "name": "post_now",
-            "description": "Immediately publish a post to social media via SocialClaw.",
+            "description": "Immediately publish a post to client's social media account using stored token.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok, facebook", "default": "instagram"},
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
+                    "platform": {"type": "string", "description": "instagram, facebook", "default": "instagram"},
                     "caption": {"type": "string", "description": "Post caption/text"},
                     "media_url": {"type": "string", "description": "URL to image/video"},
                     "hashtags": {"type": "array", "items": {"type": "string"}},
-                    "account_id": {"type": "string", "description": "SocialClaw account ID"},
                 },
                 "required": ["caption"],
             },
@@ -1353,12 +1355,13 @@ SOCIAL_TOOLS = [
         "type": "function",
         "function": {
             "name": "social_accounts",
-            "description": "Manage connected social media accounts. List accounts or initiate OAuth connection.",
+            "description": "Manage connected social media accounts. List connected accounts, check token status, or initiate new connection.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "description": "list, connect", "default": "list"},
-                    "provider": {"type": "string", "description": "x, linkedin, instagram_business, facebook, tiktok, youtube, reddit, wordpress, discord, telegram, pinterest"},
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
+                    "action": {"type": "string", "description": "list, status, connect", "default": "list"},
+                    "provider": {"type": "string", "description": "facebook, instagram, linkedin, twitter, tiktok"},
                 },
                 "required": [],
             },
@@ -1372,6 +1375,7 @@ SOCIAL_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
                     "platform": {"type": "string", "description": "all, instagram, linkedin, twitter, tiktok, facebook", "default": "all"},
                     "status": {"type": "string", "description": "all, scheduled, published, failed", "default": "all"},
                 },
@@ -1387,6 +1391,7 @@ SOCIAL_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "workspace_id": {"type": "string", "description": "Client workspace ID", "default": "default"},
                     "platform": {"type": "string", "description": "instagram, linkedin, twitter, tiktok", "default": "instagram"},
                     "post_id": {"type": "string", "description": "Post ID to check analytics for"},
                     "period": {"type": "string", "description": "1d, 7d, 30d, 90d", "default": "7d"},
@@ -1403,6 +1408,7 @@ SOCIAL_TOOLS = [
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def create_post(
+    workspace_id: str = "default",
     platform: str = "instagram",
     topic: str = "",
     content_type: str = "single_image",
@@ -1413,6 +1419,11 @@ def create_post(
     cta: str = "",
 ) -> dict[str, Any]:
     """Create a complete social media post ready for scheduling/publishing."""
+    # Check token availability
+    from admin.token_manager import get_active_token, list_tokens
+    connected = list_tokens(workspace_id)
+    has_token = any(t["platform"] == platform and t["status"] == "active" for t in connected)
+
     # Auto-generate caption if not provided
     if not caption:
         cap_result = generate_caption(topic, platform, tone, "general", bool(cta))
@@ -1420,10 +1431,11 @@ def create_post(
         if not hashtags:
             hashtags = cap_result.get("hashtags", "").split()
 
-    post_id = f"post_{platform}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    post_id = f"post_{workspace_id}_{platform}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     post = {
         "post_id": post_id,
+        "workspace_id": workspace_id,
         "platform": platform,
         "content_type": content_type,
         "caption": caption,
@@ -1431,21 +1443,31 @@ def create_post(
         "media_url": media_url,
         "cta": cta,
         "status": "draft",
+        "token_status": "connected" if has_token else "not_connected",
         "created_at": _now(),
     }
 
+    next_steps = []
+    if has_token:
+        next_steps = [
+            "Use post_now to publish immediately",
+            "Use schedule_post to schedule for later",
+            "Review content before publishing",
+        ]
+    else:
+        next_steps = [
+            f"Connect {platform} account first via token",
+            "Use social_accounts(action='connect') to connect",
+            "Then use post_now to publish",
+        ]
+
     return {
         "post": post,
-        "next_steps": [
-            "Use schedule_post to schedule this post",
-            "Use post_now to publish immediately",
-            "Review and edit before publishing",
-        ],
+        "connected_platforms": [t["platform"] for t in connected if t["status"] == "active"],
+        "next_steps": next_steps,
         "platform_tips": {
             "instagram": "Add media (image/video) before posting. Max 30 hashtags.",
             "linkedin": "Professional tone works best. Add 3-5 hashtags.",
-            "twitter": "Keep under 280 chars per tweet. Use threads for longer content.",
-            "tiktok": "Hook in first 3 seconds. Use trending audio.",
             "facebook": "Ask questions to drive comments. Keep it conversational.",
         },
         "generated_at": _now(),
@@ -1457,66 +1479,54 @@ def create_post(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def schedule_post(
+    workspace_id: str = "default",
     platform: str = "instagram",
     caption: str = "",
     scheduled_at: str = "",
     media_url: str = "",
     hashtags: list[str] = [],
-    account_id: str = "",
 ) -> dict[str, Any]:
-    """Schedule a post for future publishing via SocialClaw."""
-    import subprocess
+    """Schedule a post for future publishing using client's stored token."""
+    from admin.token_manager import get_active_token
 
-    schedule_data = {
-        "posts": [
-            {
-                "provider": platform,
-                "account_id": account_id or f"default_{platform}",
-                "text": caption,
-                "scheduled_at": scheduled_at or (datetime.now() + timedelta(hours=2)).isoformat() + "Z",
-            }
-        ]
+    token = get_active_token(workspace_id, platform)
+    if not token:
+        return {
+            "status": "error",
+            "error": f"No active token for {platform} in workspace '{workspace_id}'",
+            "action_required": f"Connect {platform} account first",
+            "generated_at": _now(),
+        }
+
+    post_id = f"sched_{workspace_id}_{platform}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    schedule_time = scheduled_at or (datetime.now() + timedelta(hours=2)).isoformat() + "Z"
+
+    # Store scheduled post locally (execute at scheduled time)
+    schedule_dir = Path("data/scheduled_posts") / workspace_id
+    schedule_dir.mkdir(parents=True, exist_ok=True)
+
+    post_data = {
+        "post_id": post_id,
+        "workspace_id": workspace_id,
+        "platform": platform,
+        "caption": caption,
+        "hashtags": hashtags,
+        "media_url": media_url,
+        "scheduled_at": schedule_time,
+        "status": "scheduled",
+        "created_at": _now(),
     }
 
-    # Try SocialClaw CLI
-    try:
-        result = subprocess.run(
-            ["socialclaw", "validate", "-f", "-", "--json"],
-            input=json.dumps(schedule_data),
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            validated = json.loads(result.stdout) if result.stdout else {}
-            # Apply schedule
-            apply_result = subprocess.run(
-                ["socialclaw", "apply", "-f", "-", "--json"],
-                input=json.dumps(schedule_data),
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if apply_result.returncode == 0:
-                run_data = json.loads(apply_result.stdout) if apply_result.stdout else {}
-                return {
-                    "status": "scheduled",
-                    "run_id": run_data.get("run_id", ""),
-                    "platform": platform,
-                    "scheduled_at": schedule_data["posts"][0]["scheduled_at"],
-                    "socialclaw_response": run_data,
-                    "generated_at": _now(),
-                }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    post_file = schedule_dir / f"{post_id}.json"
+    post_file.write_text(json.dumps(post_data, indent=2), encoding="utf-8")
 
-    # Fallback: store locally
     return {
-        "status": "scheduled_locally",
+        "status": "scheduled",
+        "post_id": post_id,
+        "workspace_id": workspace_id,
         "platform": platform,
-        "scheduled_at": schedule_data["posts"][0]["scheduled_at"],
-        "post_data": schedule_data,
-        "note": "SocialClaw not available. Post stored locally. Install: npm install -g socialclaw",
+        "scheduled_at": schedule_time,
+        "note": "Post will be published at scheduled time using stored token",
         "generated_at": _now(),
     }
 
@@ -1526,54 +1536,59 @@ def schedule_post(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def post_now(
+    workspace_id: str = "default",
     platform: str = "instagram",
     caption: str = "",
     media_url: str = "",
     hashtags: list[str] = [],
-    account_id: str = "",
 ) -> dict[str, Any]:
-    """Immediately publish a post to social media via SocialClaw."""
-    import subprocess
+    """Immediately publish a post to client's social media using stored token."""
+    from admin.token_manager import get_active_token, post_to_facebook, post_to_instagram
 
-    post_data = {
-        "posts": [
-            {
-                "provider": platform,
-                "account_id": account_id or f"default_{platform}",
-                "text": caption,
-                "scheduled_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ]
-    }
+    token = get_active_token(workspace_id, platform)
+    if not token:
+        return {
+            "status": "error",
+            "error": f"No active {platform} token for workspace '{workspace_id}'",
+            "action_required": f"Connect {platform} account first via token",
+            "generated_at": _now(),
+        }
 
-    # Try SocialClaw CLI
-    try:
-        result = subprocess.run(
-            ["socialclaw", "apply", "-f", "-", "--json"],
-            input=json.dumps(post_data),
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            run_data = json.loads(result.stdout) if result.stdout else {}
-            return {
-                "status": "published",
-                "run_id": run_data.get("run_id", ""),
-                "platform": platform,
-                "published_at": _now(),
-                "socialclaw_response": run_data,
-                "generated_at": _now(),
-            }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    # Post using Graph API directly
+    if platform == "facebook":
+        result = post_to_facebook(workspace_id, caption, media_url)
+    elif platform == "instagram":
+        result = post_to_instagram(workspace_id, caption, media_url)
+    else:
+        return {
+            "status": "error",
+            "error": f"Direct posting to {platform} not yet supported. Use Facebook/Instagram.",
+            "generated_at": _now(),
+        }
 
-    # Fallback
-    return {
-        "status": "pending",
+    # Log the post
+    post_id = result.get("post_id", result.get("media_id", f"post_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+    log_dir = Path("data/published_posts") / workspace_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_data = {
+        "post_id": post_id,
+        "workspace_id": workspace_id,
         "platform": platform,
-        "caption_preview": caption[:200],
-        "note": "SocialClaw not available. Install: npm install -g socialclaw. Post created but not published.",
+        "caption": caption,
+        "media_url": media_url,
+        "result": result,
+        "published_at": _now(),
+    }
+    log_file = log_dir / f"{post_id}.json"
+    log_file.write_text(json.dumps(log_data, indent=2), encoding="utf-8")
+
+    return {
+        "status": result.get("status", "unknown"),
+        "post_id": post_id,
+        "workspace_id": workspace_id,
+        "platform": platform,
+        "api_response": result,
+        "published_at": _now(),
         "generated_at": _now(),
     }
 
@@ -1583,67 +1598,60 @@ def post_now(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def social_accounts(
+    workspace_id: str = "default",
     action: str = "list",
     provider: str = "",
 ) -> dict[str, Any]:
-    """Manage connected social media accounts via SocialClaw."""
-    import subprocess
+    """Manage connected social media accounts using stored tokens."""
+    from admin.token_manager import list_tokens, get_token_expiry_info
 
-    # Try SocialClaw CLI
-    try:
-        if action == "list":
-            result = subprocess.run(
-                ["socialclaw", "accounts", "list", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if result.returncode == 0:
-                accounts = json.loads(result.stdout) if result.stdout else []
-                return {
-                    "action": "list",
-                    "accounts": accounts,
-                    "count": len(accounts),
-                    "generated_at": _now(),
-                }
+    if action == "list":
+        tokens = list_tokens(workspace_id)
+        return {
+            "action": "list",
+            "workspace_id": workspace_id,
+            "accounts": tokens,
+            "count": len(tokens),
+            "note": "Use action='status' to check individual account health",
+            "generated_at": _now(),
+        }
 
-        elif action == "connect" and provider:
-            result = subprocess.run(
-                ["socialclaw", "accounts", "connect", "--provider", provider, "--open"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            return {
-                "action": "connect",
-                "provider": provider,
-                "status": "connection_initiated",
-                "note": f"OAuth flow opened for {provider}. Complete in browser.",
-                "generated_at": _now(),
-            }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    elif action == "status" and provider:
+        info = get_token_expiry_info(workspace_id, provider)
+        return {
+            "action": "status",
+            "workspace_id": workspace_id,
+            "platform": provider,
+            **info,
+            "generated_at": _now(),
+        }
 
-    # Fallback: show available providers
+    elif action == "connect" and provider:
+        return {
+            "action": "connect",
+            "workspace_id": workspace_id,
+            "platform": provider,
+            "instructions": (
+                f"To connect {provider}, the client needs to provide their "
+                f"Facebook Explorer Token from Graph API Explorer. "
+                f"Then use the /api/social/tokens/connect endpoint with the token."
+            ),
+            "api_endpoint": f"POST /api/social/tokens/connect",
+            "required_fields": ["explorer_token", "app_id", "app_secret"],
+            "generated_at": _now(),
+        }
+
     return {
         "action": action,
-        "status": "socialclaw_not_available",
-        "available_providers": [
-            "x (Twitter/X)",
-            "linkedin (LinkedIn profile)",
-            "linkedin_page (LinkedIn page)",
-            "instagram_business (Instagram Business)",
-            "facebook (Facebook Page)",
-            "tiktok (TikTok)",
-            "youtube (YouTube)",
-            "reddit (Reddit)",
-            "wordpress (WordPress)",
-            "discord (Discord)",
-            "telegram (Telegram)",
-            "pinterest (Pinterest)",
+        "workspace_id": workspace_id,
+        "available_providers": ["facebook", "instagram"],
+        "setup_instructions": [
+            "1. Client opens Facebook Graph API Explorer",
+            "2. Client generates Explorer Token with required permissions",
+            "3. Agency owner calls /api/social/tokens/connect with token",
+            "4. Token auto-exchanged for long-lived (60-day) token",
+            "5. Pages and IG Business accounts auto-discovered",
         ],
-        "setup": "npm install -g socialclaw && socialclaw login --api-key <key>",
-        "note": "Install SocialClaw to manage accounts. Get key at: https://getsocialclaw.com/dashboard",
         "generated_at": _now(),
     }
 
@@ -1653,47 +1661,39 @@ def social_accounts(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def content_queue(
+    workspace_id: str = "default",
     platform: str = "all",
     status: str = "all",
 ) -> dict[str, Any]:
-    """View scheduled posts queue across all platforms."""
-    import subprocess
+    """View scheduled posts queue for a workspace."""
+    queue_dir = Path("data/scheduled_posts") / workspace_id
+    posts = []
 
-    # Try SocialClaw CLI
-    try:
-        result = subprocess.run(
-            ["socialclaw", "posts", "list", "--json"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            posts = json.loads(result.stdout) if result.stdout else []
-            filtered = posts
-            if platform != "all":
-                filtered = [p for p in filtered if p.get("provider") == platform]
-            return {
-                "platform": platform,
-                "status_filter": status,
-                "posts": filtered,
-                "count": len(filtered),
-                "generated_at": _now(),
-            }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    if queue_dir.exists():
+        for f in queue_dir.glob("*.json"):
+            try:
+                post = json.loads(f.read_text(encoding="utf-8"))
+                if platform != "all" and post.get("platform") != platform:
+                    continue
+                if status != "all" and post.get("status") != status:
+                    continue
+                posts.append(post)
+            except Exception:
+                continue
 
-    # Fallback: show queue guide
+    # Also check published posts
+    published_dir = Path("data/published_posts") / workspace_id
+    published_count = 0
+    if published_dir.exists():
+        published_count = len(list(published_dir.glob("*.json")))
+
     return {
+        "workspace_id": workspace_id,
         "platform": platform,
         "status_filter": status,
-        "posts": [],
-        "count": 0,
-        "queue_guide": {
-            "how_to_add": "Use schedule_post to add posts to queue",
-            "how_to_view": "Use content_queue to see all scheduled posts",
-            "how_to_manage": "Use SocialClaw dashboard: https://getsocialclaw.com/dashboard",
-        },
-        "note": "SocialClaw not available. Install: npm install -g socialclaw",
+        "scheduled_posts": posts,
+        "scheduled_count": len(posts),
+        "published_total": published_count,
         "generated_at": _now(),
     }
 
@@ -1703,52 +1703,55 @@ def content_queue(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def post_analytics(
+    workspace_id: str = "default",
     platform: str = "instagram",
     post_id: str = "",
     period: str = "7d",
 ) -> dict[str, Any]:
-    """Track individual post performance and delivery status."""
-    import subprocess
+    """Track post performance and delivery status from stored logs."""
+    # Check published posts for this workspace
+    published_dir = Path("data/published_posts") / workspace_id
+    posts = []
 
-    # Try SocialClaw CLI
-    try:
-        result = subprocess.run(
-            ["socialclaw", "status", "--json"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            status_data = json.loads(result.stdout) if result.stdout else {}
+    if published_dir.exists():
+        for f in published_dir.glob("*.json"):
+            try:
+                post = json.loads(f.read_text(encoding="utf-8"))
+                if post.get("platform") == platform:
+                    posts.append(post)
+            except Exception:
+                continue
+
+    # If specific post_id requested, find it
+    if post_id:
+        post_file = published_dir / f"{post_id}.json"
+        if post_file.exists():
+            post_data = json.loads(post_file.read_text(encoding="utf-8"))
             return {
+                "workspace_id": workspace_id,
                 "platform": platform,
                 "post_id": post_id,
-                "period": period,
-                "delivery_status": status_data,
+                "post_data": post_data,
                 "generated_at": _now(),
             }
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return {
+            "status": "not_found",
+            "workspace_id": workspace_id,
+            "post_id": post_id,
+            "generated_at": _now(),
+        }
 
-    # Fallback: analytics guide
     return {
+        "workspace_id": workspace_id,
         "platform": platform,
-        "post_id": post_id,
         "period": period,
-        "metrics_to_track": {
-            "engagement": "Likes, comments, shares, saves",
-            "reach": "Unique accounts that saw the post",
-            "impressions": "Total times the post was displayed",
-            "clicks": "Link clicks, profile visits",
-            "growth": "New followers from this post",
+        "published_posts_count": len(posts),
+        "recent_posts": posts[-5:] if posts else [],
+        "metrics_available": {
+            "facebook": "Engagement, Reach, Reactions, Comments, Shares",
+            "instagram": "Engagement, Reach, Impressions, Saves, Shares",
         },
-        "platform_benchmarks": {
-            "instagram": {"engagement_rate": "3-5%", "reach_rate": "20-30%"},
-            "linkedin": {"engagement_rate": "2-4%", "impression_rate": "10-20%"},
-            "twitter": {"engagement_rate": "1-3%", "retweet_rate": "1-2%"},
-            "tiktok": {"view_rate": "10-30%", "completion_rate": "30-50%"},
-        },
-        "note": "SocialClaw not available for live analytics. Install: npm install -g socialclaw",
+        "note": "For live Facebook/Instagram insights API, connect the account first.",
         "generated_at": _now(),
     }
 
@@ -1775,13 +1778,13 @@ def execute_social_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "dm_outreach": lambda a: dm_outreach(a.get("purpose", "collaboration"), a.get("platform", "instagram"), a.get("target_audience", "micro-influencers"), a.get("tone", "friendly")),
         "influencer_research": lambda a: influencer_research(a.get("niche", ""), a.get("platform", "instagram"), a.get("budget", "organic"), a.get("count", 10)),
         "analytics_report": lambda a: analytics_report(a.get("platform", "instagram"), a.get("metrics", ["followers", "engagement", "reach"]), a.get("period", "weekly")),
-        # ── EXECUTION TOOLS (16-21) ──
-        "create_post": lambda a: create_post(a.get("platform", "instagram"), a.get("topic", ""), a.get("content_type", "single_image"), a.get("tone", "engaging"), a.get("caption", ""), a.get("hashtags", []), a.get("media_url", ""), a.get("cta", "")),
-        "schedule_post": lambda a: schedule_post(a.get("platform", "instagram"), a.get("caption", ""), a.get("scheduled_at", ""), a.get("media_url", ""), a.get("hashtags", []), a.get("account_id", "")),
-        "post_now": lambda a: post_now(a.get("platform", "instagram"), a.get("caption", ""), a.get("media_url", ""), a.get("hashtags", []), a.get("account_id", "")),
-        "social_accounts": lambda a: social_accounts(a.get("action", "list"), a.get("provider", "")),
-        "content_queue": lambda a: content_queue(a.get("platform", "all"), a.get("status", "all")),
-        "post_analytics": lambda a: post_analytics(a.get("platform", "instagram"), a.get("post_id", ""), a.get("period", "7d")),
+        # ── EXECUTION TOOLS (16-21) — workspace-aware, token-based ──
+        "create_post": lambda a: create_post(a.get("workspace_id", "default"), a.get("platform", "instagram"), a.get("topic", ""), a.get("content_type", "single_image"), a.get("tone", "engaging"), a.get("caption", ""), a.get("hashtags", []), a.get("media_url", ""), a.get("cta", "")),
+        "schedule_post": lambda a: schedule_post(a.get("workspace_id", "default"), a.get("platform", "instagram"), a.get("caption", ""), a.get("scheduled_at", ""), a.get("media_url", ""), a.get("hashtags", [])),
+        "post_now": lambda a: post_now(a.get("workspace_id", "default"), a.get("platform", "instagram"), a.get("caption", ""), a.get("media_url", ""), a.get("hashtags", [])),
+        "social_accounts": lambda a: social_accounts(a.get("workspace_id", "default"), a.get("action", "list"), a.get("provider", "")),
+        "content_queue": lambda a: content_queue(a.get("workspace_id", "default"), a.get("platform", "all"), a.get("status", "all")),
+        "post_analytics": lambda a: post_analytics(a.get("workspace_id", "default"), a.get("platform", "instagram"), a.get("post_id", ""), a.get("period", "7d")),
     }
     fn = dispatch.get(name)
     if fn:
