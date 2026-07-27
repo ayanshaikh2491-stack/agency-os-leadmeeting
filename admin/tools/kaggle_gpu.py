@@ -441,21 +441,35 @@ def _submit_notebook(code_source: str, title: str) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def poll_status(kernel_slug: str) -> str:
-    """Notebook status check karo. Returns: queued/running/complete/error."""
+    """Notebook status check karo.
+
+    Returns: queued | running | complete | error | cancelled | unknown
+    """
     result = _run_kaggle(["kernels", "status", kernel_slug])
     if not result["success"]:
+        logger.warning("kaggle kernels status failed for %s: %s", kernel_slug, result.get("stderr"))
         return "error"
 
-    output = result["stdout"].lower()
-    if "complete" in output or "success" in output:
+    raw = result["stdout"].strip()
+    output = raw.lower()
+
+    # Parse status from Kaggle output (format: "Status: <status>")
+    status_match = _re.search(r"status:\s*(\w+)", output)
+    status_str = status_match.group(1) if status_match else output
+
+    if "complete" in status_str or "success" in status_str:
         return "complete"
-    elif "running" in output or "loading" in output:
+    elif "running" in status_str or "loading" in status_str:
         return "running"
-    elif "queued" in output or "waiting" in output:
+    elif "queued" in status_str or "waiting" in status_str or "pending" in status_str:
         return "queued"
-    elif "error" in output or "fail" in output:
+    elif "error" in status_str or "fail" in status_str:
         return "error"
-    return "running"
+    elif "cancel" in status_str:
+        return "cancelled"
+    else:
+        logger.info("Unknown status for %s: %s", kernel_slug, raw[:200])
+        return "unknown"
 
 
 def download_output(kernel_slug: str, dest_dir: str | Path | None = None) -> dict[str, Any]:
@@ -483,27 +497,74 @@ def download_output(kernel_slug: str, dest_dir: str | Path | None = None) -> dic
     }
 
 
-def wait_for_completion(kernel_slug: str, timeout: int = 600, poll_interval: int = 15) -> dict[str, Any]:
-    """Notebook complete hone tak wait karo (poll every N seconds)."""
+def wait_for_completion(
+    kernel_slug: str,
+    timeout: int = 900,
+    poll_interval: int = 30,
+) -> dict[str, Any]:
+    """Notebook complete hone tak wait karo.
+
+    Polling: every 30 seconds (GPU queue slow hai, 15s bahut fast hai)
+    Timeout: 15 minutes max (900s) — GPU quota ke hisaab se
+    Statuses: queued -> running -> complete | error | cancelled
+
+    Returns:
+        {
+            status: "complete" | "error" | "cancelled" | "timeout",
+            elapsed_seconds: int,
+            error: str (only on error/cancelled),
+        }
+    """
     start = time.time()
     last_status = ""
+    poll_count = 0
+
+    logger.info("Polling started: %s (interval=%ds, timeout=%ds)", kernel_slug, poll_interval, timeout)
 
     while time.time() - start < timeout:
         status = poll_status(kernel_slug)
         elapsed = int(time.time() - start)
+        poll_count += 1
 
         if status != last_status:
-            logger.info("[%s] Status: %s (%ds elapsed)", kernel_slug, status, elapsed)
+            logger.info("[%s] Status: %s -> %s (%ds elapsed, poll #%d)",
+                        kernel_slug, last_status or "start", status, elapsed, poll_count)
             last_status = status
 
         if status == "complete":
+            logger.info("[%s] COMPLETE in %ds (%d polls)", kernel_slug, elapsed, poll_count)
             return {"status": "complete", "elapsed_seconds": elapsed}
+
         elif status == "error":
-            return {"status": "error", "elapsed_seconds": elapsed, "error": "Notebook failed on GPU"}
+            return {
+                "status": "error",
+                "elapsed_seconds": elapsed,
+                "error": "Notebook failed on GPU — check Kaggle logs",
+                "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
+            }
+
+        elif status == "cancelled":
+            return {
+                "status": "cancelled",
+                "elapsed_seconds": elapsed,
+                "error": "Notebook was cancelled on Kaggle",
+                "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
+            }
+
+        # Log progress every 5 polls (~2.5 min)
+        if poll_count % 5 == 0:
+            logger.info("[%s] Still %s... (%ds elapsed, poll #%d)",
+                        kernel_slug, status, elapsed, poll_count)
 
         time.sleep(poll_interval)
 
-    return {"status": "timeout", "elapsed_seconds": timeout}
+    logger.warning("[%s] TIMEOUT after %ds (%d polls)", kernel_slug, timeout, poll_count)
+    return {
+        "status": "timeout",
+        "elapsed_seconds": timeout,
+        "error": f"GPU generation did not complete within {timeout}s",
+        "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -518,9 +579,16 @@ def generate_visual(
     height: int = 0,
     steps: int = 4,
     frames: int = 49,
-    timeout: int = 600,
+    timeout: int = 900,
 ) -> dict[str, Any]:
     """Visual content generate karo — on-demand T4x2 GPU.
+
+    FULL PIPELINE:
+      1. Build notebook code (FLUX for images, CogVideoX for video)
+      2. Push to Kaggle via `kaggle kernels push`
+      3. Poll every 30s until complete (max 15 min)
+      4. Auto-download output when done
+      5. Return clean JSON with file path
 
     Args:
         content_type: "image" or "video"
@@ -529,16 +597,15 @@ def generate_visual(
         width/height: Override platform size (0 = auto from platform)
         steps: Ignored — FLUX.1-schnell always uses 4 steps
         frames: CogVideoX frames (49=~6s, 60=~7.5s, 81=~10s)
-        timeout: Max wait time in seconds
+        timeout: Max wait time in seconds (default 900 = 15 min)
 
     Returns:
-        {
-            status: "success" | "error" | "submitted",
-            file: "path/to/output.png" | "path/to/output.mp4",
-            kernel_slug: "...",
-            kaggle_url: "...",
-            elapsed_seconds: 123,
-        }
+        Success:
+            {"status": "success", "file_path": "data/outputs/.../output.png",
+             "content_type": "image", "kernel_slug": "...", "kaggle_url": "...",
+             "elapsed_seconds": 123}
+        Error:
+            {"status": "error", "error": "...", "kaggle_url": "..."}
     """
     if not _check_kaggle():
         return {"status": "error", "error": "Kaggle CLI not installed. Run: pip install kaggle"}
@@ -565,36 +632,38 @@ def generate_visual(
 
     logger.info("Generating %s: %s (%s)", content_type, prompt[:80], estimated)
 
-    # Submit
+    # ── STEP 1: Push notebook ──
     submit = _submit_notebook(code, title)
     if submit["status"] == "error":
-        return submit
+        return {"status": "error", "error": submit["error"]}
 
     kernel_slug = submit["kernel_slug"]
+    kaggle_url = submit["url"]
+    logger.info("Notebook pushed: %s — starting poll loop...", kernel_slug)
 
-    # Poll until complete
-    logger.info("Notebook submitted: %s — polling...", kernel_slug)
+    # ── STEP 2: Poll until complete ──
     wait_result = wait_for_completion(kernel_slug, timeout=timeout)
 
     if wait_result["status"] != "complete":
         return {
             "status": wait_result["status"],
-            "kernel_slug": kernel_slug,
-            "kaggle_url": submit["url"],
             "error": wait_result.get("error", "GPU generation did not complete"),
+            "kernel_slug": kernel_slug,
+            "kaggle_url": kaggle_url,
+            "elapsed_seconds": wait_result.get("elapsed_seconds", 0),
         }
 
-    # Download output
+    # ── STEP 3: Auto-download output ──
     download = download_output(kernel_slug)
     if download["status"] == "error":
         return {
-            "status": "download_error",
+            "status": "error",
+            "error": f"Output download failed: {download.get('error', 'unknown')}",
             "kernel_slug": kernel_slug,
-            "kaggle_url": submit["url"],
-            "error": download["error"],
+            "kaggle_url": kaggle_url,
         }
 
-    # Find the output file
+    # ── STEP 4: Find output file ──
     output_files = download.get("files", [])
     output_file = ""
     for f in output_files:
@@ -602,15 +671,16 @@ def generate_visual(
             output_file = os.path.join(download["dir"], f)
             break
 
+    # ── Clean JSON return ──
     return {
         "status": "success",
+        "file_path": output_file,
         "content_type": content_type,
-        "file": output_file,
+        "kernel_slug": kernel_slug,
+        "kaggle_url": kaggle_url,
+        "elapsed_seconds": wait_result.get("elapsed_seconds", 0),
         "output_dir": download["dir"],
         "all_files": output_files,
-        "kernel_slug": kernel_slug,
-        "kaggle_url": submit["url"],
-        "elapsed_seconds": wait_result.get("elapsed_seconds", 0),
         "prompt": prompt,
         "platform": platform,
         "size": f"{width}x{height}" if content_type == "image" else f"{frames} frames",
