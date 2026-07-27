@@ -87,6 +87,20 @@ PLATFORM_CONFIGS: dict[str, dict[str, Any]] = {
         "video_frames": 49,
         "tips": "Tall format, lifestyle imagery, bright colors.",
     },
+    "google_display": {
+        "width": 1200,
+        "height": 628,
+        "aspect": "1.91:1",
+        "variants": {
+            "landscape": (1200, 628),
+            "square": (1200, 1200),
+            "portrait": (1200, 1500),
+            "banner": (728, 90),
+            "skyscraper": (300, 600),
+        },
+        "video_frames": 49,
+        "tips": "Clean design, minimal text, strong CTA, high contrast.",
+    },
 }
 
 
@@ -121,6 +135,69 @@ CONTENT_TYPE_CONFIGS: dict[str, dict[str, Any]] = {
         "default_frames": 49,
         "models": ["CogVideoX-2b"],
         "prompt_style": "polished, commercial, brand-forward, call-to-action space",
+    },
+    "carousel": {
+        "tool": "generate_carousel",
+        "default_slides": 5,
+        "max_slides": 10,
+        "default_steps": 20,
+        "best_steps": 30,
+        "quality_steps": 50,
+        "models": ["FLUX.1-dev", "SDXL"],
+        "prompt_style": "cohesive series, consistent style, visual storytelling, slide-by-slide narrative",
+        "slide_formats": {
+            "instagram": [(1080, 1080), (1080, 1350)],
+            "facebook": [(1200, 630), (1080, 1080)],
+            "linkedin": [(1200, 627), (1080, 1080)],
+        },
+    },
+    "story": {
+        "tool": "generate_image",
+        "default_steps": 20,
+        "best_steps": 30,
+        "quality_steps": 50,
+        "models": ["FLUX.1-dev", "SDXL"],
+        "prompt_style": "vertical, bold, quick-glance, immersive, full-screen visual",
+    },
+    "ad_creative": {
+        "tool": "generate_image",
+        "default_steps": 25,
+        "best_steps": 35,
+        "quality_steps": 50,
+        "models": ["FLUX.1-dev", "SDXL"],
+        "prompt_style": "professional ad, CTA-friendly space, brand-forward, conversion-optimized",
+    },
+    "thumbnail": {
+        "tool": "generate_image",
+        "default_steps": 25,
+        "best_steps": 35,
+        "quality_steps": 50,
+        "models": ["FLUX.1-dev", "SDXL"],
+        "prompt_style": "high contrast, bold, eye-catching, face-friendly, click-worthy",
+    },
+    "unboxing": {
+        "tool": "generate_video",
+        "default_frames": 81,
+        "models": ["CogVideoX-2b"],
+        "prompt_style": "authentic unboxing moment, excitement, first impressions, reveal shots, genuine reaction",
+    },
+    "testimonial": {
+        "tool": "generate_video",
+        "default_frames": 81,
+        "models": ["CogVideoX-2b"],
+        "prompt_style": "authentic testimonial, real person, genuine emotion, trustworthy, relatable",
+    },
+    "explainer": {
+        "tool": "generate_video",
+        "default_frames": 49,
+        "models": ["CogVideoX-2b"],
+        "prompt_style": "clear explainer, step-by-step visuals, educational, clean transitions",
+    },
+    "product_showcase": {
+        "tool": "generate_video",
+        "default_frames": 49,
+        "models": ["CogVideoX-2b"],
+        "prompt_style": "polished product showcase, 360-degree views, premium feel, studio quality",
     },
     "trading": {
         "tool": "generate_video",
@@ -216,6 +293,11 @@ VARIATION_STYLES: dict[str, dict[str, str]] = {
         "description": "Peaceful, soft, calming",
         "prompt_addon": "serene atmosphere, soft lighting, peaceful, calming mood, gentle tones",
     },
+    "carousel_slide": {
+        "name": "Carousel Slide",
+        "description": "Cohesive slide with consistent style, text-friendly space",
+        "prompt_addon": "carousel slide design, clean layout, text-friendly space, cohesive series, modern graphic design",
+    },
 }
 
 
@@ -306,6 +388,25 @@ MARKETING_VIDEO_PROMPT_TEMPLATE = (
     "Studio quality, broadcast-ready, brand-forward presentation."
 )
 
+CAROUSEL_SLIDE_TEMPLATE = (
+    "{slide_number}/{total_slides}: {slide_title}. "
+    "{slide_description} "
+    "Style: {style}. Brand: {brand_colors}. "
+    "{composition} {lighting}"
+)
+
+CAROUSEL_PROMPT_TEMPLATE = (
+    "Professional {style} carousel slide for {platform}. "
+    "{brand_color_desc}"
+    "Slide {slide_number} of {total_slides}: {slide_title}. "
+    "{slide_description} "
+    "Composition: {composition}. "
+    "Lighting: {lighting}. "
+    "Mood: {mood}. "
+    "Cohesive series, consistent visual style across all slides. "
+    "High quality, sharp focus, {platform} optimized, 4K detail."
+)
+
 TRADING_VIDEO_PROMPT_TEMPLATE = (
     "Dynamic financial visualization of {topic}. "
     "Animated chart elements: {chart_elements}. "
@@ -314,6 +415,80 @@ TRADING_VIDEO_PROMPT_TEMPLATE = (
     "Professional trading terminal aesthetic, data-driven visualization, "
     "smooth number animations, {pacing} pacing. "
     "Mood: {mood}. Clean, modern financial UI feel."
+)
+
+STORY_PROMPT_TEMPLATE = (
+    "Full-screen vertical {style} story image of {topic}. "
+    "{brand_color_desc}"
+    "Immersive, bold, designed for quick glance. "
+    "Composition: {composition}. "
+    "Lighting: {lighting}. "
+    "Mood: {mood}. "
+    "Vertical format 9:16, mobile-first, vibrant and attention-grabbing. "
+    "High quality, sharp focus, {platform} story optimized."
+)
+
+AD_CREATIVE_PROMPT_TEMPLATE = (
+    "Professional {style} ad creative for {topic}. "
+    "{brand_color_desc}"
+    "Leave clean space for CTA button. "
+    "Composition: {composition}. "
+    "Lighting: {lighting}. "
+    "Mood: {mood}. "
+    "Conversion-optimized, brand-forward, clear focal point. "
+    "High quality, sharp focus, {platform} ad optimized, clean design."
+)
+
+THUMBNAIL_PROMPT_TEMPLATE = (
+    "Eye-catching {style} thumbnail for {topic}. "
+    "{brand_color_desc}"
+    "High contrast, bold, click-worthy design. "
+    "Composition: {composition}. "
+    "Lighting: {lighting}. "
+    "Mood: {mood}. "
+    "Face-friendly, expressive, dramatic, works at small sizes. "
+    "High quality, sharp focus, YouTube/blog thumbnail optimized."
+)
+
+UNBOXING_VIDEO_PROMPT_TEMPLATE = (
+    "Authentic unboxing video of {topic}. "
+    "Genuine excitement, first impressions, hands-on reveal. "
+    "{human_keywords}"
+    "Environment: {environment}. "
+    "Mood: {mood}. "
+    "Close-up product shots, genuine reaction, anticipation building. "
+    "Natural lighting, handheld camera feel, smartphone-quality authenticity."
+)
+
+TESTIMONIAL_VIDEO_PROMPT_TEMPLATE = (
+    "Authentic testimonial video featuring {topic}. "
+    "Real person speaking, genuine emotion, trustworthy delivery. "
+    "{human_keywords}"
+    "Environment: {environment}. "
+    "Mood: {mood}. "
+    "Face-to-camera, natural lighting, relatable, authentic experience. "
+    "Vertical format, genuine, unscripted feel."
+)
+
+EXPLAINER_VIDEO_PROMPT_TEMPLATE = (
+    "Clear explainer video about {topic}. "
+    "Step-by-step visuals, educational, informative. "
+    "Motion: {motion_description}. "
+    "Pacing: {pacing}. "
+    "Mood: {mood}. "
+    "Clean transitions, professional, easy to follow. "
+    "Smooth motion, high quality, broadcast-ready."
+)
+
+PRODUCT_SHOWCASE_VIDEO_PROMPT_TEMPLATE = (
+    "Polished product showcase video of {topic}. "
+    "{brand_color_desc}"
+    "360-degree views, premium feel, studio quality. "
+    "Motion: {motion_description}. "
+    "Pacing: {pacing}. "
+    "Mood: {mood}. "
+    "Elegant lighting, smooth transitions, luxury presentation. "
+    "Professional commercial look, studio-quality production."
 )
 
 
@@ -431,6 +606,7 @@ def detect_platform(text: str) -> str:
         "tiktok": ["tiktok", "tick", "tok "],
         "pinterest": ["pinterest", "pin "],
         "blog_hero": ["blog", "hero", "banner", "header"],
+        "google_display": ["google display", "display ad", "google ads", "banner ad"],
     }
     for platform, signals in platform_signals.items():
         if any(s in text_lower for s in signals):
@@ -451,8 +627,18 @@ def get_platform_format(text: str) -> str:
         return "landscape"
     if any(kw in text_lower for kw in ["square", "1:1"]):
         return "square"
-    if any(kw in text_lower for kw in ["ad", "advertisement", "promotional"]):
-        return "ad"
     if any(kw in text_lower for kw in ["thumbnail", "cover"]):
         return "thumbnail"
+    if any(kw in text_lower for kw in ["carousel", "carousal", "swipe", "multiple slides"]):
+        return "carousel"
+    if any(kw in text_lower for kw in ["unboxing", "unpacking", "reveal"]):
+        return "post"
+    if any(kw in text_lower for kw in ["testimonial", "review", "feedback"]):
+        return "post"
+    if any(kw in text_lower for kw in ["explainer", "tutorial", "how-to", "how to"]):
+        return "post"
+    if any(kw in text_lower for kw in ["product showcase", "showcase", "360"]):
+        return "post"
+    if any(kw in text_lower for kw in ["banner", "skyscraper", "leaderboard"]):
+        return "banner"
     return "post"  # default

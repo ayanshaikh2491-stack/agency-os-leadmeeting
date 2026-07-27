@@ -19,6 +19,8 @@ from admin.api.routes import seo as seo_routes
 from admin.api.routes import content as content_routes
 from admin.api.routes import kaggle as kaggle_routes
 from admin.api.routes import orchestrator as orch_routes
+from admin.api.routes import ads as ads_routes
+from admin.api.routes import analytics as analytics_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db
@@ -55,6 +57,8 @@ app.include_router(seo_routes.router)
 app.include_router(content_routes.router)
 app.include_router(kaggle_routes.router)
 app.include_router(orch_routes.router)
+app.include_router(ads_routes.router)
+app.include_router(analytics_routes.router)
 
 
 # ── Startup / shutdown ──────────────────────────────────────────────────

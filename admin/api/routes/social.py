@@ -469,6 +469,20 @@ async def token_check(platform: str, workspace_id: str = "default"):
     return get_token_expiry_info(workspace_id, platform)
 
 
+@router.get("/tokens/health")
+async def token_health():
+    """Scan ALL workspaces for expiring/expired tokens. Auto-renew alerts."""
+    from admin.token_manager import check_all_tokens_health
+    return check_all_tokens_health()
+
+
+@router.get("/tokens/{platform}/renew-instructions")
+async def token_renew_instructions(platform: str, workspace_id: str = "default"):
+    """Get step-by-step instructions for client to renew token."""
+    from admin.token_manager import get_renewal_instructions
+    return get_renewal_instructions(workspace_id, platform)
+
+
 @router.post("/request-content")
 async def request_content(req: RequestContentRequest):
     """Brief Content Agent for social visuals."""

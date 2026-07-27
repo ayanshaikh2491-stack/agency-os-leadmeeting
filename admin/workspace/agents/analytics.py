@@ -6,6 +6,7 @@ Domain (from interview):
 - Data-driven insights and recommendations
 - Cross-channel analytics (combine SEO + Ads + Social data)
 - Automated monitoring with alerts
+- Email reports to agency owner, CEO, and client
 """
 
 from __future__ import annotations
@@ -19,13 +20,13 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
+from admin.tools.analytics_tools import ANALYTICS_TOOLS, execute_analytics_tool
+from admin.workspace.agent_bus import send_message
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
 
-
-# ── Analytics Agent System Prompt ─────────────────────────────────────────────
 
 ANALYTICS_SYSTEM_PROMPT = """You are the Analytics Agent for workspace '{workspace_name}' (client: {client_name}).
 
@@ -39,15 +40,56 @@ You are a data analytics specialist who tracks performance and generates insight
 - Competitor benchmarking
 - ROI analysis and forecasting
 - Anomaly detection and alerting
+- Email reports to agency owner, CEO, and client
 
 ## Your Rules (from interview)
 1. You track ALL channels — SEO, Ads, Social, Website — in one dashboard
 2. You generate automated weekly/monthly reports
-3. You alert CEO/anomalies (traffic drops, ranking losses, ad spend spikes)
+3. You alert CEO on anomalies (traffic drops, ranking losses, ad spend spikes)
 4. You provide data-driven recommendations, not just numbers
 5. You learn from historical data — identify trends over time
 6. You can pull data from any agent's output for cross-channel analysis
 7. CEO can request custom reports anytime
+8. You send email reports to: agency owner, workspace CEO, and client
+
+## Your 20 Tools
+### Reporting
+- weekly_report: Generate weekly performance report
+- monthly_report: Comprehensive monthly report with trends
+- campaign_report: Detailed campaign performance report
+- custom_report: Custom report based on focus areas
+
+### Tracking
+- track_traffic: Track website traffic metrics
+- track_rankings: Track keyword rankings
+- track_conversions: Track conversion metrics
+- track_revenue: Track revenue and profitability
+
+### Analysis
+- cross_channel_analysis: Analyze all channels together
+- roi_calculator: Calculate ROI per channel
+- funnel_analysis: Analyze conversion funnel
+- competitor_benchmark: Benchmark against competitors
+
+### Alerts
+- anomaly_detector: Detect metric anomalies
+- threshold_alert: Check thresholds and alert
+- competitor_alert: Alert on competitor activity
+
+### Forecasting
+- traffic_forecast: Forecast traffic growth
+- budget_forecast: Forecast budget needs
+- growth_projection: Project growth to targets
+
+### Data
+- data_aggregator: Aggregate all channel data
+- email_report: Send report via email
+
+## Email Reports
+When generating reports, use email_report tool to send to:
+- Agency owner email
+- Workspace CEO email
+- Client email
 
 ## Report Types
 - **Weekly Digest**: All channels summary, key metrics, trends
@@ -69,85 +111,6 @@ You are a data analytics specialist who tracks performance and generates insight
 5. What actionable insights can I provide?
 """
 
-ANALYTICS_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_report",
-            "description": "Generate a performance report for the workspace.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "report_type": {
-                        "type": "string",
-                        "enum": ["weekly", "monthly", "campaign", "seo", "social", "custom"],
-                        "description": "Type of report to generate",
-                    },
-                    "period": {"type": "string", "description": "Reporting period (e.g., 'last 7 days', 'July 2026')"},
-                    "channels": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Channels to include (seo, ads, social, website)",
-                    },
-                },
-                "required": ["report_type"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "track_metric",
-            "description": "Track a specific metric over time.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "metric_name": {"type": "string", "description": "Name of the metric to track"},
-                    "current_value": {"type": "string", "description": "Current value"},
-                    "previous_value": {"type": "string", "description": "Previous period value for comparison"},
-                    "channel": {"type": "string", "description": "Channel this metric belongs to"},
-                },
-                "required": ["metric_name", "current_value"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "detect_anomaly",
-            "description": "Report a performance anomaly that needs attention.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "metric": {"type": "string", "description": "Metric with anomaly"},
-                    "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Anomaly severity"},
-                    "description": {"type": "string", "description": "What's abnormal"},
-                    "suggested_action": {"type": "string", "description": "Recommended action"},
-                },
-                "required": ["metric", "severity", "description"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "report_to_ceo",
-            "description": "Send analytics insights or alerts to CEO.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "report_type": {"type": "string", "enum": ["insight", "alert", "recommendation", "report_ready"]},
-                    "content": {"type": "string"},
-                },
-                "required": ["report_type", "content"],
-            },
-        },
-    },
-]
-
-
-# ── State ─────────────────────────────────────────────────────────────────────
-
 
 class AnalyticsAgentState(TypedDict):
     messages: Annotated[list[dict[str, Any]], lambda e, n: e + n]
@@ -157,9 +120,6 @@ class AnalyticsAgentState(TypedDict):
     tool_round: int
     final_output: str
     error: str | None
-
-
-# ── Graph Nodes ───────────────────────────────────────────────────────────────
 
 
 async def analytics_call_llm(state: AnalyticsAgentState) -> dict:
@@ -193,8 +153,7 @@ async def analytics_call_llm(state: AnalyticsAgentState) -> dict:
         logger.exception("Analytics Agent LLM call failed")
         return {"error": str(exc), "messages": [], "tool_round": state.get("tool_round", 0)}
 
-    choice = response.choices[0]
-    msg = choice.message
+    msg = response.choices[0].message
 
     assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
     if msg.tool_calls:
@@ -225,7 +184,7 @@ def analytics_route(state: AnalyticsAgentState) -> str:
 
 
 async def analytics_run_tools(state: AnalyticsAgentState) -> dict:
-    """Execute Analytics tools."""
+    """Execute Analytics tools using real tool executor."""
     messages = state.get("messages", [])
     if not messages:
         return {"messages": [], "tool_round": state.get("tool_round", 0) + 1}
@@ -243,37 +202,9 @@ async def analytics_run_tools(state: AnalyticsAgentState) -> dict:
         except (json.JSONDecodeError, KeyError):
             args = {}
 
-        logger.info("Analytics tool: %s(%s)", name, json.dumps(args))
-
-        if name == "generate_report":
-            channels = args.get("channels", ["all"])
-            result_text = (
-                f"Report generated ({args.get('report_type', 'weekly')}):\n"
-                f"Period: {args.get('period', 'current')}\n"
-                f"Channels: {', '.join(channels)}\n"
-                f"[Report data would be populated from workspace metrics]"
-            )
-        elif name == "track_metric":
-            result_text = (
-                f"Metric tracked: {args.get('metric_name', 'N/A')}\n"
-                f"Current: {args.get('current_value', 'N/A')}\n"
-                f"Previous: {args.get('previous_value', 'N/A')}\n"
-                f"Channel: {args.get('channel', 'N/A')}"
-            )
-        elif name == "detect_anomaly":
-            result_text = (
-                f"Anomaly detected ({args.get('severity', 'medium')}):\n"
-                f"Metric: {args.get('metric', 'N/A')}\n"
-                f"Description: {args.get('description', 'N/A')}\n"
-                f"Action: {args.get('suggested_action', 'Review recommended')}"
-            )
-        elif name == "report_to_ceo":
-            result_text = (
-                f"Report sent to CEO ({args.get('report_type', 'insight')}):\n"
-                f"{args.get('content', 'N/A')[:200]}"
-            )
-        else:
-            result_text = f"Unknown Analytics tool: {name}"
+        # Use real tool executor from analytics_tools.py
+        tool_result = execute_analytics_tool(name, args)
+        result_text = json.dumps(tool_result, indent=2, default=str)
 
         results.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result_text})
 
@@ -291,9 +222,6 @@ async def analytics_finalize(state: AnalyticsAgentState) -> dict:
     return {"final_output": "Analytics Agent analysis complete."}
 
 
-# ── Build Graph ───────────────────────────────────────────────────────────────
-
-
 def build_analytics_graph() -> StateGraph:
     workflow = StateGraph(AnalyticsAgentState)
     workflow.add_node("call_llm", analytics_call_llm)
@@ -306,9 +234,6 @@ def build_analytics_graph() -> StateGraph:
     workflow.add_edge("run_tools", "call_llm")
     workflow.add_edge("finalize", END)
     return workflow.compile(checkpointer=MemorySaver())
-
-
-# ── Agent Class ───────────────────────────────────────────────────────────────
 
 
 class AnalyticsAgent:
@@ -344,3 +269,89 @@ class AnalyticsAgent:
             return "Analytics Agent temporarily unavailable.", self._thread_id
 
         return result.get("final_output", "Analytics Agent analysis complete."), self._thread_id
+
+    def send_report_email(
+        self,
+        to: list[str],
+        report_type: str = "weekly",
+        custom_message: str = "",
+    ) -> dict[str, Any]:
+        """Send analytics report via email.
+
+        Sends to: agency owner, workspace CEO, and client.
+        """
+        from admin.utils.email_sender import send_report_email
+        from admin.tools.analytics_tools import weekly_report, monthly_report
+
+        # Generate report
+        if report_type == "monthly":
+            report = monthly_report(self.workspace_name, self.client_name)
+        else:
+            report = weekly_report(self.workspace_name, self.client_name)
+
+        # Build email body
+        body_lines = [
+            f"📊 {report_type.title()} Report — {self.workspace_name}",
+            f"Client: {self.client_name}",
+            "",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        if "summary" in report:
+            s = report["summary"]
+            body_lines.extend([
+                "Summary:",
+                f"  Traffic: {s.get('total_traffic', 'N/A'):,}",
+                f"  Leads: {s.get('total_leads', 'N/A')}",
+                f"  Revenue: ₹{s.get('total_revenue', 0):,}",
+                f"  Spend: ₹{s.get('total_spend', 0):,}",
+                f"  ROAS: {s.get('overall_roas', 'N/A')}x",
+                "",
+            ])
+
+        if report.get("action_items"):
+            body_lines.append("Action Items:")
+            for item in report["action_items"]:
+                body_lines.append(f"  • {item}")
+
+        if custom_message:
+            body_lines.extend(["", "Note:", f"  {custom_message}"])
+
+        body = "\n".join(body_lines)
+
+        result = send_report_email(
+            to=to,
+            report_title=f"{report_type.title()} Report — {self.client_name}",
+            report_body=body,
+            workspace_name=self.workspace_name,
+            client_name=self.client_name,
+            report_type=report_type,
+        )
+
+        return {
+            "status": result.get("status", "unknown"),
+            "report_type": report_type,
+            "recipients": to,
+            "email_result": result,
+        }
+
+    def report_to_ceo(
+        self,
+        report_type: str = "insight",
+        content: str = "",
+    ) -> dict[str, Any]:
+        """Send analytics insight/alert to CEO via agent_bus."""
+        try:
+            send_message(
+                from_agent="analytics",
+                to_agent="ceo",
+                workspace_id=self.workspace_name,
+                subject=f"Analytics {report_type}: {self.client_name}",
+                content=content,
+                message_type="report",
+                metadata={"report_type": report_type},
+            )
+            return {"status": "sent", "to": "ceo", "report_type": report_type}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}

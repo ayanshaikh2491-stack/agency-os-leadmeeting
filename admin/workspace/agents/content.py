@@ -27,11 +27,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
-from admin.tools.kaggle_gpu import (
-    generate_image,
-    generate_video,
-    get_platform_size,
-)
+from admin.tools.together_gpu import generate_image, generate_video, get_platform_size
 from admin.tools.visual_tools import discover_brand_identity
 from admin.workspace.content_store import WorkspaceContentStore
 from admin.workspace.agents.content_templates import (
@@ -46,6 +42,15 @@ from admin.workspace.agents.content_templates import (
     UGC_VIDEO_PROMPT_TEMPLATE,
     MARKETING_VIDEO_PROMPT_TEMPLATE,
     TRADING_VIDEO_PROMPT_TEMPLATE,
+    CAROUSEL_PROMPT_TEMPLATE,
+    CAROUSEL_SLIDE_TEMPLATE,
+    STORY_PROMPT_TEMPLATE,
+    AD_CREATIVE_PROMPT_TEMPLATE,
+    THUMBNAIL_PROMPT_TEMPLATE,
+    UNBOXING_VIDEO_PROMPT_TEMPLATE,
+    TESTIMONIAL_VIDEO_PROMPT_TEMPLATE,
+    EXPLAINER_VIDEO_PROMPT_TEMPLATE,
+    PRODUCT_SHOWCASE_VIDEO_PROMPT_TEMPLATE,
     IMAGE_NEGATIVE_PROMPT,
     VIDEO_NEGATIVE_PROMPT,
     CATEGORY_KEYWORDS,
@@ -265,7 +270,7 @@ def parse_brief(state: ContentState) -> dict[str, Any]:
         "Extract a structured brief from the user's message. "
         "Return ONLY valid JSON with these fields:\n"
         '{\n'
-        '  "visual_type": "image|video|ugc|marketing|trading",\n'
+        '  "visual_type": "image|video|ugc|marketing|trading|carousel|story|ad_creative|thumbnail|unboxing|testimonial|explainer|product_showcase",\n'
         '  "platform": "instagram|facebook|linkedin|twitter|youtube|tiktok|pinterest|blog_hero",\n'
         '  "format": "post|story|reel|ad|thumbnail|banner|portrait|landscape|square",\n'
         '  "topic": "brief description of the subject",\n'
@@ -305,7 +310,10 @@ def parse_brief(state: ContentState) -> dict[str, Any]:
 
     # Fill defaults and validate with keyword detection
     visual_type = parsed_brief.get("visual_type", "image")
-    if visual_type not in ("image", "video", "ugc", "marketing", "trading"):
+    VALID_TYPES = ("image", "video", "ugc", "marketing", "trading", "carousel",
+                   "story", "ad_creative", "thumbnail", "unboxing", "testimonial",
+                   "explainer", "product_showcase")
+    if visual_type not in VALID_TYPES:
         visual_type = "image"
 
     platform = parsed_brief.get("platform", "")
@@ -467,6 +475,8 @@ def plan_visual(state: ContentState) -> dict[str, Any]:
     motion_key = "slow_zoom"
     if visual_type in ("video", "ugc", "marketing", "trading"):
         motion_description = VIDEO_MOTION_PRESETS.get(motion_key, VIDEO_MOTION_PRESETS["slow_zoom"])["motion"]
+    if visual_type == "carousel":
+        motion_description = "cohesive visual series, consistent style"
     avoid_list = style_preset.get("negative", "")
 
     # Build visual plan
@@ -490,21 +500,68 @@ def plan_visual(state: ContentState) -> dict[str, Any]:
     if visual_type == "trading":
         visual_plan["chart_elements"] = "candlestick charts, moving averages, volume bars"
         visual_plan["motion_description"] = "dynamic data visualization with smooth animations"
+    if visual_type == "carousel":
+        carousel_cfg = CONTENT_TYPE_CONFIGS.get("carousel", {})
+        slide_count = min(carousel_cfg.get("default_slides", 5), quantity)
+        visual_plan["slide_count"] = slide_count
+        visual_plan["slide_topics"] = [f"Slide {i+1}: {topic}" for i in range(slide_count)]
+        visual_plan["motion_description"] = "cohesive visual series, consistent style"
+    if visual_type in ("unboxing", "testimonial"):
+        visual_plan["motion_description"] = "handheld, natural, authentic"
+        visual_plan["motion_key"] = "handheld"
+        visual_plan["environment"] = "natural, real-world setting"
+    if visual_type in ("explainer", "product_showcase"):
+        visual_plan["motion_description"] = "smooth, professional, educational"
+        visual_plan["motion_key"] = "slow_zoom"
+    if visual_type == "story":
+        width, height = 1080, 1920  # Force vertical
+    if visual_type == "thumbnail":
+        width, height = 1280, 720  # YouTube thumbnail size
+    if visual_type == "ad_creative":
+        if platform == "google_display":
+            width, height = 1200, 628
+        elif platform == "facebook":
+            width, height = 1200, 627
+        else:
+            width, height = 1080, 1080  # IG/FB square ad
 
     # Create variation plan
     style_keys = list(VARIATION_STYLES.keys())
     variations: list[dict[str, Any]] = []
-    for i in range(quantity):
-        sk = style_keys[i % len(style_keys)]
-        vs = VARIATION_STYLES[sk]
-        variations.append({
-            "variation_id": f"var_{i+1}", "name": vs["name"], "style_key": sk,
-            "prompt_preview": f"{vs['description']} — {topic}",
-            "target_platform": platform, "width": width, "height": height,
-            "prompt": "", "negative_prompt": "",
-            "steps": ct_cfg.get("default_steps", 20) if visual_type == "image" else 0,
-            "tool": ct_cfg["tool"], "status": "pending",
-        })
+
+    if visual_type == "carousel":
+        # Carousel: each variation = one slide
+        slide_count = visual_plan.get("slide_count", 5)
+        for i in range(slide_count):
+            vs = VARIATION_STYLES["carousel_slide"]
+            variations.append({
+                "variation_id": f"slide_{i+1}",
+                "name": f"Slide {i+1}/{slide_count}",
+                "style_key": "carousel_slide",
+                "prompt_preview": f"Slide {i+1} of {slide_count} — {topic}",
+                "target_platform": platform,
+                "width": width,
+                "height": height,
+                "prompt": "",
+                "negative_prompt": "",
+                "steps": ct_cfg.get("default_steps", 20),
+                "tool": ct_cfg["tool"],
+                "status": "pending",
+                "slide_number": i + 1,
+                "total_slides": slide_count,
+            })
+    else:
+        for i in range(quantity):
+            sk = style_keys[i % len(style_keys)]
+            vs = VARIATION_STYLES[sk]
+            variations.append({
+                "variation_id": f"var_{i+1}", "name": vs["name"], "style_key": sk,
+                "prompt_preview": f"{vs['description']} — {topic}",
+                "target_platform": platform, "width": width, "height": height,
+                "prompt": "", "negative_prompt": "",
+                "steps": ct_cfg.get("default_steps", 20) if visual_type == "image" else 0,
+                "tool": ct_cfg["tool"], "status": "pending",
+            })
 
     return {
         "visual_plan": visual_plan,
@@ -517,7 +574,7 @@ def plan_visual(state: ContentState) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def engineer_prompt(state: ContentState) -> dict[str, Any]:
-    """Build expert-level prompts for each variation."""
+    """Build expert-level prompts for each variation using templates."""
     brief = state.get("parsed_brief", {})
     brand = state.get("brand_analysis", {})
     plan = state.get("visual_plan", {})
@@ -534,46 +591,157 @@ def engineer_prompt(state: ContentState) -> dict[str, Any]:
     motion_preset = VIDEO_MOTION_PRESETS.get(plan.get("motion_key", "slow_zoom"), VIDEO_MOTION_PRESETS["slow_zoom"])
     attempt = state.get("attempt_count", 0)
 
+    # Brand color description for templates
+    if primary_colors:
+        brand_color_desc = f"Brand colors: {color_desc}. "
+    else:
+        brand_color_desc = "Professional color palette. "
+
     engineered: list[dict[str, Any]] = []
     for var in variations:
         vs = VARIATION_STYLES.get(var.get("style_key", "hero"), VARIATION_STYLES["hero"])
         add = vs["prompt_addon"]
-        brand_line = f"Brand colors: {color_desc}. " if primary_colors else ""
-        avoid_line = f"Avoid: {avoid}. " if avoid else ""
         prompt = ""
 
         if visual_type == "image":
-            prompt = (
-                f"Professional {style} image of {topic}. {brand_line}"
-                f"Composition: {plan.get('composition', '')}. {add} "
-                f"Lighting: {plan.get('lighting', '')}. Mood: {mood}. "
-                f"{avoid_line}High quality, sharp focus, {platform} optimized, 4K detail."
+            prompt = IMAGE_PROMPT_TEMPLATE.format(
+                style=style,
+                topic=topic,
+                brand_color_desc=brand_color_desc,
+                composition=plan.get("composition", "Rule of thirds"),
+                lighting=plan.get("lighting", "Soft natural light"),
+                mood=mood,
+                color_application=style_preset.get("prompt_suffix", ""),
+                avoid_section=f"Avoid: {avoid}. " if avoid else "",
+                platform=platform,
             )
+            prompt += f" {add}"
+
+        elif visual_type == "carousel":
+            slide_num = var.get("slide_number", 1)
+            total_slides = var.get("total_slides", 5)
+            prompt = CAROUSEL_PROMPT_TEMPLATE.format(
+                style=style,
+                platform=platform,
+                brand_color_desc=brand_color_desc,
+                slide_number=slide_num,
+                total_slides=total_slides,
+                slide_title=f"Slide {slide_num}: {topic}",
+                slide_description=f"Visual slide {slide_num} of {total_slides} about {topic}.",
+                composition=plan.get("composition", "Clean layout with text-friendly space"),
+                lighting=plan.get("lighting", "Soft natural light"),
+                mood=mood,
+            )
+            prompt += f" {add}"
+
         elif visual_type == "ugc":
-            prompt = (
-                f"Authentic UGC-style video of {topic}. Handheld camera, natural lighting, real-person aesthetic. "
-                f"Include: {', '.join(VIDEO_HUMAN_KEYWORDS[:5])}. "
-                f"Environment: {plan.get('environment', 'natural setting')}. Mood: {mood}. "
-                f"Genuine, relatable, unscripted feel. Vertical format, smartphone-quality authenticity."
+            human_kws = ", ".join(VIDEO_HUMAN_KEYWORDS[:5])
+            prompt = UGC_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                human_keywords=f"Include: {human_kws}. ",
+                environment=plan.get("environment", "natural, real-world setting"),
+                mood=mood,
             )
+
         elif visual_type == "trading":
-            prompt = (
-                f"Dynamic financial visualization of {topic}. Charts: {plan.get('chart_elements', 'candlestick')}. "
-                f"Colors: {color_desc}. Motion: {motion_preset['motion']}. "
-                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. Professional trading aesthetic."
+            prompt = TRADING_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                chart_elements=plan.get("chart_elements", "candlestick charts, moving averages"),
+                color_application=color_desc,
+                motion_description=motion_preset["motion"],
+                pacing=motion_preset["pacing"],
+                mood=mood,
             )
+
         elif visual_type == "marketing":
-            prompt = (
-                f"Polished marketing video of {topic}. Brand colors: {color_desc}. "
-                f"Motion: {motion_preset['motion']}. Professional commercial look. "
-                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. Broadcast-ready."
+            prompt = MARKETING_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                brand_colors=color_desc,
+                motion_description=motion_preset["motion"],
+                pacing=motion_preset["pacing"],
+                mood=mood,
             )
+
+        elif visual_type == "story":
+            prompt = STORY_PROMPT_TEMPLATE.format(
+                style=style,
+                topic=topic,
+                brand_color_desc=brand_color_desc,
+                composition=plan.get("composition", "Centered, immersive"),
+                lighting=plan.get("lighting", "Vibrant, attention-grabbing"),
+                mood=mood,
+                platform=platform,
+            )
+            prompt += f" {add}"
+
+        elif visual_type == "ad_creative":
+            prompt = AD_CREATIVE_PROMPT_TEMPLATE.format(
+                style=style,
+                topic=topic,
+                brand_color_desc=brand_color_desc,
+                composition=plan.get("composition", "Clean, CTA-focused"),
+                lighting=plan.get("lighting", "Professional, clean"),
+                mood=mood,
+                platform=platform,
+            )
+            prompt += f" {add}"
+
+        elif visual_type == "thumbnail":
+            prompt = THUMBNAIL_PROMPT_TEMPLATE.format(
+                style=style,
+                topic=topic,
+                brand_color_desc=brand_color_desc,
+                composition=plan.get("composition", "Bold, high contrast"),
+                lighting=plan.get("lighting", "Dramatic, attention-grabbing"),
+                mood=mood,
+            )
+            prompt += f" {add}"
+
+        elif visual_type == "unboxing":
+            human_kws = ", ".join(VIDEO_HUMAN_KEYWORDS[:5])
+            prompt = UNBOXING_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                human_keywords=f"Include: {human_kws}. ",
+                environment=plan.get("environment", "natural, real-world setting"),
+                mood=mood,
+            )
+
+        elif visual_type == "testimonial":
+            human_kws = ", ".join(VIDEO_HUMAN_KEYWORDS[:5])
+            prompt = TESTIMONIAL_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                human_keywords=f"Include: {human_kws}. ",
+                environment=plan.get("environment", "natural, real-world setting"),
+                mood=mood,
+            )
+
+        elif visual_type == "explainer":
+            prompt = EXPLAINER_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                motion_description=motion_preset["motion"],
+                pacing=motion_preset["pacing"],
+                mood=mood,
+            )
+
+        elif visual_type == "product_showcase":
+            prompt = PRODUCT_SHOWCASE_VIDEO_PROMPT_TEMPLATE.format(
+                topic=topic,
+                brand_color_desc=brand_color_desc,
+                motion_description=motion_preset["motion"],
+                pacing=motion_preset["pacing"],
+                mood=mood,
+            )
+
         else:  # video
-            prompt = (
-                f"A {motion_preset['motion']} scene featuring {topic}. "
-                f"Camera: {motion_preset['camera_move']}. Style: {style}. {brand_line}"
-                f"Pacing: {motion_preset['pacing']}. Mood: {mood}. "
-                f"Lighting: {plan.get('lighting', '')}. Cinematic quality."
+            prompt = VIDEO_PROMPT_TEMPLATE.format(
+                motion_description=motion_preset["motion"],
+                topic=topic,
+                camera_move=motion_preset["camera_move"],
+                style=style,
+                brand_color_desc=brand_color_desc,
+                pacing=motion_preset["pacing"],
+                mood=mood,
+                lighting=plan.get("lighting", "Cinematic lighting"),
             )
 
         # Platform tips
@@ -581,13 +749,13 @@ def engineer_prompt(state: ContentState) -> dict[str, Any]:
         if tips:
             prompt += f" {tips}"
 
-        # Attempt-based simplification
+        # Attempt-based simplification (simpler prompts on retry)
         if attempt >= 1:
             prompt = ". ".join(prompt.split(". ")[:4]) + f" Style: {style}. High quality."
         if attempt >= 2:
             prompt = f"{style} {visual_type} of {topic}, {color_desc}, high quality, {platform}"
 
-        neg = f"{IMAGE_NEGATIVE_PROMPT}, {style_preset.get('negative', '')}" if visual_type == "image" \
+        neg = f"{IMAGE_NEGATIVE_PROMPT}, {style_preset.get('negative', '')}" if visual_type in ("image", "carousel", "story", "ad_creative", "thumbnail") \
             else f"{VIDEO_NEGATIVE_PROMPT}, {', '.join(VIDEO_AI_AVOID_KEYWORDS[:5])}"
 
         updated = dict(var)
@@ -625,7 +793,17 @@ def generate(state: ContentState) -> dict[str, Any]:
 
         result: dict[str, Any] = {}
         try:
-            if tool_name == "generate_image" or var.get("tool") == "generate_image":
+            if tool_name == "generate_carousel":
+                # Carousel: generate single slide image
+                actual_steps = steps if attempt < 2 else 15
+                result = generate_image(
+                    prompt=prompt,
+                    platform=platform,
+                    width=width,
+                    height=height,
+                    steps=actual_steps,
+                )
+            elif tool_name == "generate_image" or var.get("tool") == "generate_image":
                 # Attempt 2+ fallback to SDXL (fewer steps)
                 actual_steps = steps if attempt < 2 else 15
                 result = generate_image(
