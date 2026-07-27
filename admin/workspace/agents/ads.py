@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
+from admin.tools.ads_tools import ADS_TOOLS, execute_ads_tool
 from admin.workspace.agent_bus import send_message
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,51 @@ You are a performance marketing specialist focused on paid advertising.
 6. You measure success by ROAS/ROI targets per client
 7. CEO can override your strategy anytime
 
+## Your 20 Tools
+### Strategy
+- campaign_strategy: Create full campaign strategy with 3 phases
+- audience_research: Research target audiences by industry/product/platform
+- budget_planner: Allocate budget across prospecting/retargeting/testing
+- competitor_ads: Analyze competitor ad strategies
+- platform_selection: Recommend platforms per client
+
+### Content
+- ad_copy_generator: Generate ad copy with hook formulas
+- creative_brief: Create detailed creative brief for Content Agent
+- ad_variations: Create A/B test variants
+- landing_page_strategy: Plan landing page and tracking
+- ad_hashtag_tags: Generate hashtags and UTM tags
+
+### Targeting
+- audience_builder: Build audiences with interests/behaviors
+- lookalike_audience: Create LAL from converters
+- retargeting_setup: Full funnel retargeting
+- exclusion_list: Build exclusion audiences
+
+### Optimization
+- performance_analyzer: Analyze metrics and detect issues
+- auto_optimize: Rule-based auto-optimization
+- ab_test_setup: Configure A/B tests
+
+### Reporting
+- campaign_report: Generate comprehensive campaign report
+- roas_calculator: Calculate ROAS with gap analysis
+- creative_score: Score creative effectiveness (0-100)
+
+## Your Jcode Skills (use when needed)
+- ads: Full paid ads playbook (Meta Andromeda era, retargeting frameworks)
+- copywriting: PAS/BAB frameworks, hook formulas for ad copy
+- analytics: Conversion tracking, GA4, pixel setup
+- landing-page-copywriter: Landing page copy that converts
+- marketing-council: Multi-expert marketing consultation
+
+## Key Playbooks You Know
+- Meta Andromeda (2026+): Statics > video, broad targeting + specific creative, identity-trigger keywords
+- 4-Component Retargeting: Objection-handling + proof carousel + other-offers + value-first audit
+- Headline Mirror Trick: 20-40 headline variants → mirror winner on landing page → 15-20% lift
+- Zombie Campaigns: Resurrect dead variants in separate ad sets
+- Net Cash > ROAS: Scale until break-even ceiling
+
 ## Metrics You Track
 - ROAS, ROI, CTR, CPC, CPA, CPM
 - Impression Share, Frequency, Reach
@@ -62,73 +108,6 @@ You are a performance marketing specialist focused on paid advertising.
 4. What approach maximizes ROAS?
 5. What's my specific recommendation?
 """
-
-
-ADS_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "create_campaign_strategy",
-            "description": "Create a comprehensive ad campaign strategy.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "platform": {"type": "string", "enum": ["meta", "google", "both"], "description": "Ad platform"},
-                    "objective": {"type": "string", "description": "Campaign objective"},
-                    "budget": {"type": "string", "description": "Budget allocation plan"},
-                    "audience": {"type": "string", "description": "Target audience description"},
-                },
-                "required": ["platform", "objective"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "brief_content_agent",
-            "description": "Brief Content Agent for ad creative visuals.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "creative_type": {"type": "string", "description": "Type of creative (image, video, carousel)"},
-                    "brief": {"type": "string", "description": "Creative brief"},
-                    "platform": {"type": "string", "description": "Target platform"},
-                },
-                "required": ["creative_type", "brief"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "analyze_performance",
-            "description": "Analyze campaign performance and suggest optimizations.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "metrics": {"type": "string", "description": "Current metrics data"},
-                    "period": {"type": "string", "description": "Analysis period"},
-                },
-                "required": ["metrics"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "report_to_ceo",
-            "description": "Report campaign status or strategy to CEO.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "report_type": {"type": "string", "enum": ["strategy_proposal", "performance_update", "issue_alert"]},
-                    "content": {"type": "string", "description": "Report content"},
-                },
-                "required": ["report_type", "content"],
-            },
-        },
-    },
-]
 
 
 class AdsAgentState(TypedDict):
@@ -203,16 +182,9 @@ async def ads_run_tools(state: AdsAgentState) -> dict:
         except (json.JSONDecodeError, KeyError):
             args = {}
 
-        if name == "create_campaign_strategy":
-            result_text = f"Campaign strategy created for {args.get('platform', 'N/A')}:\nObjective: {args.get('objective', 'N/A')}\nBudget: {args.get('budget', 'TBD')}\nAudience: {args.get('audience', 'TBD')}"
-        elif name == "brief_content_agent":
-            result_text = f"Creative brief sent to Content Agent:\nType: {args.get('creative_type', 'N/A')}\nBrief: {args.get('brief', 'N/A')[:200]}"
-        elif name == "analyze_performance":
-            result_text = f"Performance analysis:\nMetrics: {args.get('metrics', 'N/A')[:300]}\n[Detailed analysis would appear here]"
-        elif name == "report_to_ceo":
-            result_text = f"Report sent to CEO ({args.get('report_type', 'N/A')}):\n{args.get('content', 'N/A')[:200]}"
-        else:
-            result_text = f"Unknown tool: {name}"
+        # Use real tool executor from ads_tools.py
+        tool_result = execute_ads_tool(name, args)
+        result_text = json.dumps(tool_result, indent=2, default=str)
 
         results.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result_text})
     return {"messages": results, "tool_round": state.get("tool_round", 0) + 1}
@@ -273,28 +245,48 @@ class AdsAgent:
         style: str = "bold",
         priority: str = "normal",
         quantity: int = 1,
+        objective: str = "lead_generation",
+        target_audience: dict[str, Any] | None = None,
+        emotional_hook: str = "fear",
+        cta: str = "sign_up",
+        key_message: str = "",
+        competitor_context: str = "",
+        constraints: str = "",
+        copy_text: str = "",
     ) -> dict[str, Any]:
-        """Request ad creatives/content from Content Agent via agent_bus.
+        """Request ad creatives from Content Agent with DEEP brief.
 
-        Ads Agent uses this when it needs ad images, video ads,
-        or any visual content for advertising campaigns.
-
-        Flow:
-        1. Ads Agent sends brief to Content Agent via agent_bus
-        2. Content Agent enhances brief with brand intelligence
-        3. Content Agent queues job for GPU processing
-        4. On completion, Content Agent notifies Ads Agent back
+        Ads Agent samajhta hai ki ad creative sirf image nahi hai —
+        yeh CONVERSION ka tool hai. Isliye brief mein sab kuch deta hai:
+        - Kya banana hai (content_type)
+        - Kahan dikhega (platform)
+        - Kisko dikhana hai (target_audience)
+        - Kya feel karna hai (emotional_hook)
+        - Kya karna hai (cta)
+        - Kyun behtar hai (competitor_context)
         """
-        brief_content = (
-            f"Ads Content Request:\n"
-            f"- Type: {content_type}\n"
-            f"- Topic: {topic}\n"
-            f"- Platform: {platform}\n"
-            f"- Description: {description}\n"
-            f"- Style: {style}\n"
-            f"- Quantity: {quantity}\n"
-            f"- Priority: {priority}"
+        from admin.workspace.agents.brief_builder import build_domain_brief, brief_to_text
+
+        brief = build_domain_brief(
+            domain="ads",
+            content_type=content_type,
+            topic=topic,
+            platform=platform,
+            description=description,
+            style=style,
+            priority=priority,
+            quantity=quantity,
+            objective=objective,
+            target_audience=target_audience,
+            emotional_hook=emotional_hook,
+            cta=cta,
+            key_message=key_message,
+            competitor_context=competitor_context,
+            constraints=constraints,
+            copy_text=copy_text,
         )
+
+        brief_content = brief_to_text(brief)
 
         try:
             send_message(
@@ -304,19 +296,13 @@ class AdsAgent:
                 subject=f"Ads needs {content_type}: {topic[:50]}",
                 content=brief_content,
                 message_type="brief",
-                metadata={
-                    "content_type": content_type,
-                    "platform": platform,
-                    "style": style,
-                    "quantity": quantity,
-                    "priority": priority,
-                },
+                metadata=brief,
             )
             logger.info(
-                "Ads Agent requested content from Content Agent: %s (%s) x%d",
-                content_type, topic[:50], quantity,
+                "Ads Agent requested content: %s (%s) x%d | objective=%s, hook=%s",
+                content_type, topic[:50], quantity, objective, emotional_hook,
             )
-            return {"status": "brief_sent", "content_type": content_type, "topic": topic, "quantity": quantity}
+            return {"status": "brief_sent", "brief": brief}
         except Exception as e:
-            logger.warning("Failed to request content from Content Agent: %s", e)
+            logger.warning("Failed to request content: %s", e)
             return {"status": "error", "error": str(e)}

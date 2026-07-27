@@ -173,6 +173,17 @@ class GenerateMarketingRequest(BaseModel):
     duration: str = "medium"
 
 
+class GenerateCarouselRequest(BaseModel):
+    """Generate Instagram/social carousel (multi-slide)."""
+    workspace_id: str
+    topic: str
+    platform: str = "instagram"
+    slides: int = 5  # 5-10 slides
+    style: str = "modern"  # bold, minimal, professional, modern, elegant
+    mood: str = "engaging"
+    color_request: str = ""
+
+
 class BatchGenerateRequest(BaseModel):
     """Generate multiple images for content calendar."""
     workspace_id: str
@@ -235,13 +246,22 @@ async def list_tools():
     """Available tools."""
     return {
         "tools": [
-            "generate_image — FLUX on Kaggle GPU",
-            "generate_video — CogVideoX on Kaggle GPU",
-            "generate_ad_image — Ad creative",
-            "generate_social_image — Social media image",
+            "generate_image — FLUX image generation",
+            "generate_video — CogVideoX video generation",
+            "generate_carousel — Multi-slide carousel images",
+            "generate_ad_image — Platform-specific ad creative",
+            "generate_social_image — Social media post image",
             "generate_hero_image — Hero/banner",
+            "generate_story — Instagram/Facebook story",
+            "generate_thumbnail — YouTube/blog thumbnail",
+            "generate_ugc — UGC style video",
+            "generate_testimonial — Testimonial video",
+            "generate_unboxing — Unboxing video",
+            "generate_explainer — Explainer video",
+            "generate_product_showcase — Product showcase video",
             "get_platform_specs — Platform sizes",
         ],
+        "total": 14,
         "type": "visual_only",
     }
 
@@ -275,7 +295,7 @@ async def chat(req: ChatRequest):
 @router.post("/generate-image")
 async def generate_image_endpoint(req: GenerateImageRequest):
     """Image generate karo — direct API."""
-    from admin.tools.kaggle_gpu import generate_image
+    from admin.tools.together_gpu import generate_image
 
     return generate_image(
         prompt=req.prompt,
@@ -289,7 +309,7 @@ async def generate_image_endpoint(req: GenerateImageRequest):
 @router.post("/generate-video")
 async def generate_video_endpoint(req: GenerateVideoRequest):
     """Video generate karo — direct API."""
-    from admin.tools.kaggle_gpu import generate_video
+    from admin.tools.together_gpu import generate_video
 
     return generate_video(
         prompt=req.prompt,
@@ -301,7 +321,7 @@ async def generate_video_endpoint(req: GenerateVideoRequest):
 @router.post("/generate-ad")
 async def generate_ad_endpoint(req: GenerateAdRequest):
     """Ad creative image."""
-    from admin.tools.kaggle_gpu import generate_image
+    from admin.tools.together_gpu import generate_image
 
     prompt = f"A professional {req.style} advertisement for {req.product}, high quality marketing material"
     return generate_image(prompt=prompt, platform=req.platform)
@@ -310,7 +330,7 @@ async def generate_ad_endpoint(req: GenerateAdRequest):
 @router.post("/generate-social")
 async def generate_social_endpoint(req: GenerateSocialRequest):
     """Social media image."""
-    from admin.tools.kaggle_gpu import generate_image
+    from admin.tools.together_gpu import generate_image
 
     prompt = f"A beautiful, engaging social media post about {req.topic}, modern design, vibrant colors, professional quality"
     return generate_image(prompt=prompt, platform=req.platform)
@@ -319,7 +339,7 @@ async def generate_social_endpoint(req: GenerateSocialRequest):
 @router.post("/generate-hero")
 async def generate_hero_endpoint(req: GenerateHeroRequest):
     """Hero/banner image."""
-    from admin.tools.kaggle_gpu import generate_image
+    from admin.tools.together_gpu import generate_image
 
     prompt = f"A stunning hero banner image about {req.topic}, {req.style} design, wide format, professional quality"
     return generate_image(prompt=prompt, platform="blog_hero", width=1920, height=1080)
@@ -368,7 +388,7 @@ async def brief_content_agent(req: BriefRequest):
 @router.get("/gpu/status/{kernel_slug:path}")
 async def gpu_status(kernel_slug: str):
     """Kaggle notebook status."""
-    from admin.tools.kaggle_gpu import check_status
+    from admin.tools.free_gpu import get_backend_status as check_status
     return {"kernel_slug": kernel_slug, "status": check_status(kernel_slug)}
 
 
@@ -509,6 +529,44 @@ async def generate_marketing_endpoint(req: GenerateMarketingRequest):
         "platform": req.platform,
         "duration": req.duration,
         "frames": frames,
+        "result": result,
+    }
+
+
+# ── Carousel Generation ──────────────────────────────────────────
+
+
+@router.post("/generate-carousel")
+async def generate_carousel_endpoint(req: GenerateCarouselRequest):
+    """Instagram/social carousel banao — multiple slides."""
+    from admin.workspace.agents.content import run_content_agent
+
+    style_desc = f"{req.style} style, consistent visual theme across {req.slides} slides"
+    color_note = f"Color request: {req.color_request}. " if req.color_request else ""
+
+    brief_msg = (
+        f"Create a {req.slides}-slide carousel about: {req.topic}. "
+        f"Platform: {req.platform}. "
+        f"Style: {style_desc}. Mood: {req.mood}. "
+        f"{color_note}"
+        f"Each slide should be cohesive and follow the same visual theme."
+    )
+
+    result = run_content_agent(
+        message=brief_msg,
+        workspace_id=req.workspace_id,
+        brief_from="carousel_generator",
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Carousel generation failed"))
+
+    return {
+        "workspace_id": req.workspace_id,
+        "type": "carousel",
+        "slides": req.slides,
+        "style": req.style,
+        "platform": req.platform,
         "result": result,
     }
 
@@ -703,3 +761,50 @@ async def queue_status_endpoint(workspace_id: str = "default"):
     from admin.tools.content_queue import get_queue
     queue = get_queue(workspace_id)
     return queue.get_queue_status()
+
+
+# ── Reasoning Chain Endpoints ──────────────────────────────────────────────────
+
+class ReasoningRequest(BaseModel):
+    brief_text: str
+    workspace_id: str = "default"
+    domain: str = "content"
+    brand_context: dict[str, Any] = {}
+
+
+@router.post("/reasoning/run")
+async def run_reasoning(req: ReasoningRequest):
+    """Run the 5-step reasoning chain on a brief.
+    
+    Steps: UNDERSTAND -> RESEARCH -> STRATEGIZE -> EXECUTE -> VALIDATE
+    """
+    from admin.workspace.agents.reasoning_chain import run_reasoning_chain
+    result = run_reasoning_chain(
+        brief_text=req.brief_text,
+        workspace_id=req.workspace_id,
+        domain=req.domain,
+        brand_context=req.brand_context,
+    )
+    return result
+
+
+@router.get("/reasoning/{job_id}")
+async def get_reasoning(job_id: str):
+    """Get reasoning chain log for a specific job."""
+    from admin.tools.reasoning_logger import ReasoningLogger
+    log = ReasoningLogger.load(job_id)
+    if not log:
+        return {"status": "error", "error": f"Job {job_id} not found"}
+    return {"status": "ok", "reasoning": log}
+
+
+@router.get("/reasoning/stats/recent")
+async def recent_reasoning_stats(limit: int = 10):
+    """Recent reasoning chain statistics."""
+    from admin.tools.reasoning_logger import ReasoningLogger
+    logs = ReasoningLogger.get_recent(limit=limit)
+    return {
+        "status": "ok",
+        "count": len(logs),
+        "logs": logs,
+    }

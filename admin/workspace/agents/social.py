@@ -308,18 +308,43 @@ class SocialAgent:
         style: str = "bold",
         priority: str = "normal",
         quantity: int = 1,
+        objective: str = "engagement",
+        target_audience: dict[str, Any] | None = None,
+        emotional_hook: str = "curiosity",
+        cta: str = "learn_more",
+        key_message: str = "",
+        competitor_context: str = "",
+        constraints: str = "",
+        copy_text: str = "",
     ) -> dict[str, Any]:
-        """Request visual content from Content Agent via agent_bus."""
-        brief_content = (
-            f"Social Content Request:\n"
-            f"- Type: {content_type}\n"
-            f"- Topic: {topic}\n"
-            f"- Platform: {platform}\n"
-            f"- Description: {description}\n"
-            f"- Style: {style}\n"
-            f"- Quantity: {quantity}\n"
-            f"- Priority: {priority}"
+        """Request social media visuals from Content Agent with DEEP brief.
+
+        Social Agent samajhta hai ki social content ENGAGEMENT ka tool hai —
+        scroll stop karna hai, like karna hai, share karna hai.
+        Isliye brief mein sab context deta hai.
+        """
+        from admin.workspace.agents.brief_builder import build_domain_brief, brief_to_text
+
+        brief = build_domain_brief(
+            domain="social",
+            content_type=content_type,
+            topic=topic,
+            platform=platform,
+            description=description,
+            style=style,
+            priority=priority,
+            quantity=quantity,
+            objective=objective,
+            target_audience=target_audience,
+            emotional_hook=emotional_hook,
+            cta=cta,
+            key_message=key_message,
+            competitor_context=competitor_context,
+            constraints=constraints,
+            copy_text=copy_text,
         )
+
+        brief_content = brief_to_text(brief)
 
         try:
             send_message(
@@ -329,8 +354,12 @@ class SocialAgent:
                 subject=f"Social needs {content_type}: {topic[:50]}",
                 content=brief_content,
                 message_type="brief",
-                metadata={"content_type": content_type, "platform": platform, "style": style, "quantity": quantity, "priority": priority},
+                metadata=brief,
             )
-            return {"status": "brief_sent", "content_type": content_type, "topic": topic, "quantity": quantity}
+            logger.info(
+                "Social Agent requested content: %s (%s) x%d | objective=%s, hook=%s",
+                content_type, topic[:50], quantity, objective, emotional_hook,
+            )
+            return {"status": "brief_sent", "brief": brief}
         except Exception as e:
             return {"status": "error", "error": str(e)}
