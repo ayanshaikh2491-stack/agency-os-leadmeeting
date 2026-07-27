@@ -139,6 +139,341 @@
         "Warm colors work better for travel posts"
       ],
       "timestamp": "2026-07-24T06:03:49.456710+00:00"
+    },
+    {
+      "report_id": "test_rpt_1",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "seo",
+      "brief_summary": "Create Instagram post images",
+      "deliverables": [
+        "img_1",
+        "img_2"
+      ],
+      "tools_used": [
+        "generate_social_image",
+        "discover_brand_identity"
+      ],
+      "prompts_used": [
+        "Beautiful sunset over mountains, vibrant colors"
+      ],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "image",
+      "gpu_minutes": 2.5,
+      "success": true,
+      "error": "",
+      "learnings": [
+        "Warm colors work better for travel posts"
+      ],
+      "timestamp": "2026-07-26T17:40:44.118071+00:00"
+    },
+    {
+      "report_id": "rpt_test_ws_001_0",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "Create IG post",
+      "deliverables": [
+        "img1.png"
+      ],
+      "tools_used": [],
+      "prompts_used": [
+        "prompt 1"
+      ],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "image",
+      "gpu_minutes": 1.5,
+      "success": true,
+      "error": "",
+      "learnings": [
+        "Warm tones worked well"
+      ],
+      "timestamp": "2026-07-26T17:40:44.131092+00:00"
+    },
+    {
+      "report_id": "rpt_test_ws_001_0",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "Create video",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "video",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "GPU timeout",
+      "learnings": [
+        "FAILED: CogVideoX generation",
+        "AVOID: Use shorter frame count"
+      ],
+      "timestamp": "2026-07-26T17:40:44.134533+00:00"
+    },
+    {
+      "report_id": "test_rpt_1",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "seo",
+      "brief_summary": "Create Instagram post images",
+      "deliverables": [
+        "img_1",
+        "img_2"
+      ],
+      "tools_used": [
+        "generate_social_image",
+        "discover_brand_identity"
+      ],
+      "prompts_used": [
+        "Beautiful sunset over mountains, vibrant colors"
+      ],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "image",
+      "gpu_minutes": 2.5,
+      "success": true,
+      "error": "",
+      "learnings": [
+        "Warm colors work better for travel posts"
+      ],
+      "timestamp": "2026-07-26T18:50:43.825390+00:00"
+    },
+    {
+      "report_id": "rpt_test_ws_001_0",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "Create IG post",
+      "deliverables": [
+        "img1.png"
+      ],
+      "tools_used": [],
+      "prompts_used": [
+        "prompt 1"
+      ],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "image",
+      "gpu_minutes": 1.5,
+      "success": true,
+      "error": "",
+      "learnings": [
+        "Warm tones worked well"
+      ],
+      "timestamp": "2026-07-26T18:50:43.838934+00:00"
+    },
+    {
+      "report_id": "rpt_test_ws_001_0",
+      "workspace_name": "TestWorkspace",
+      "client_name": "TestClient",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "Create video",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "instagram",
+      "visual_type": "video",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "GPU timeout",
+      "learnings": [
+        "FAILED: CogVideoX generation",
+        "AVOID: Use shorter frame count"
+      ],
+      "timestamp": "2026-07-26T18:50:43.842476+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 1: variation var_1 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.204179+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 1: variation var_2 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.208803+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 1: variation var_3 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.213518+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 2: variation var_1 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.224978+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 2: variation var_2 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.229158+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 2: variation var_3 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.233751+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 3: variation var_1 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.244369+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 3: variation var_2 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.249036+00:00"
+    },
+    {
+      "report_id": "rpt_test-workspace_0",
+      "workspace_name": "Default",
+      "client_name": "Client",
+      "brief_from": "workspace_content_agent",
+      "brief_summary": "tech startup landing page",
+      "deliverables": [],
+      "tools_used": [],
+      "prompts_used": [],
+      "brand_discovered": {},
+      "platform": "blog_hero",
+      "visual_type": "image",
+      "gpu_minutes": 0.0,
+      "success": false,
+      "error": "TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+      "learnings": [
+        "FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz",
+        "AVOID: Attempt 3: variation var_3 failed, consider different approach"
+      ],
+      "timestamp": "2026-07-27T17:09:10.253209+00:00"
     }
   ],
   "prompt_patterns": [
@@ -148,33 +483,155 @@
       "platform": "instagram",
       "industry": "general",
       "prompt_template": "Beautiful sunset over mountains, vibrant colors",
-      "success_count": 5,
+      "success_count": 7,
       "avg_quality": 0.0,
       "notes": "",
       "timestamp": "2026-07-23T17:17:28.409345+00:00"
+    },
+    {
+      "pattern_id": "pp_2",
+      "visual_type": "image",
+      "platform": "instagram",
+      "industry": "general",
+      "prompt_template": "prompt 1",
+      "success_count": 1,
+      "avg_quality": 0.0,
+      "notes": "",
+      "timestamp": "2026-07-26T17:40:44.131194+00:00"
+    },
+    {
+      "pattern_id": "pp_3",
+      "visual_type": "image",
+      "platform": "instagram",
+      "industry": "general",
+      "prompt_template": "prompt 1",
+      "success_count": 1,
+      "avg_quality": 0.0,
+      "notes": "",
+      "timestamp": "2026-07-26T18:50:43.839016+00:00"
     }
   ],
-  "brand_insights": [],
+  "brand_insights": [
+    {
+      "insight_id": "fi_1",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: GPU timeout | Learning: FAILED: CogVideoX generation | Learning: AVOID: Use shorter frame count",
+      "evidence_count": 1,
+      "timestamp": "2026-07-26T17:40:44.134604+00:00"
+    },
+    {
+      "insight_id": "fi_2",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: GPU timeout | Learning: FAILED: CogVideoX generation | Learning: AVOID: Use shorter frame count",
+      "evidence_count": 1,
+      "timestamp": "2026-07-26T18:50:43.842546+00:00"
+    },
+    {
+      "insight_id": "fi_3",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 1: variation var_1 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.204283+00:00"
+    },
+    {
+      "insight_id": "fi_4",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 1: variation var_2 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.208910+00:00"
+    },
+    {
+      "insight_id": "fi_5",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 1: variation var_3 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.213583+00:00"
+    },
+    {
+      "insight_id": "fi_6",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 2: variation var_1 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.225052+00:00"
+    },
+    {
+      "insight_id": "fi_7",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 2: variation var_2 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.229213+00:00"
+    },
+    {
+      "insight_id": "fi_8",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 2: variation var_3 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.233803+00:00"
+    },
+    {
+      "insight_id": "fi_9",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_1: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 3: variation var_1 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.244447+00:00"
+    },
+    {
+      "insight_id": "fi_10",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_2: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 3: variation var_2 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.249114+00:00"
+    },
+    {
+      "insight_id": "fi_11",
+      "industry": "general",
+      "insight_type": "failure_pattern",
+      "insight": "Error: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: FAILED: Variation var_3: TOGETHER_API_KEY not set. Get free key at https://api.together.xyz | Learning: AVOID: Attempt 3: variation var_3 failed, consider different approach",
+      "evidence_count": 1,
+      "timestamp": "2026-07-27T17:09:10.253285+00:00"
+    }
+  ],
   "platform_stats": {
     "instagram": {
-      "total_jobs": 5,
-      "total_gpu_minutes": 12.5,
+      "total_jobs": 11,
+      "total_gpu_minutes": 20.5,
       "success_rate": 1.0,
       "common_visual_types": {
-        "image": 5
+        "image": 9,
+        "video": 2
+      }
+    },
+    "blog_hero": {
+      "total_jobs": 9,
+      "total_gpu_minutes": 0.0,
+      "success_rate": 1.0,
+      "common_visual_types": {
+        "image": 9
       }
     }
   },
   "industry_stats": {
     "general": {
-      "total_jobs": 5,
+      "total_jobs": 20,
       "platforms_used": [
-        "instagram"
+        "instagram",
+        "blog_hero"
       ],
       "visual_types_used": [
-        "image"
+        "image",
+        "video"
       ]
     }
   },
-  "saved_at": "2026-07-24T06:03:49.459547+00:00"
+  "saved_at": "2026-07-27T17:09:10.254541+00:00"
 }

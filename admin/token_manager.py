@@ -514,3 +514,146 @@ def post_to_instagram(
             return {"status": "error", "platform": "instagram", "error": publish_resp.text[:500]}
     except Exception as e:
         return {"status": "error", "platform": "instagram", "error": str(e)[:300]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-RENEW SYSTEM — Check all workspaces, alert expiring tokens
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def check_all_tokens_health() -> dict[str, Any]:
+    """Scan ALL workspaces and find expiring/expired tokens.
+
+    Returns a health report for every workspace.
+    Called by CEO Agent or on a cron/schedule.
+    """
+    tokens_dir = Path(TOKENS_DIR)
+    if not tokens_dir.exists():
+        return {"workspaces": 0, "total_tokens": 0, "alerts": []}
+
+    all_alerts = []
+    workspace_reports = []
+    total_tokens = 0
+    total_expiring = 0
+    total_expired = 0
+
+    for ws_dir in tokens_dir.iterdir():
+        if not ws_dir.is_dir():
+            continue
+        workspace_id = ws_dir.name
+        ws_tokens = list_tokens(workspace_id)
+        total_tokens += len(ws_tokens)
+
+        ws_alerts = []
+        for token_info in ws_tokens:
+            platform = token_info["platform"]
+            status = token_info["status"]
+            has_token = token_info["has_token"]
+
+            if not has_token:
+                continue
+
+            if status == "expired":
+                total_expired += 1
+                alert = {
+                    "severity": "critical",
+                    "workspace_id": workspace_id,
+                    "platform": platform,
+                    "status": "expired",
+                    "message": f"EXPIRED: {platform} token for '{workspace_id}' has expired! Client needs to generate new Explorer Token.",
+                    "action_needed": "Client must generate new Explorer Token from Facebook Graph API Explorer",
+                }
+                ws_alerts.append(alert)
+                all_alerts.append(alert)
+
+            elif status == "expiring_soon":
+                total_expiring += 1
+                expiry_info = get_token_expiry_info(workspace_id, platform)
+                days_left = expiry_info.get("days_left", 0)
+                alert = {
+                    "severity": "warning",
+                    "workspace_id": workspace_id,
+                    "platform": platform,
+                    "status": "expiring_soon",
+                    "days_left": days_left,
+                    "message": f"EXPIRING: {platform} token for '{workspace_id}' expires in {days_left} days! Renew now.",
+                    "action_needed": f"Ask client for new Explorer Token, or exchange before day {60 - days_left}",
+                }
+                ws_alerts.append(alert)
+                all_alerts.append(alert)
+
+        workspace_reports.append({
+            "workspace_id": workspace_id,
+            "tokens": len(ws_tokens),
+            "active": sum(1 for t in ws_tokens if t["status"] == "active"),
+            "expiring_soon": sum(1 for t in ws_tokens if t["status"] == "expiring_soon"),
+            "expired": sum(1 for t in ws_tokens if t["status"] == "expired"),
+            "alerts": ws_alerts,
+        })
+
+    return {
+        "workspaces": len(workspace_reports),
+        "total_tokens": total_tokens,
+        "total_active": total_tokens - total_expiring - total_expired,
+        "total_expiring_soon": total_expiring,
+        "total_expired": total_expired,
+        "alerts": all_alerts,
+        "alert_count": len(all_alerts),
+        "workspace_reports": workspace_reports,
+        "checked_at": _now(),
+    }
+
+
+def get_renewal_instructions(workspace_id: str, platform: str) -> dict[str, Any]:
+    """Get step-by-step instructions for renewing a token.
+
+    Returns clear instructions that the CEO Agent can relay to the client.
+    """
+    info = get_token_expiry_info(workspace_id, platform)
+
+    if info["status"] == "active":
+        days_left = info.get("days_left", 60)
+        return {
+            "status": "ok",
+            "workspace_id": workspace_id,
+            "platform": platform,
+            "days_left": days_left,
+            "message": f"Token is healthy. {days_left} days remaining. No action needed.",
+        }
+
+    # Token needs renewal
+    instructions = {
+        "workspace_id": workspace_id,
+        "platform": platform,
+        "current_status": info["status"],
+        "days_left": info.get("days_left", 0),
+        "steps": [
+            {
+                "step": 1,
+                "title": "Client opens Facebook Graph API Explorer",
+                "url": "https://developers.facebook.com/tools/explorer/",
+                "detail": "Client logs into their Facebook account and opens the Explorer tool.",
+            },
+            {
+                "step": 2,
+                "title": "Select your App",
+                "detail": "From the dropdown, select the App (use the App ID you created).",
+            },
+            {
+                "step": 3,
+                "title": "Generate Token",
+                "detail": "Click 'Generate Access Token'. Select permissions: pages_manage_posts, pages_read_engagement, instagram_basic, instagram_content_publish.",
+            },
+            {
+                "step": 4,
+                "title": "Copy and send the token",
+                "detail": "Copy the generated token and send it to the agency. The agency will handle everything from here.",
+            },
+        ],
+        "agency_action": (
+            f"Once client sends new token, call POST /api/social/tokens/connect with: "
+            f'{{"workspace_id": "{workspace_id}", "platform": "facebook", "explorer_token": "<token>", "app_id": "<app_id>", "app_secret": "<app_secret>"}}'
+        ),
+        "auto_exchange_note": "Agency system will auto-exchange Explorer token to long-lived token (60 days).",
+    }
+
+    return instructions
