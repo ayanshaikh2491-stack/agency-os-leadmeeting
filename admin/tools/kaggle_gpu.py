@@ -43,7 +43,7 @@ def _now() -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # TAGS Content Agent — FLUX.1-schnell Image Generation (T4x2 optimized)
-import json, os, gc, time, traceback
+import json, os, gc, sys, time, traceback
 
 _start = time.time()
 print("=== FLUX.1-schnell Image Generation (T4x2) ===")
@@ -98,20 +98,20 @@ try:
         guidance_scale=3.5,
     ).images[0]
     elapsed = round(time.time() - _start, 1)
-    out_path = f"output_{{int(time.time())}}.png"
+    out_path = f"output_{int(time.time())}.png"
     image.save(out_path)
     sz = os.path.getsize(out_path)
-    print(f"Saved: {{out_path}} ({{sz}} bytes, {{elapsed}}s)")
-    print(json.dumps({{
+    print(f"Saved: {out_path} ({sz} bytes, {elapsed}s)")
+    print(json.dumps({
         "status": "success", "file": out_path, "size_bytes": sz,
         "width": WIDTH, "height": HEIGHT,
         "gpu": gpu_name, "dtype": str(DTYPE),
         "elapsed_seconds": elapsed,
-    }}))
+    }))
 except Exception as e:
-    print(f"GENERATION ERROR: {{e}}")
+    print(f"GENERATION ERROR: {e}")
     traceback.print_exc()
-    print(json.dumps({{"status": "error", "error": str(e)}}))
+    print(json.dumps({"status": "error", "error": str(e)}))
 
 # ── Cleanup ──
 try:
@@ -125,7 +125,7 @@ except:
 
 
 # TAGS Content Agent — CogVideoX-2b Video Generation (T4x2 optimized)
-import json, os, gc, time, traceback
+import json, os, gc, sys, time, traceback
 
 _start = time.time()
 print("=== CogVideoX-2b Video Generation (T4x2) ===")
@@ -142,11 +142,11 @@ if not torch.cuda.is_available():
 
 gpu_name = torch.cuda.get_device_name(0)
 vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-print(f"GPU: {{gpu_name}} | VRAM: {{vram:.1f}}GB")
+print(f"GPU: {gpu_name} | VRAM: {vram:.1f}GB")
 
 # T4x2: bfloat16 supported natively
 DTYPE = torch.bfloat16
-print(f"Using dtype: {{DTYPE}}")
+print(f"Using dtype: {DTYPE}")
 
 # ── Load CogVideoX-2b (ON-DEMAND) ──
 print("Loading THUDM/CogVideoX-2b (~5GB)...")
@@ -160,7 +160,7 @@ except torch.cuda.OutOfMemoryError:
     print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": "CUDA OOM during model load - CogVideoX needs ~8GB"}}))
     sys.exit(1)
 except Exception as e:
-    print(f"MODEL LOAD ERROR: {{e}}")
+    print(f"MODEL LOAD ERROR: {e}")
     traceback.print_exc()
     sys.exit(1)
 
@@ -168,8 +168,8 @@ except Exception as e:
 PROMPT = "{prompt}"
 NUM_FRAMES = {frames}
 
-print(f"Generating video: {{PROMPT[:120]}}")
-print(f"Params: {{NUM_FRAMES}} frames, 50 steps, guidance 6.0")
+print(f"Generating video: {PROMPT[:120]}")
+print(f"Params: {NUM_FRAMES} frames, 50 steps, guidance 6.0")
 sys.stdout.flush()
 try:
     video = pipe(
@@ -194,7 +194,7 @@ try:
     }}))
 except torch.cuda.OutOfMemoryError:
     reduced_frames = max(16, NUM_FRAMES // 2)
-    print(f"OOM at {{NUM_FRAMES}} frames - retrying with {{reduced_frames}} frames")
+    print(f"OOM at {NUM_FRAMES} frames - retrying with {reduced_frames} frames")
     torch.cuda.empty_cache()
     gc.collect()
     try:
@@ -202,12 +202,12 @@ except torch.cuda.OutOfMemoryError:
         imageio.mimsave("output.mp4", video, fps=8)
         sz = os.path.getsize("output.mp4")
         elapsed = round(time.time() - _start, 1)
-        print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": reduced_frames, "duration_seconds": round(reduced_frames / 8, 1), "gpu": gpu_name, "dtype": str(DTYPE), "elapsed_seconds": elapsed, "warning": f"Reduced from {{NUM_FRAMES}} to {{reduced_frames}} frames due to VRAM limit"}}))
+        print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": reduced_frames, "duration_seconds": round(reduced_frames / 8, 1), "gpu": gpu_name, "dtype": str(DTYPE), "elapsed_seconds": elapsed, "warning": f"Reduced from {NUM_FRAMES} to {reduced_frames} frames due to VRAM limit"}}))
     except Exception as e2:
-        print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": f"OOM even at {{reduced_frames}} frames: {{e2}}", "gpu": gpu_name, "vram_gb": round(vram, 1)}}))
+        print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": f"OOM even at {reduced_frames} frames: {e2}", "gpu": gpu_name, "vram_gb": round(vram, 1)}}))
         sys.exit(1)
 except Exception as e:
-    print(f"VIDEO ERROR: {{e}}")
+    print(f"VIDEO ERROR: {e}")
     traceback.print_exc()
     sys.exit(1)
 finally:
@@ -221,7 +221,6 @@ finally:
 
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # LEGACY TEMPLATES (P100 fallback — with PyTorch downgrade logic)
 # ═══════════════════════════════════════════════════════════════════════════════
 
