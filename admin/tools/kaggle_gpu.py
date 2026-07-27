@@ -42,7 +42,8 @@ def _now() -> str:
 # NOTEBOOK CODE TEMPLATES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# TAGS Content Agent — FLUX.1-schnell Image Generation (T4x2 optimized)
+FLUX_CODE_T4 = '''# TAGS Content Agent -- FLUX.1-schnell Image Generation (T4x2 optimized)
+# Runs on Kaggle T4x2 GPU -- bfloat16 natively, no PyTorch downgrade
 import json, os, gc, sys, time, traceback
 
 _start = time.time()
@@ -52,29 +53,29 @@ import torch
 from diffusers import FluxPipeline
 from PIL import Image
 
-print(f"PyTorch: {torch.__version__}")
+print(f"PyTorch: {{torch.__version__}}")
 
 if not torch.cuda.is_available():
-    print(json.dumps({"status": "error", "reason": "No CUDA GPU available"}))
+    print(json.dumps({{"status": "error", "reason": "No CUDA GPU available"}}))
     sys.exit(1)
 
 gpu_name = torch.cuda.get_device_name(0)
 vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-print(f"GPU: {gpu_name} | VRAM: {vram:.1f}GB")
+print(f"GPU: {{gpu_name}} | VRAM: {{vram:.1f}}GB")
 
-# T4x2 supports bfloat16 natively
+# T4x2 supports bfloat16 natively -- no PyTorch downgrade needed
 DTYPE = torch.bfloat16
-print(f"Using dtype: {DTYPE}")
+print(f"Using dtype: {{DTYPE}}")
 
-# ── Load model ──
+# -- Load model --
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HF_TOKEN_READ", "")
 if HF_TOKEN:
     MODEL_NAME = "black-forest-labs/FLUX.1-schnell"
-    print(f"Loading {MODEL_NAME}...")
+    print(f"Loading {{MODEL_NAME}}...")
     pipe = FluxPipeline.from_pretrained(MODEL_NAME, torch_dtype=DTYPE, token=HF_TOKEN)
 else:
     MODEL_NAME = "stabilityai/stable-diffusion-xl-base-1.0"
-    print(f"No HF_TOKEN — loading {MODEL_NAME}...")
+    print(f"No HF_TOKEN - loading {{MODEL_NAME}} (free, no auth)...")
     from diffusers import DiffusionPipeline
     pipe = DiffusionPipeline.from_pretrained(MODEL_NAME, torch_dtype=DTYPE)
 
@@ -82,13 +83,13 @@ pipe.enable_model_cpu_offload()
 print("Model loaded into VRAM")
 sys.stdout.flush()
 
-# ── Generate ──
+# -- Generate --
 PROMPT = "{prompt}"
 WIDTH = {width}
 HEIGHT = {height}
 
-print(f"Generating: {PROMPT[:120]}")
-print(f"Params: {WIDTH}x{HEIGHT}, steps=4, guidance=3.5")
+print(f"Generating: {{PROMPT[:120]}}")
+print(f"Params: {{WIDTH}}x{{HEIGHT}}, steps=4, guidance=3.5")
 sys.stdout.flush()
 try:
     image = pipe(
@@ -98,22 +99,22 @@ try:
         guidance_scale=3.5,
     ).images[0]
     elapsed = round(time.time() - _start, 1)
-    out_path = f"output_{int(time.time())}.png"
+    out_path = f"output_{{int(time.time())}}.png"
     image.save(out_path)
     sz = os.path.getsize(out_path)
-    print(f"Saved: {out_path} ({sz} bytes, {elapsed}s)")
-    print(json.dumps({
+    print(f"Saved: {{out_path}} ({{sz}} bytes, {{elapsed}}s)")
+    print(json.dumps({{
         "status": "success", "file": out_path, "size_bytes": sz,
         "width": WIDTH, "height": HEIGHT,
         "gpu": gpu_name, "dtype": str(DTYPE),
         "elapsed_seconds": elapsed,
-    }))
+    }}))
 except Exception as e:
-    print(f"GENERATION ERROR: {e}")
+    print(f"GENERATION ERROR: {{e}}")
     traceback.print_exc()
-    print(json.dumps({"status": "error", "error": str(e)}))
+    print(json.dumps({{"status": "error", "error": str(e)}}))
 
-# ── Cleanup ──
+# -- Cleanup --
 try:
     del pipe
     gc.collect()
@@ -121,10 +122,10 @@ try:
     print("VRAM cleaned up")
 except:
     pass
+'''
 
-
-
-# TAGS Content Agent — CogVideoX-2b Video Generation (T4x2 optimized)
+COGVIDEO_CODE_T4 = '''# TAGS Content Agent -- CogVideoX-2b Video Generation (T4x2 optimized)
+# Runs on Kaggle T4x2 GPU -- bfloat16 natively, no PyTorch downgrade
 import json, os, gc, sys, time, traceback
 
 _start = time.time()
@@ -134,7 +135,7 @@ import torch
 from diffusers import CogVideoXPipeline
 import imageio
 
-print(f"PyTorch: {torch.__version__}")
+print(f"PyTorch: {{torch.__version__}}")
 
 if not torch.cuda.is_available():
     print(json.dumps({{"status": "error", "reason": "No CUDA GPU available"}}))
@@ -142,13 +143,13 @@ if not torch.cuda.is_available():
 
 gpu_name = torch.cuda.get_device_name(0)
 vram = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-print(f"GPU: {gpu_name} | VRAM: {vram:.1f}GB")
+print(f"GPU: {{gpu_name}} | VRAM: {{vram:.1f}}GB")
 
 # T4x2: bfloat16 supported natively
 DTYPE = torch.bfloat16
-print(f"Using dtype: {DTYPE}")
+print(f"Using dtype: {{DTYPE}}")
 
-# ── Load CogVideoX-2b (ON-DEMAND) ──
+# -- Load CogVideoX-2b (ON-DEMAND) --
 print("Loading THUDM/CogVideoX-2b (~5GB)...")
 sys.stdout.flush()
 try:
@@ -157,19 +158,19 @@ try:
     print("Model loaded into VRAM")
     sys.stdout.flush()
 except torch.cuda.OutOfMemoryError:
-    print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": "CUDA OOM during model load - CogVideoX needs ~8GB"}}))
+    print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": "CUDA OOM during model load"}}))
     sys.exit(1)
 except Exception as e:
-    print(f"MODEL LOAD ERROR: {e}")
+    print(f"MODEL LOAD ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
 
-# ── Generate video ──
+# -- Generate video --
 PROMPT = "{prompt}"
 NUM_FRAMES = {frames}
 
-print(f"Generating video: {PROMPT[:120]}")
-print(f"Params: {NUM_FRAMES} frames, 50 steps, guidance 6.0")
+print(f"Generating video: {{PROMPT[:120]}}")
+print(f"Params: {{NUM_FRAMES}} frames, 50 steps, guidance 6.0")
 sys.stdout.flush()
 try:
     video = pipe(
@@ -183,18 +184,13 @@ try:
     sz = os.path.getsize("output.mp4")
     elapsed = round(time.time() - _start, 1)
     print(json.dumps({{
-        "status": "success",
-        "file": "output.mp4",
-        "size_bytes": sz,
-        "frames": NUM_FRAMES,
-        "duration_seconds": round(NUM_FRAMES / 8, 1),
-        "gpu": gpu_name,
-        "dtype": str(DTYPE),
-        "elapsed_seconds": elapsed
+        "status": "success", "file": "output.mp4", "size_bytes": sz,
+        "frames": NUM_FRAMES, "duration_seconds": round(NUM_FRAMES / 8, 1),
+        "gpu": gpu_name, "dtype": str(DTYPE), "elapsed_seconds": elapsed
     }}))
 except torch.cuda.OutOfMemoryError:
     reduced_frames = max(16, NUM_FRAMES // 2)
-    print(f"OOM at {NUM_FRAMES} frames - retrying with {reduced_frames} frames")
+    print(f"OOM at {{NUM_FRAMES}} frames - retrying with {{reduced_frames}}")
     torch.cuda.empty_cache()
     gc.collect()
     try:
@@ -202,12 +198,12 @@ except torch.cuda.OutOfMemoryError:
         imageio.mimsave("output.mp4", video, fps=8)
         sz = os.path.getsize("output.mp4")
         elapsed = round(time.time() - _start, 1)
-        print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": reduced_frames, "duration_seconds": round(reduced_frames / 8, 1), "gpu": gpu_name, "dtype": str(DTYPE), "elapsed_seconds": elapsed, "warning": f"Reduced from {NUM_FRAMES} to {reduced_frames} frames due to VRAM limit"}}))
+        print(json.dumps({{"status": "success", "file": "output.mp4", "size_bytes": sz, "frames": reduced_frames, "elapsed_seconds": elapsed}}))
     except Exception as e2:
-        print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": f"OOM even at {reduced_frames} frames: {e2}", "gpu": gpu_name, "vram_gb": round(vram, 1)}}))
+        print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": str(e2)}}))
         sys.exit(1)
 except Exception as e:
-    print(f"VIDEO ERROR: {e}")
+    print(f"VIDEO ERROR: {{e}}")
     traceback.print_exc()
     sys.exit(1)
 finally:
@@ -218,137 +214,124 @@ finally:
         print("VRAM cleaned up")
     except Exception:
         pass
+'''
 
-
-
-# LEGACY TEMPLATES (P100 fallback — with PyTorch downgrade logic)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-
-# T4x2 optimized template (default)
+# Default templates (T4x2 optimized, no P100 bloat)
 FLUX_CODE = FLUX_CODE_T4
+COGVIDEO_CODE = COGVIDEO_CODE_T4
 
-# P100 fallback template (legacy, with PyTorch downgrade)
-FLUX_CODE_P100 = r'''# TAGS Content Agent — FLUX.1-schnell Image Generation
-# Supports: T4 (sm_70+) and P100 (sm_60) GPUs
+# P100 fallback templates (legacy, includes PyTorch downgrade)
+FLUX_CODE_P100 = '''# TAGS Content Agent — FLUX.1-schnell Image Generation (T4x2)
+# On-demand: model loaded ONLY during generation, cleaned after
 import subprocess, sys, json, os, gc, traceback, time
 
 _start = time.time()
 print("=== FLUX.1-schnell Image Generation ===")
+print(f"PyTorch: {{__import__('torch').__version__}}")
 
-# ── STEP 1: Detect GPU BEFORE importing torch ──
-_cap_check = subprocess.run(
-    [sys.executable, "-c",
-     "import subprocess,sys;"
-     "r=subprocess.run([sys.executable,'-c',"
-     "'import torch;c=torch.cuda.get_device_capability(0);print(c[0])'],"
-     "capture_output=True,text=True,timeout=30);"
-     "print(r.stdout.strip() if r.returncode==0 else '99')"],
-    capture_output=True, text=True, timeout=30
-)
-_sm_str = _cap_check.stdout.strip().split("\n")[-1] if _cap_check.returncode == 0 else "99"
-_sm = int(_sm_str) if _sm_str.isdigit() else 99
-print(f"GPU capability: sm_{_sm}0")
-
-# ── STEP 2: If P100, install compatible PyTorch FIRST ──
-if _sm < 7:
-    print("P100 detected — installing PyTorch 2.4.1 with sm_60 support...")
-    sys.stdout.flush()
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q",
-         "torch==2.4.1", "torchvision==0.19.1", "diffusers==0.30.3",
-         "--index-url", "https://download.pytorch.org/whl/cu121"],
-        timeout=600
-    )
-    print("PyTorch 2.4.1 installed successfully")
-    sys.stdout.flush()
-
-# ── STEP 3: NOW import torch (after potential reinstall) ──
 import torch
 from diffusers import FluxPipeline
 from PIL import Image
 
-print(f"PyTorch: {torch.__version__}")
-
+# ── GPU validation (must be sm_70+ for bfloat16) ──
 if not torch.cuda.is_available():
-    print(json.dumps({"status": "error", "reason": "No CUDA GPU available"}))
+    print(json.dumps({{"status": "error", "reason": "No CUDA GPU — T4x2 required"}}))
     sys.exit(1)
 
 cap = torch.cuda.get_device_capability(0)
 gpu_name = torch.cuda.get_device_name(0)
 vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-print(f"GPU: {gpu_name} | sm_{cap[0]}{cap[1]} | {vram:.1f}GB VRAM")
+print(f"GPU: {{gpu_name}} | sm_{{cap[0]}}{{cap[1]}} | {{vram:.1f}}GB VRAM")
 
-if cap[0] < 6:
-    print(json.dumps({"status": "error", "reason": f"GPU sm_{cap[0]}{cap[1]} too old"}))
+if cap[0] < 7:
+    print(json.dumps({{"status": "error", "reason": f"GPU sm_{{cap[0]}}{{cap[1]}} too old — need sm_70+ (T4)"}}))
     sys.exit(1)
 
-DTYPE = torch.bfloat16 if cap[0] >= 7 else torch.float16
-print(f"Using dtype: {DTYPE}")
+DTYPE = torch.bfloat16
+print(f"Using dtype: {{DTYPE}}")
 
-# ── STEP 4: Load model ──
+# ── Load FLUX.1-schnell (ON-DEMAND — loaded only for this task) ──
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HF_TOKEN_READ", "")
+print(f"HF_TOKEN: {{'set' if HF_TOKEN else 'not set — using SDXL fallback'}}")
+
 if HF_TOKEN:
     MODEL_NAME = "black-forest-labs/FLUX.1-schnell"
-    print(f"Loading {MODEL_NAME}...")
-    pipe = FluxPipeline.from_pretrained(MODEL_NAME, torch_dtype=DTYPE, token=HF_TOKEN)
+    print(f"Loading {{MODEL_NAME}}...")
 else:
     MODEL_NAME = "stabilityai/stable-diffusion-xl-base-1.0"
-    print(f"No HF_TOKEN — loading {MODEL_NAME}...")
-    from diffusers import DiffusionPipeline
-    pipe = DiffusionPipeline.from_pretrained(MODEL_NAME, torch_dtype=DTYPE)
+    print(f"No HF_TOKEN — loading {{MODEL_NAME}} (free, no auth)...")
 
-pipe.enable_model_cpu_offload()
-print("Model loaded into VRAM")
 sys.stdout.flush()
+try:
+    if HF_TOKEN:
+        pipe = FluxPipeline.from_pretrained(
+            MODEL_NAME, torch_dtype=DTYPE, token=HF_TOKEN,
+        )
+    else:
+        from diffusers import DiffusionPipeline
+        pipe = DiffusionPipeline.from_pretrained(
+            MODEL_NAME, torch_dtype=DTYPE,
+        )
+    pipe.enable_model_cpu_offload()
+    print("Model loaded into VRAM")
+    sys.stdout.flush()
+except Exception as e:
+    print(f"MODEL LOAD ERROR: {{e}}")
+    traceback.print_exc()
+    sys.exit(1)
 
-# ── STEP 5: Generate ──
+# ── Generate ──
 PROMPT = "{prompt}"
 WIDTH = {width}
 HEIGHT = {height}
 
-print(f"Generating: {PROMPT[:120]}")
-print(f"Params: {WIDTH}x{HEIGHT}, steps=4, guidance=3.5")
+# FLUX.1-schnell: optimized for 4 steps, guidance 3.5
+# Supports text-in-image for ad banners/posters
+print(f"Generating: {{PROMPT[:120]}}")
+print(f"Params: {{WIDTH}}x{{HEIGHT}}, steps=4, guidance=3.5")
 sys.stdout.flush()
 try:
     image = pipe(
         PROMPT,
-        width=WIDTH, height=HEIGHT,
+        width=WIDTH,
+        height=HEIGHT,
         num_inference_steps=4,
         guidance_scale=3.5,
     ).images[0]
+    image.save("output.png")
+    sz = os.path.getsize("output.png")
     elapsed = round(time.time() - _start, 1)
-    out_path = f"output_{int(time.time())}.png"
-    image.save(out_path)
-    sz = os.path.getsize(out_path)
-    print(f"Saved: {out_path} ({sz} bytes, {elapsed}s)")
-    print(json.dumps({
-        "status": "success", "file": out_path, "size_bytes": sz,
-        "width": WIDTH, "height": HEIGHT,
-        "gpu": gpu_name, "sm": f"sm_{cap[0]}{cap[1]}", "dtype": str(DTYPE),
-        "elapsed_seconds": elapsed,
-    }))
+    print(json.dumps({{
+        "status": "success",
+        "file": "output.png",
+        "size_bytes": sz,
+        "gpu": gpu_name,
+        "sm": f"sm_{{cap[0]}}{{cap[1]}}",
+        "dtype": str(DTYPE),
+        "model": "{model}",
+        "steps": 4,
+        "guidance": 3.5,
+        "elapsed_seconds": elapsed
+    }}))
+except torch.cuda.OutOfMemoryError:
+    print(json.dumps({{"status": "error", "error": "VRAM_OOM", "reason": "CUDA out of memory - try smaller resolution", "gpu": gpu_name, "vram_gb": round(vram, 1)}}))
+    sys.exit(1)
 except Exception as e:
-    print(f"GENERATION ERROR: {e}")
+    print(f"GENERATION ERROR: {{e}}")
     traceback.print_exc()
-    print(json.dumps({"status": "error", "error": str(e)}))
-
-# ── Cleanup ──
-try:
-    del pipe
-    gc.collect()
-    torch.cuda.empty_cache()
-    print("VRAM cleaned up")
-except:
-    pass
+    sys.exit(1)
+finally:
+    # ── MEMORY CLEANUP (on-demand: free VRAM after task) ──
+    try:
+        del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("VRAM cleaned up")
+    except Exception:
+        pass
 '''
 
 
-# T4x2 optimized template (default)
-COGVIDEO_CODE = COGVIDEO_CODE_T4
-
-# P100 fallback template (legacy, with PyTorch downgrade)
 COGVIDEO_CODE_P100 = '''# TAGS Content Agent — CogVideoX-2b Video Generation (T4x2)
 # Triggered ONLY when video prompt is explicitly provided
 # On-demand: model loaded ONLY during generation, cleaned after
@@ -364,7 +347,7 @@ import imageio
 
 # ── GPU validation (needs sm_70+ for float16) ──
 if not torch.cuda.is_available():
-    print(json.dumps({{"status": "error", "reason": "No CUDA GPU available"}}))
+    print(json.dumps({{"status": "error", "reason": "No CUDA GPU — T4x2 required"}}))
     sys.exit(1)
 
 cap = torch.cuda.get_device_capability(0)
@@ -372,35 +355,12 @@ gpu_name = torch.cuda.get_device_name(0)
 vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
 print(f"GPU: {{gpu_name}} | sm_{{cap[0]}}{{cap[1]}} | {{vram:.1f}}GB VRAM")
 
-if cap[0] < 6:
-    print(json.dumps({{"status": "error", "reason": f"GPU sm_{{cap[0]}}{{cap[1]}} too old — need sm_60+ (P100/T4)"}}))
+if cap[0] < 7:
+    print(json.dumps({{"status": "error", "reason": f"GPU sm_{{cap[0]}}{{cap[1]}} too old — need sm_70+ (T4)"}}))
     sys.exit(1)
 
 DTYPE = torch.bfloat16 if cap[0] >= 8 else torch.float16
 print(f"Using dtype: {{DTYPE}}")
-
-# --- P100 fix: PyTorch 2.10 dropped sm_60 support ---
-# Detect GPU before importing torch to decide PyTorch version
-_check_gpu = subprocess.run(
-    [sys.executable, '-c', 'import torch; cap=torch.cuda.get_device_capability(0); print(cap[0])'],
-    capture_output=True, text=True, timeout=30
-)
-_sm = int(_check_gpu.stdout.strip()) if _check_gpu.returncode == 0 else 99
-if _sm < 7:
-    print(f"P100 detected (sm_{_sm}0) -- installing PyTorch 2.4.1 for P100 support...")
-    sys.stdout.flush()
-    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',
-                    'torch==2.4.1', 'torchvision==0.19.1',
-                    '--index-url', 'https://download.pytorch.org/whl/cu121'],
-                   timeout=300)
-    print("PyTorch 2.4.1 installed. Reloading...")
-    sys.stdout.flush()
-    # Reload torch with new version
-    import importlib
-    import torch
-    importlib.reload(torch)
-    print(f"PyTorch version: {torch.__version__}")
-
 
 # ── Load CogVideoX-2b (ON-DEMAND — loaded only for this task) ──
 print("Loading THUDM/CogVideoX-2b (~5GB)...")
@@ -598,12 +558,7 @@ def _build_notebook(code_source: str) -> dict[str, Any]:
 
 
 def _build_metadata(username: str, title: str) -> dict[str, Any]:
-    """Build kernel-metadata.json for Kaggle CLI — T4x2 GPU enforced.
-
-    Uses string booleans ("true"/"false") and gpu_type field
-    as required by Kaggle CLI format. ensure_internet must be "true"
-    for API calls and tunnel connections to work.
-    """
+    """Build kernel-metadata.json for Kaggle CLI — T4x2 GPU enforced."""
     unique = uuid.uuid4().hex[:8]
     full_title = f"TAGS {title} {unique}"
     slug = re.sub(r"[^a-z0-9\s-]", "", full_title.lower())
@@ -618,11 +573,10 @@ def _build_metadata(username: str, title: str) -> dict[str, Any]:
         "kernel_type": "notebook",
         "is_private": "true",
         "enable_gpu": "true",
-        "gpu_type": "nvidia-tesla-t4-x2",
         "enable_internet": "true",
-        "dataset_sources": [],
         "kernel_sources": [],
-        "competition_sources": [],
+        "dataset_sources": [],
+        "gpu_type": "nvidia-tesla-t4-x2",
     }
 
 
@@ -679,7 +633,7 @@ def poll_status(kernel_slug: str) -> str:
     output = raw.lower()
 
     # Parse status from Kaggle output (format: "Status: <status>")
-    status_match = re.search(r"status:\s*(\w+)", output)
+    status_match = _re.search(r"status:\s*(\w+)", output)
     status_str = status_match.group(1) if status_match else output
 
     if "complete" in status_str or "success" in status_str:
@@ -698,55 +652,34 @@ def poll_status(kernel_slug: str) -> str:
 
 
 def download_output(kernel_slug: str, dest_dir: str | Path | None = None) -> dict[str, Any]:
-    """Completed notebook se output files download karo.
-
-    Includes: retry on failure, file verification (size > 1KB, valid format).
-    """
+    """Completed notebook se output files download karo. Includes retry + file verification."""
     if dest_dir is None:
         dest_dir = _OUTPUT_DIR / kernel_slug.split("/")[-1]
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    _VALID_EXTENSIONS = {".png", ".jpg", ".jpeg", ".mp4", ".webm", ".gif", ".webp"}
+    _VALID_EXT = {".png", ".jpg", ".jpeg", ".mp4", ".webm", ".gif", ".webp"}
 
-    for attempt in range(1, 3):  # Max 2 attempts
+    for attempt in range(1, 3):
         result = _run_kaggle(
             ["kernels", "output", kernel_slug, "-p", str(dest_dir)],
             timeout=120,
         )
-
         if result["success"]:
-            # Verify downloaded files
             files = [f for f in dest_dir.iterdir() if f.is_file()]
-            valid_files = [
-                f.name for f in files
-                if f.suffix.lower() in _VALID_EXTENSIONS and f.stat().st_size > 1024
-            ]
-            if valid_files:
-                return {
-                    "status": "downloaded",
-                    "dir": str(dest_dir),
-                    "files": valid_files,
-                    "total_files": len(files),
-                    "valid_files": len(valid_files),
-                }
-            # Files exist but none valid — might be stale outputs
+            valid = [f.name for f in files if f.suffix.lower() in _VALID_EXT and f.stat().st_size > 1024]
+            if valid:
+                return {"status": "downloaded", "dir": str(dest_dir), "files": valid}
+            # Files exist but invalid — retry once
             if files and attempt == 1:
-                logger.warning("Downloaded files but none valid (stale outputs?), retrying...")
-                # Clean stale files before retry
                 for f in files:
                     f.unlink(missing_ok=True)
                 time.sleep(5)
                 continue
-
         if attempt == 1:
-            logger.warning("Download attempt 1 failed: %s — retrying...", result.get("stderr", ""))
             time.sleep(5)
 
-    return {
-        "status": "error",
-        "error": result.get("stderr", "Download failed after 2 attempts"),
-    }
+    return {"status": "error", "error": result.get("stderr", "Download failed after 2 attempts")}
 
 
 def wait_for_completion(
@@ -788,15 +721,10 @@ def wait_for_completion(
             return {"status": "complete", "elapsed_seconds": elapsed}
 
         elif status == "error":
-            # Detect quota exhaustion from error logs
-            error_msg = "Notebook failed on GPU — check Kaggle logs"
-            _quota_kw = {"quota", "limit exceeded", "too many requests", "429"}
-            if any(kw in error_msg.lower() for kw in _quota_kw):
-                error_msg = f"KAGGLE QUOTA EXHAUSTED: {error_msg}"
             return {
                 "status": "error",
                 "elapsed_seconds": elapsed,
-                "error": error_msg,
+                "error": "Notebook failed on GPU — check Kaggle logs",
                 "kaggle_url": f"https://www.kaggle.com/code/{kernel_slug}",
             }
 
@@ -1000,13 +928,7 @@ def generate_with_fallback(
     content_type: str = "image",
     frames: int = 49,
 ) -> dict[str, Any]:
-    """Try generate_visual; on failure simplify prompt and retry (max 3 attempts).
-
-    Improvements:
-      - Exponential backoff between attempts (5s, 15s, 30s)
-      - Quota exhaustion detection (early exit, no wasted retries)
-      - Cleaner error reporting
-    """
+    """Try generate_visual; on failure simplify prompt and retry (max 3 attempts)."""
     _ADJECTIVE_WORDS = {
         "beautiful", "stunning", "amazing", "gorgeous", "elegant",
         "vibrant", "mesmerizing", "breathtaking", "captivating",
@@ -1015,20 +937,10 @@ def generate_with_fallback(
         "luxurious", "premium", "high-quality", "ultra", "professional",
     }
 
-    _QUOTA_KEYWORDS = {"quota", "limit exceeded", "too many requests", "rate limit", "429"}
-
     def _simplify_prompt(original: str) -> str:
         words = original.split()
         simplified = [w for w in words if w.lower().strip(",.!?;:") not in _ADJECTIVE_WORDS]
         return " ".join(simplified) if simplified else original
-
-    def _is_quota_error(error: str) -> bool:
-        error_lower = error.lower()
-        return any(kw in error_lower for kw in _QUOTA_KEYWORDS)
-
-    def _backoff_seconds(attempt: int) -> int:
-        """Exponential backoff: 5s, 15s, 30s."""
-        return [5, 15, 30][min(attempt - 1, 2)]
 
     last_error = ""
 
@@ -1066,22 +978,15 @@ def generate_with_fallback(
         last_error = result.get("error", f"Attempt {attempt} failed")
         logger.warning("generate_with_fallback attempt %d failed: %s", attempt, last_error)
 
-        # Quota exhausted — don't waste retries
-        if _is_quota_error(last_error):
-            logger.warning("Quota exhausted — early exit, no more retries")
-            return {
-                "status": "error",
-                "error": f"Kaggle GPU quota exhausted: {last_error}",
-                "attempts": attempt,
-                "quota_exhausted": True,
-                "fallback_used": True,
-            }
+        # Quota exhausted — early exit (no point retrying)
+        _quota_kw = {"quota", "limit exceeded", "too many requests", "rate limit", "429"}
+        if any(kw in last_error.lower() for kw in _quota_kw):
+            return {"status": "error", "error": f"Kaggle GPU quota exhausted: {last_error}", "attempts": attempt, "quota_exhausted": True}
 
-        # Exponential backoff before next attempt
+        # Exponential backoff between attempts
         if attempt < 3:
-            wait = _backoff_seconds(attempt)
-            logger.info("Waiting %ds before retry attempt %d...", wait, attempt + 1)
-            time.sleep(wait)
+            _backoff = [5, 15, 30]
+            time.sleep(_backoff[min(attempt - 1, 2)])
 
     return {
         "status": "error",
