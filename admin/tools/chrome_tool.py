@@ -57,12 +57,75 @@ class ChromeTool:
         self._browser = None
         self._page = None
         self._connected_once = False
+        self._chrome_started = False
+
+    def _ensure_daemon(self) -> None:
+        """Auto-start Chrome daemon if not running (best-effort)."""
+        if self._chrome_started:
+            return
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.connect(("127.0.0.1", self.cdp_port))
+                s.close()
+                self._chrome_started = True
+                return
+            except ConnectionRefusedError:
+                pass
+            finally:
+                s.close()
+
+            # Start Chrome daemon
+            import subprocess
+            chrome_paths = [
+                os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1228\chrome-win64\chrome.exe"),
+                os.path.expandvars(r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1228\chrome-win64\chrome.exe"),
+            ]
+            chrome_exe = None
+            for p in chrome_paths:
+                if os.path.exists(p):
+                    chrome_exe = p
+                    break
+
+            if not chrome_exe:
+                logger.warning("No Chrome binary found for daemon auto-start")
+                return
+
+            user_data = os.path.expanduser(r"~\.sba-chrome-profile")
+            os.makedirs(user_data, exist_ok=True)
+
+            subprocess.Popen(
+                [
+                    chrome_exe,
+                    f"--remote-debugging-port={self.cdp_port}",
+                    "--headless",
+                    "--disable-gpu", "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-extensions", "--disable-sync",
+                    f"--user-data-dir={user_data}",
+                    "--window-size=1920,1080",
+                    "--no-first-run",
+                    "--mute-audio",
+                    "about:blank",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            self._chrome_started = True
+            logger.info("Auto-started Chrome daemon on port %s", self.cdp_port)
+        except Exception as e:
+            logger.warning("Failed to auto-start Chrome: %s", e)
 
     async def _random_delay(self, min_s: float = 0.5, max_s: float = 2.0):
         await asyncio.sleep(random.uniform(min_s, max_s))
 
     async def _ensure_page(self) -> Any:
         """Connect to Chrome daemon via CDP and return a page."""
+        # Auto-start daemon if not running (with retry)
+        self._ensure_daemon()
+
         if self._page:
             try:
                 _ = await self._page.title()
@@ -73,10 +136,23 @@ class ChromeTool:
         if not self._browser:
             try:
                 if HAVE_PW:
-                    self._play = await async_playwright().start()
-                    self._browser = await self._play.chromium.connect_over_cdp(self.cdp_url)
-                    self._connected_once = True
-                    logger.info(f"✅ Connected to Chrome daemon on :{self.cdp_port}")
+                    # Retry in case daemon just started
+                    import time
+                    for attempt in range(20):
+                        try:
+                            self._play = await async_playwright().start()
+                            self._browser = await self._play.chromium.connect_over_cdp(self.cdp_url)
+                            self._connected_once = True
+                            logger.info(f"Connected to Chrome daemon on :{self.cdp_port}")
+                            break
+                        except Exception as exc:
+                            if attempt == 0:
+                                logger.info("Waiting for Chrome daemon to be ready...")
+                            if attempt < 19:
+                                await asyncio.sleep(1)
+                            else:
+                                logger.warning("Failed to connect to Chrome daemon after 20s: %s", exc)
+                                return None
                 else:
                     return None
             except Exception as exc:
