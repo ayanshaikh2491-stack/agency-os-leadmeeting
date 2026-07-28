@@ -479,24 +479,58 @@ def _strip_think_blocks(content: str) -> str:
 
 
 def _build_workspace_context() -> str:
-    """Build a summary of all workspaces for the CEO's awareness."""
+    """Build rich workspace context from ceo_data for CEO's awareness."""
     try:
-        from admin.workspace.manager import list_workspaces
-        workspaces = list_workspaces()
+        from admin.ceo_data import get_agency_overview
+        overview = get_agency_overview()
     except ImportError:
-        return "No workspace data available yet."
+        try:
+            from admin.workspace.manager import list_workspaces
+            workspaces = list_workspaces()
+        except ImportError:
+            return "No workspace data available yet."
 
-    if not workspaces:
-        return "No client workspaces exist yet. The agency is ready for its first client."
+        if not workspaces:
+            return "No client workspaces exist yet. The agency is ready for its first client."
 
-    lines = ["Current workspaces:"]
-    for ws in workspaces:
-        agents = ", ".join(ws.agents) if ws.agents else "none assigned"
-        lines.append(
-            f"  - {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'})\n"
-            f"    Agents: {agents}\n"
-            f"    Created: {ws.created_at.strftime('%Y-%m-%d')}"
-        )
+        lines = ["Current workspaces:"]
+        for ws in workspaces:
+            agents = ", ".join(ws.agents) if ws.agents else "none assigned"
+            lines.append(
+                f"  - {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'})\n"
+                f"    Agents: {agents}\n"
+                f"    Created: {ws.created_at.strftime('%Y-%m-%d')}"
+            )
+        return "\n".join(lines)
+
+    s = overview["summary"]
+    lines = [
+        "=== AGENCY STATUS ===",
+        f"Workspaces: {s['total_workspaces']}",
+        f"Leads: {s['active_leads']} active, {s['closed_leads']} closed, {s['lost_leads']} lost",
+        f"Pending reviews: {s['pending_reviews']}",
+        f"Token health: {s['expired_tokens']} expired, {s['expiring_tokens']} expiring",
+        "",
+    ]
+
+    # Alerts
+    if overview["alerts"]:
+        lines.append("ALERTS:")
+        for a in overview["alerts"]:
+            lines.append(f"  [{a['severity'].upper()}] {a['message']}")
+        lines.append("")
+
+    # Workspaces
+    if overview["workspaces"]:
+        lines.append("WORKSPACES:")
+        for ws in overview["workspaces"]:
+            lines.append(
+                f"  - {ws['name']} (ID: {ws['id']}, client: {ws['client_name']})\n"
+                f"    Agents: {', '.join(ws['agents']) if ws['agents'] else 'none'}"
+            )
+    else:
+        lines.append("No workspaces exist yet. The agency is ready for its first client.")
+
     return "\n".join(lines)
 
 
@@ -717,43 +751,130 @@ async def _execute_ceo_tool(name: str, args: dict) -> str:
 
 
 def _tool_list_workspaces() -> str:
-    """List all workspaces."""
+    """List all workspaces with health, alerts, and activity."""
     try:
-        from admin.workspace.manager import list_workspaces
-        workspaces = list_workspaces()
+        from admin.ceo_data import get_agency_overview
+        overview = get_agency_overview()
     except ImportError:
-        return "No workspace data available."
+        # Fallback to old basic listing
+        try:
+            from admin.workspace.manager import list_workspaces
+            workspaces = list_workspaces()
+        except ImportError:
+            return "No workspace data available."
+        if not workspaces:
+            return "No workspaces exist yet."
+        result = []
+        for ws in workspaces:
+            result.append(
+                f"- {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'}) "
+                f"agents: {', '.join(ws.agents) if ws.agents else 'none'}"
+            )
+        return "\n".join(result)
 
-    if not workspaces:
-        return "No workspaces exist yet."
+    s = overview["summary"]
+    alerts = overview["alerts"]
 
-    result = []
-    for ws in workspaces:
-        result.append(
-            f"- {ws.name} (ID: {ws.id}, client: {ws.client_name or 'N/A'}) "
-            f"agents: {', '.join(ws.agents) if ws.agents else 'none'}"
+    lines = [
+        "=== AGENCY OVERVIEW ===",
+        f"Workspaces: {s['total_workspaces']}",
+        f"Active Leads: {s['active_leads']} | Closed: {s['closed_leads']} | Lost: {s['lost_leads']}",
+        f"Pending Handoffs: {s['pending_handoffs']} | Pending Reviews: {s['pending_reviews']}",
+        f"Tokens: {s['total_tokens']} total | {s['expired_tokens']} expired | {s['expiring_tokens']} expiring",
+        "",
+    ]
+
+    if alerts:
+        lines.append(f"--- ALERTS ({len(alerts)}) ---")
+        for a in alerts:
+            lines.append(f"  [{a['severity'].upper()}] {a['message']}")
+        lines.append("")
+
+    lines.append("--- WORKSPACES ---")
+    for ws in overview["workspaces"]:
+        lines.append(
+            f"  {ws['name']} (ID: {ws['id']}, client: {ws['client_name']})\n"
+            f"    Agents: {', '.join(ws['agents']) if ws['agents'] else 'none'}\n"
+            f"    Created: {ws['created_at'][:10]}"
         )
-    return "\n".join(result)
+
+    return "\n".join(lines)
 
 
 def _tool_workspace_report(ws_id: str) -> str:
-    """Get detailed workspace report."""
+    """Get detailed workspace report with health score, agent status, and alerts."""
     try:
-        from admin.workspace.manager import get_workspace
+        from admin.ceo_data import get_workspace_health
+        health = get_workspace_health(ws_id)
     except ImportError:
-        return "Workspace manager not available."
+        # Fallback to old basic report
+        try:
+            from admin.workspace.manager import get_workspace
+        except ImportError:
+            return "Workspace manager not available."
+        ws = get_workspace(ws_id)
+        if not ws:
+            return f"Workspace '{ws_id}' not found."
+        return (
+            f"Workspace: {ws.name}\n"
+            f"Client: {ws.client_name or 'N/A'}\n"
+            f"Description: {ws.description or 'None'}\n"
+            f"Agents: {', '.join(ws.agents) if ws.agents else 'none'}\n"
+            f"Created: {ws.created_at.isoformat()}"
+        )
 
-    ws = get_workspace(ws_id)
-    if not ws:
-        return f"Workspace '{ws_id}' not found."
+    if "error" in health:
+        return health["error"]
 
-    return (
-        f"Workspace: {ws.name}\n"
-        f"Client: {ws.client_name or 'N/A'}\n"
-        f"Description: {ws.description or 'None'}\n"
-        f"Agents: {', '.join(ws.agents) if ws.agents else 'none'}\n"
-        f"Created: {ws.created_at.isoformat()}"
-    )
+    ws = health["workspace"]
+    lines = [
+        f"=== WORKSPACE REPORT: {ws['name']} ===",
+        f"Client: {ws['client_name']}",
+        f"Health: {health['health_score']}/100 ({health['health_label']})",
+        f"Created: {ws['created_at'][:10]}",
+        "",
+    ]
+
+    # Alerts
+    if health["alerts"]:
+        lines.append("--- ALERTS ---")
+        for a in health["alerts"]:
+            lines.append(f"  [{a['severity'].upper()}] {a['message']}")
+        lines.append("")
+
+    # Agent status
+    if health["agent_status"]:
+        lines.append("--- AGENT STATUS ---")
+        for agent, status in health["agent_status"].items():
+            lines.append(
+                f"  {agent}: {status['status']} "
+                f"(outputs: {status['total_outputs']}, "
+                f"pending reviews: {status['pending_reviews']}, "
+                f"last: {status['last_activity'][:10] if status['last_activity'] != 'never' else 'never'})"
+            )
+        lines.append("")
+
+    # Token status
+    if health["token_status"]:
+        lines.append("--- TOKEN STATUS ---")
+        for t in health["token_status"]:
+            lines.append(f"  {t['platform']}: {t['status']} (expires: {t.get('expires_at', 'N/A')[:10]})")
+        lines.append("")
+
+    # Pending reviews
+    if health["pending_reviews"]:
+        lines.append(f"--- PENDING REVIEWS ({len(health['pending_reviews'])}) ---")
+        for r in health["pending_reviews"][:5]:
+            lines.append(f"  {r.get('agent_type', '?')} — {r.get('task', 'N/A')[:80]}")
+        lines.append("")
+
+    # Recent activity
+    if health["recent_activity"]:
+        lines.append("--- RECENT ACTIVITY ---")
+        for a in health["recent_activity"][-5:]:
+            lines.append(f"  [{a.get('agent_type', '?')}] {a.get('action', '?')} — {a.get('details', '')[:80]}")
+
+    return "\n".join(lines)
 
 
 async def _tool_delegate(args: dict) -> str:
