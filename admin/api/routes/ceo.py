@@ -217,3 +217,20 @@ async def list_errors(workspace_id: str | None = None, unresolved_only: bool = F
         "count": len(errors),
         "errors": errors,
     }
+
+
+@router.get("/status")
+async def ceo_agency_status():
+    """Get CEO's view of agency status - workspaces, alerts, pending items."""
+    from admin.agency.ceo_monitor import get_monitor
+    monitor = get_monitor()
+    status = await monitor.get_agency_status()
+    return {"status": "ok", "monitor": status}
+
+
+@router.get("/overview")
+async def ceo_agency_overview():
+    """Full agency overview for CEO dashboard."""
+    from admin.ceo_data import get_agency_overview
+    overview = get_agency_overview()
+    return {"status": "ok", "overview": overview}
