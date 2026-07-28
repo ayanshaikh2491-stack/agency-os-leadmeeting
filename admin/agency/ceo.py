@@ -924,6 +924,19 @@ async def _tool_delegate(args: dict) -> str:
         except (ImportError, AttributeError):
             pass
 
+        # Log activity for CEO tracking
+        try:
+            from admin.ceo_data import log_activity
+            log_activity(
+                workspace_id=ws_id,
+                agent_type=agent_type,
+                action="delegation_complete",
+                details=f"Task: {task[:100]}",
+                metadata={"priority": priority, "response_len": len(response)},
+            )
+        except Exception:
+            pass
+
         return (
             f"Delegated to {agent_type} in {ws.name}:\n"
             f"Task: {task}\n"
@@ -1080,6 +1093,19 @@ async def _tool_receive_handoff(args: dict) -> str:
             handoff["ceo_notes"] = ceo_notes
             handoff["workspace_id"] = ws.id
 
+            # Log activity
+            try:
+                from admin.ceo_data import log_activity
+                log_activity(
+                    workspace_id=ws.id,
+                    agent_type="ceo",
+                    action="handoff_accepted",
+                    details=f"Handoff {handoff_id[:20]}... → Workspace {ws.name}",
+                    metadata={"lead_name": brief.get("lead_name", ""), "ceo_notes": ceo_notes[:200]},
+                )
+            except Exception:
+                pass
+
             return (
                 f"Handoff ACCEPTED. Workspace created.\n\n"
                 f"Workspace: {ws.name} (ID: {ws.id})\n"
@@ -1113,6 +1139,19 @@ async def _tool_review_output(args: dict) -> str:
             feedback=feedback,
         )
     except (ImportError, AttributeError):
+        pass
+
+    # Log activity
+    try:
+        from admin.ceo_data import log_activity
+        log_activity(
+            workspace_id=ws_id,
+            agent_type=agent_type,
+            action=f"review_{verdict}",
+            details=f"Output {output_id[:20]}... — {feedback[:100]}",
+            metadata={"verdict": verdict},
+        )
+    except Exception:
         pass
 
     if verdict == "approved":
@@ -1212,7 +1251,7 @@ async def _tool_route_error(args: dict) -> str:
 
 
 async def _tool_generate_report(args: dict) -> str:
-    """Generate weekly/monthly agency report (Q23)."""
+    """Generate weekly/monthly agency report with real data."""
     report_type = args.get("report_type", "weekly")
     ws_id = args.get("workspace_id")
     period_start = args.get("period_start", "")
@@ -1220,85 +1259,160 @@ async def _tool_generate_report(args: dict) -> str:
 
     now = datetime.now(timezone.utc)
 
-    # Gather workspace data
+    # Get real data from ceo_data
     try:
-        from admin.workspace.manager import list_workspaces, get_workspace
-        workspaces = list_workspaces()
+        from admin.ceo_data import get_agency_overview, get_workspace_health, get_alerts
+        overview = get_agency_overview()
+        alerts = get_alerts()
     except ImportError:
-        workspaces = []
+        overview = None
+        alerts = []
 
-    # Gather handoff data
-    try:
-        from admin.agency.sba_store import list_handoffs, list_leads
-        handoffs = list_handoffs()
-        leads = list_leads()
-    except ImportError:
-        handoffs = []
-        leads = []
-
+    # Client-specific report
     if report_type == "client_specific" and ws_id:
-        ws = get_workspace(ws_id) if workspaces else None
-        ws_name = ws.name if ws else "Unknown"
-        return (
-            f"=== CLIENT REPORT: {ws_name} ===\n"
-            f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}\n\n"
-            f"Workspace: {ws_name} (ID: {ws_id})\n"
-            f"Agents: {', '.join(ws.agents) if ws and ws.agents else 'N/A'}\n"
-            f"Created: {ws.created_at.isoformat() if ws else 'N/A'}\n\n"
-            f"[Detailed metrics will be available when agents are fully operational]"
-        )
+        try:
+            from admin.ceo_data import get_workspace_health
+            health = get_workspace_health(ws_id)
+        except ImportError:
+            health = None
 
-    total_workspaces = len(workspaces)
-    total_handoffs = len(handoffs)
-    active_leads = len([l for l in leads if l.get("status") not in ("closed", "lost")])
-    converted_leads = len([l for l in leads if l.get("status") == "closed"])
+        if health and "workspace" in health:
+            ws = health["workspace"]
+            lines = [
+                f"=== CLIENT REPORT: {ws['name']} ===",
+                f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}",
+                f"Client: {ws['client_name']}",
+                f"Health Score: {health['health_score']}/100 ({health['health_label']})",
+                f"Agents: {', '.join(ws['agents']) if ws['agents'] else 'none'}",
+                "",
+                "--- AGENT STATUS ---",
+            ]
+            for agent, status in health.get("agent_status", {}).items():
+                lines.append(
+                    f"  {agent}: {status['status']} "
+                    f"(outputs: {status['total_outputs']}, "
+                    f"pending reviews: {status['pending_reviews']})"
+                )
+            lines.append("")
 
-    report_lines = [
-        f"=== TAGS AGENCY {'WEEKLY' if report_type == 'weekly' else 'MONTHLY'} REPORT ===",
-        f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}",
-        f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}",
-        "",
-        "--- AGENCY OVERVIEW ---",
-        f"Total Workspaces: {total_workspaces}",
-        f"Active Leads: {active_leads}",
-        f"Converted Leads (SBA): {converted_leads}",
-        f"Total Handoffs to CEO: {total_handoffs}",
-        "",
-    ]
+            if health.get("alerts"):
+                lines.append("--- ALERTS ---")
+                for a in health["alerts"]:
+                    lines.append(f"  [{a['severity'].upper()}] {a['message']}")
+                lines.append("")
 
-    if workspaces:
-        report_lines.append("--- WORKSPACE DETAILS ---")
-        for ws in workspaces:
-            report_lines.append(
-                f"  {ws.name} (client: {ws.client_name or 'N/A'})\n"
-                f"    Agents: {', '.join(ws.agents) if ws.agents else 'none'}\n"
-                f"    Created: {ws.created_at.strftime('%Y-%m-%d')}"
-            )
-        report_lines.append("")
+            if health.get("token_status"):
+                lines.append("--- TOKEN STATUS ---")
+                for t in health["token_status"]:
+                    lines.append(f"  {t['platform']}: {t['status']}")
+                lines.append("")
 
-    report_lines.extend([
-        "--- NEXT STEPS ---",
-        "[CEO to fill in strategic priorities based on current state]",
-        "",
-        "--- RISKS & BLOCKERS ---",
-        "[CEO to flag any issues requiring Ayan's attention]",
-    ])
+            lines.append("--- RECOMMENDATIONS ---")
+            if health["health_score"] < 60:
+                lines.append("  - Workspace health is below 60 — immediate attention needed")
+            if any(t["status"] == "expired" for t in health.get("token_status", [])):
+                lines.append("  - Expired tokens blocking agent work — renew immediately")
+            if health.get("pending_reviews"):
+                lines.append(f"  - {len(health['pending_reviews'])} outputs pending CEO review")
 
-    return "\n".join(report_lines)
+            return "\n".join(lines)
+        else:
+            return f"Workspace '{ws_id}' not found or data unavailable."
+
+    # Agency-wide report
+    if overview:
+        s = overview["summary"]
+        report_lines = [
+            f"=== TAGS AGENCY {'WEEKLY' if report_type == 'weekly' else 'MONTHLY'} REPORT ===",
+            f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Period: {period_start or 'N/A'} to {period_end or 'N/A'}",
+            "",
+            "--- AGENCY OVERVIEW ---",
+            f"Total Workspaces: {s['total_workspaces']}",
+            f"Active Leads: {s['active_leads']} | Closed: {s['closed_leads']} | Lost: {s['lost_leads']}",
+            f"Pending Handoffs: {s['pending_handoffs']}",
+            f"Pending Reviews: {s['pending_reviews']}",
+            f"Token Health: {s['total_tokens']} total, {s['expired_tokens']} expired, {s['expiring_tokens']} expiring",
+            "",
+        ]
+
+        # Alerts
+        if alerts:
+            report_lines.append(f"--- ALERTS ({len(alerts)}) ---")
+            for a in alerts:
+                report_lines.append(f"  [{a['severity'].upper()}] {a['message']}")
+            report_lines.append("")
+
+        # Workspace details
+        if overview["workspaces"]:
+            report_lines.append("--- WORKSPACE DETAILS ---")
+            for ws in overview["workspaces"]:
+                report_lines.append(
+                    f"  {ws['name']} (client: {ws['client_name']})\n"
+                    f"    Agents: {', '.join(ws['agents']) if ws['agents'] else 'none'}\n"
+                    f"    Created: {ws['created_at'][:10]}"
+                )
+            report_lines.append("")
+
+        # Strategic notes
+        report_lines.extend([
+            "--- STRATEGIC NOTES ---",
+            f"Agency is managing {s['total_workspaces']} client workspace(s)",
+            f"Lead pipeline: {s['active_leads']} active leads in funnel",
+            f"Token attention needed: {s['expired_tokens'] + s['expiring_tokens']} platform(s)",
+            "",
+            "--- NEXT STEPS ---",
+            "CEO reviews pending outputs and provides feedback",
+            "Renew any expired tokens to unblock agent work",
+            "Follow up on pending handoffs from SBA",
+        ])
+    else:
+        report_lines = [
+            f"=== TAGS AGENCY REPORT ===",
+            f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')}",
+            "",
+            "Agency data layer not available. Using basic counts.",
+            "",
+            "--- NEXT STEPS ---",
+            "CEO to manually review workspace status",
+        ]
+
+        # Fallback to basic data
+        try:
+            from admin.workspace.manager import list_workspaces
+            workspaces = list_workspaces()
+            report_lines.insert(3, f"Workspaces: {len(workspaces)}")
+        except Exception:
+            pass
+
+    return "\\n".join(report_lines)
 
 
 async def _tool_cross_workspace_knowledge(args: dict) -> str:
-    """Cross-workspace knowledge sharing (CRITICAL)."""
+    """Cross-workspace knowledge sharing — persists to JSON file."""
+    import os
+    from pathlib import Path
+
     action = args.get("action", "get_all")
     domain = args.get("domain", "")
     learning = args.get("learning", "")
     source_ws = args.get("source_workspace", "")
 
-    # In-memory knowledge store (will be DB later)
-    if not hasattr(_tool_cross_workspace_knowledge, "_store"):
-        _tool_cross_workspace_knowledge._store = []
+    # JSON file persistence
+    persist_dir = Path(os.getenv("TAGS_DATA_DIR", "data")) / "ceo_knowledge"
+    persist_dir.mkdir(parents=True, exist_ok=True)
+    persist_file = persist_dir / "cross_workspace_knowledge.json"
 
-    store = _tool_cross_workspace_knowledge._store
+    # Load existing
+    store = []
+    if persist_file.exists():
+        try:
+            store = json.loads(persist_file.read_text(encoding="utf-8"))
+        except Exception:
+            store = []
+
+    def _save():
+        persist_file.write_text(json.dumps(store, indent=2, default=str), encoding="utf-8")
 
     if action == "add_learning":
         if not learning:
@@ -1309,15 +1423,17 @@ async def _tool_cross_workspace_knowledge(args: dict) -> str:
             "domain": domain or "general",
             "learning": learning,
             "source_workspace": source_ws or "agency",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": _now().isoformat(),
         }
         store.append(entry)
+        _save()
 
         return (
             f"Learning added to agency knowledge pool:\n"
             f"Domain: {entry['domain']}\n"
             f"Source: {entry['source_workspace']}\n"
-            f"Learning: {learning}"
+            f"Learning: {learning}\n"
+            f"Total entries: {len(store)}"
         )
 
     elif action == "get_by_domain":
@@ -1329,7 +1445,7 @@ async def _tool_cross_workspace_knowledge(args: dict) -> str:
             return f"No learnings found for domain: {domain}"
 
         lines = [f"Knowledge for domain '{domain}' ({len(filtered)} entries):"]
-        for e in filtered[-10:]:  # Last 10
+        for e in filtered[-10:]:
             lines.append(
                 f"  - [{e['source_workspace']}] {e['learning'][:200]}"
             )
@@ -1339,8 +1455,8 @@ async def _tool_cross_workspace_knowledge(args: dict) -> str:
         if not store:
             return "No cross-workspace knowledge collected yet."
 
-        lines = [f"Agency Knowledge Pool ({len(store)} entries):"]
-        for e in store[-20:]:  # Last 20
+        lines = [f"Agency Knowledge Pool ({len(store)} entries, persisted to JSON):"]
+        for e in store[-20:]:
             lines.append(
                 f"  - [{e['domain']}] [{e['source_workspace']}] {e['learning'][:150]}"
             )
