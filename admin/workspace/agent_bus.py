@@ -15,11 +15,14 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+from admin.persistence import get_workspace_db
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,23 @@ def send_message(
     if workspace_id not in _messages:
         _messages[workspace_id] = []
     _messages[workspace_id].append(msg)
+
+    # Fire-and-forget SQLite write
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO agent_messages "
+                "(id, from_agent, to_agent, workspace_id, message_type, subject, content, metadata, timestamp, read, responded) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
+                (msg.id, msg.from_agent, msg.to_agent, msg.workspace_id,
+                 msg.message_type, msg.subject, msg.content,
+                 _json.dumps(msg.metadata), msg.timestamp),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite message write failed: %s", e)
+    asyncio.create_task(_write())
 
     logger.info(
         "Agent message: %s -> %s [%s] %s",
@@ -241,12 +261,30 @@ def share_knowledge(
     if workspace_id not in _knowledge:
         _knowledge[workspace_id] = {}
 
+    now = datetime.now(timezone.utc).isoformat()
     _knowledge[workspace_id][key] = {
         "value": value,
         "source_agent": source_agent,
         "category": category,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now,
     }
+
+    # Fire-and-forget SQLite write
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO agent_knowledge "
+                "(id, workspace_id, domain, learning, source_workspace, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (f"kn_{uuid.uuid4().hex[:8]}", workspace_id,
+                 key, _json.dumps(value) if not isinstance(value, str) else value,
+                 source_agent, now),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite knowledge write failed: %s", e)
+    asyncio.create_task(_write())
 
     logger.info(
         "Knowledge shared from workspace %s: %s = %s",
@@ -318,3 +356,60 @@ def get_communication_summary(workspace_id: str) -> dict[str, Any]:
             for m in msgs[-10:]  # Last 10 messages
         ],
     }
+
+
+# ── Load from SQLite on startup ───────────────────────────────────────────────
+
+async def load_agent_bus_from_db() -> None:
+    """Load persisted messages and knowledge from SQLite into memory."""
+    try:
+        db = await get_workspace_db()
+
+        # Load messages
+        cursor = await db.execute("SELECT * FROM agent_messages ORDER BY timestamp")
+        rows = await cursor.fetchall()
+        msg_count = 0
+        for row in rows:
+            d = dict(row)
+            msg = AgentMessage(
+                id=d["id"],
+                from_agent=d["from_agent"],
+                to_agent=d["to_agent"],
+                workspace_id=d["workspace_id"],
+                message_type=d["message_type"],
+                subject=d["subject"],
+                content=d["content"],
+                metadata=_json.loads(d.get("metadata", "{}")),
+                timestamp=d["timestamp"],
+                read=bool(d.get("read", 0)),
+                responded=bool(d.get("responded", 0)),
+            )
+            ws_id = msg.workspace_id
+            if ws_id not in _messages:
+                _messages[ws_id] = []
+            _messages[ws_id].append(msg)
+            msg_count += 1
+
+        # Load knowledge
+        cursor = await db.execute("SELECT * FROM agent_knowledge ORDER BY timestamp")
+        rows = await cursor.fetchall()
+        kn_count = 0
+        for row in rows:
+            d = dict(row)
+            ws_id = d["workspace_id"]
+            if ws_id not in _knowledge:
+                _knowledge[ws_id] = {}
+            _knowledge[ws_id][d["domain"]] = {
+                "value": d["learning"],
+                "source_agent": d.get("source_workspace", ""),
+                "category": d.get("domain", "general"),
+                "timestamp": d["timestamp"],
+            }
+            kn_count += 1
+
+        logger.info(
+            "Agent bus loaded from DB: %d messages, %d knowledge entries",
+            msg_count, kn_count,
+        )
+    except Exception as e:
+        logger.warning("Failed to load agent bus from SQLite: %s", e)
