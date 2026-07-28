@@ -1,15 +1,18 @@
 """Workspace manager — CRUD + agent output tracking, reviews, error routing.
 
-Currently uses an in-memory store. Will be backed by PostgreSQL.
+Dual-writes to in-memory (fast) and SQLite (persistent).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json as _json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from admin.api.models.schemas import WorkspaceCreate, WorkspaceOut
+from admin.persistence import get_workspace_db, row_to_dict
 
 import logging
 logger = logging.getLogger(__name__)
@@ -67,9 +70,35 @@ def _build_knowledge_context(knowledge: dict) -> str:
 
 # ── Workspace CRUD ───────────────────────────────────────────────────────────
 
+def _sync_ws_to_db(record: dict[str, Any]) -> None:
+    """Write workspace record to SQLite (fire-and-forget)."""
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            created_at = record["created_at"]
+            if hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
+            ctx = record.get("client_context")
+            ctx_json = _json.dumps(ctx) if ctx else "{}"
+            agents = record.get("agents", [])
+            agents_json = _json.dumps(agents) if isinstance(agents, list) else agents
+            await db.execute(
+                "INSERT OR REPLACE INTO workspaces "
+                "(id, name, client_name, description, agents, client_context, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (record["id"], record["name"], record.get("client_name", record["name"]),
+                 record.get("description", ""), agents_json, ctx_json, str(created_at)),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite write failed: %s", e)
+    asyncio.create_task(_write())
+
+
 def create_workspace(payload: WorkspaceCreate) -> WorkspaceOut:
     wid = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc)
+    ctx_dict = payload.client_context.model_dump() if payload.client_context else None
     record: dict[str, Any] = {
         "id": wid,
         "name": payload.name,
@@ -77,9 +106,10 @@ def create_workspace(payload: WorkspaceCreate) -> WorkspaceOut:
         "description": payload.description or "",
         "created_at": now,
         "agents": list(DEFAULT_AGENTS),
-        "client_context": payload.client_context.model_dump() if payload.client_context else None,
+        "client_context": ctx_dict,
     }
     _workspaces[wid] = record
+    _sync_ws_to_db(record)
 
     # Create per-workspace Content Agent memory
     try:
@@ -133,6 +163,23 @@ def store_agent_output(
     }
     _agent_outputs.append(record)
     _pending_reviews.append(record)
+
+    # Fire-and-forget SQLite write
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO agent_outputs "
+                "(id, workspace_id, agent_type, task, output, output_preview, timestamp, reviewed) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (record["id"], record["workspace_id"], record["agent_type"],
+                 record["task"], record["output"], record["output_preview"],
+                 record["timestamp"], 0),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite agent_output write failed: %s", e)
+    asyncio.create_task(_write())
     return record
 
 
@@ -168,6 +215,28 @@ def store_review(
             r["reviewed"] = True
             break
 
+    # Fire-and-forget SQLite write
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO reviews "
+                "(id, workspace_id, agent_type, output_id, verdict, feedback, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (record["id"], record["workspace_id"], record["agent_type"],
+                 record["output_id"], record["verdict"], record["feedback"],
+                 record["timestamp"]),
+            )
+            # Also update agent_outputs reviewed flag
+            await db.execute(
+                "UPDATE agent_outputs SET reviewed=1 WHERE id=?",
+                (output_id,),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite review write failed: %s", e)
+    asyncio.create_task(_write())
+
     return record
 
 
@@ -200,6 +269,24 @@ def store_error(
         "resolved": False,
     }
     _error_logs.append(record)
+
+    # Fire-and-forget SQLite write
+    async def _write():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO error_logs "
+                "(id, workspace_id, error_type, severity, description, routed_to, timestamp, resolved) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (record["id"], record["workspace_id"], record["error_type"],
+                 record["severity"], record["description"], record.get("routed_to", ""),
+                 record["timestamp"], 0),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite error_log write failed: %s", e)
+    asyncio.create_task(_write())
+
     return record
 
 
@@ -357,3 +444,65 @@ async def route_to_agent(
         return resp.choices[0].message.content or "No response generated."
     except Exception as exc:
         return f"{agent_type.upper()} agent LLM call failed: {exc}"
+
+
+# ── Load from SQLite on startup ───────────────────────────────────────────────
+
+async def load_all_from_db() -> None:
+    """Load all persisted data from SQLite into in-memory stores.
+
+    Called once at startup after init_persistence().
+    """
+    try:
+        db = await get_workspace_db()
+
+        # Load workspaces
+        cursor = await db.execute("SELECT * FROM workspaces")
+        rows = await cursor.fetchall()
+        for row in rows:
+            d = dict(row)
+            d["created_at"] = datetime.fromisoformat(d["created_at"])
+            try:
+                d["agents"] = _json.loads(d.get("agents", "[]"))
+            except (TypeError, _json.JSONDecodeError):
+                d["agents"] = list(DEFAULT_AGENTS)
+            try:
+                ctx_raw = d.get("client_context", "{}")
+                if isinstance(ctx_raw, str):
+                    ctx_raw = _json.loads(ctx_raw)
+                d["client_context"] = ctx_raw
+            except (TypeError, _json.JSONDecodeError):
+                d["client_context"] = None
+            _workspaces[d["id"]] = d
+
+        # Load agent outputs
+        cursor = await db.execute("SELECT * FROM agent_outputs ORDER BY timestamp")
+        rows = await cursor.fetchall()
+        for row in rows:
+            d = dict(row)
+            d["reviewed"] = bool(d.get("reviewed", 0))
+            _agent_outputs.append(d)
+            if not d["reviewed"]:
+                _pending_reviews.append(d)
+
+        # Load reviews
+        cursor = await db.execute("SELECT * FROM reviews ORDER BY timestamp")
+        rows = await cursor.fetchall()
+        for row in rows:
+            _completed_reviews.append(dict(row))
+
+        # Load error logs
+        cursor = await db.execute("SELECT * FROM error_logs ORDER BY timestamp")
+        rows = await cursor.fetchall()
+        for row in rows:
+            d = dict(row)
+            d["resolved"] = bool(d.get("resolved", 0))
+            _error_logs.append(d)
+
+        logger.info(
+            "Loaded from DB: %d workspaces, %d outputs, %d reviews, %d errors",
+            len(_workspaces), len(_agent_outputs),
+            len(_completed_reviews), len(_error_logs),
+        )
+    except Exception as e:
+        logger.warning("Failed to load data from SQLite: %s", e)
