@@ -338,10 +338,10 @@ async def route_to_agent(
     if agent_type not in ws.agents:
         return f"Agent '{agent_type}' not in workspace. Available: {ws.agents}"
 
-    # SBA has its own agent class
+    # SBA has its own LangGraph agent class with Chrome + lead gen tools
     if agent_type == "sba":
-        from admin.agency.sba import SBAAgent
-        agent = SBAAgent(workspace_name=ws.name, client_name=ws.client_name)
+        from admin.workspace.agents.sba import SBAAgent
+        agent = SBAAgent(workspace_name=ws.name, client_name=ws.client_name, workspace_id=workspace_id)
         return await _call_with_retry(agent, message)
 
     # Domain-specific workspace agents (LangGraph-powered)

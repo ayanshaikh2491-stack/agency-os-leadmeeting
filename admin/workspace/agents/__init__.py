@@ -6,5 +6,6 @@ from admin.workspace.agents.website import WebsiteAgent
 from admin.workspace.agents.social import SocialAgent
 from admin.workspace.agents.content import ContentAgent
 from admin.workspace.agents.analytics import AnalyticsAgent
+from admin.workspace.agents.sba import SBAAgent
 
-__all__ = ["SEOAgent", "AdsAgent", "WebsiteAgent", "SocialAgent", "ContentAgent", "AnalyticsAgent"]
+__all__ = ["SEOAgent", "AdsAgent", "WebsiteAgent", "SocialAgent", "ContentAgent", "AnalyticsAgent", "SBAAgent"]
