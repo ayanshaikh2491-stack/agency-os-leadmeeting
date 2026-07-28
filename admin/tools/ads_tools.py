@@ -141,6 +141,51 @@ def _get_industry_benchmark(industry: str) -> dict[str, Any]:
     return INDUSTRY_BENCHMARKS["default"]
 
 
+def _get_live_ads_data(workspace_id: str, platform: str = "meta", days: int = 30) -> dict[str, Any] | None:
+    """Try to fetch real ads data from Meta/Google Ads API.
+
+    Returns real metrics dict if live, None if demo mode.
+    Used by campaign_report, performance_analyzer, auto_optimize.
+    """
+    if not workspace_id:
+        return None
+    try:
+        from admin.ads_api_client import get_ads_client
+        client = get_ads_client(workspace_id, platform)
+        if not client.is_live:
+            return None
+
+        if platform in ("google", "google_ads"):
+            return client.get_campaign_metrics(days=days)
+        else:
+            # Meta Ads
+            preset = f"last_{days}_d" if days <= 30 else "maximum"
+            insights = client.get_account_insights(date_preset=preset)
+            if insights:
+                conversions = 0
+                revenue = 0.0
+                for action in insights.get("actions", []):
+                    if action.get("action_type") in ("offsite_conversion", "purchase"):
+                        conversions += int(action.get("value", 0))
+                for attr in insights.get("action_values", []):
+                    if attr.get("action_type") in ("offsite_conversion", "purchase"):
+                        revenue += float(attr.get("value", 0))
+
+                return {
+                    "impressions": int(insights.get("impressions", 0)),
+                    "clicks": int(insights.get("clicks", 0)),
+                    "spend": float(insights.get("spend", 0)),
+                    "conversions": conversions,
+                    "revenue": revenue,
+                    "ctr": round(float(insights.get("ctr", 0)) * 100, 2),
+                    "cpc": float(insights.get("cpc", 0)),
+                }
+        return None
+    except Exception as e:
+        logger.debug("Live ads data fetch failed for %s: %s", workspace_id, e)
+        return None
+
+
 # ── Strategy Tools ────────────────────────────────────────────────────────────
 
 
@@ -961,16 +1006,36 @@ def performance_analyzer(
     metrics: dict[str, Any] | None = None,
     period: str = "7d",
     campaign_name: str = "",
+    workspace_id: str = "",
+    platform: str = "meta",
 ) -> dict[str, Any]:
-    """Analyze campaign performance and suggest optimizations."""
-    if metrics is None:
-        metrics = {"spend": 10000, "impressions": 500000, "clicks": 5000, "conversions": 50, "revenue": 25000}
+    """Analyze campaign performance. Uses live API data when available."""
+    days = int(period.replace("d", "")) if "d" in period else 7
 
-    spend = metrics.get("spend", 0)
-    impressions = metrics.get("impressions", 0)
-    clicks = metrics.get("clicks", 0)
-    conversions = metrics.get("conversions", 0)
-    revenue = metrics.get("revenue", 0)
+    # Try live API data first
+    live_data = _get_live_ads_data(workspace_id, platform, days=days)
+    data_source = "live_api"
+
+    if live_data:
+        spend = live_data.get("spend", 0)
+        impressions = live_data.get("impressions", 0)
+        clicks = live_data.get("clicks", 0)
+        conversions = live_data.get("conversions", 0)
+        revenue = live_data.get("revenue", 0)
+    elif metrics:
+        data_source = "provided_metrics"
+        spend = metrics.get("spend", 0)
+        impressions = metrics.get("impressions", 0)
+        clicks = metrics.get("clicks", 0)
+        conversions = metrics.get("conversions", 0)
+        revenue = metrics.get("revenue", 0)
+    else:
+        data_source = "demo"
+        spend = 10000
+        impressions = 500000
+        clicks = 5000
+        conversions = 50
+        revenue = 25000
 
     ctr = round((clicks / impressions * 100), 2) if impressions else 0
     cpc = round(spend / clicks, 2) if clicks else 0
@@ -992,6 +1057,7 @@ def performance_analyzer(
         "created_at": _now(),
         "period": period,
         "campaign": campaign_name,
+        "data_source": data_source,
         "calculated_metrics": {
             "ctr": f"{ctr}%",
             "cpc": f"₹{cpc}",
@@ -1014,23 +1080,44 @@ def performance_analyzer(
 def auto_optimize(
     campaign_data: dict[str, Any] | None = None,
     rules: list[str] | None = None,
+    workspace_id: str = "",
+    platform: str = "meta",
 ) -> dict[str, Any]:
-    """Auto-optimize campaigns based on deterministic rules."""
-    if campaign_data is None:
-        campaign_data = {"spend": 5000, "conversions": 30, "revenue": 12000, "impressions": 200000, "clicks": 3000, "days_running": 7}
+    """Auto-optimize campaigns. Uses live API data when available."""
+    # Try live API data first
+    live_data = _get_live_ads_data(workspace_id, platform, days=7)
+    data_source = "live_api"
+
+    if live_data:
+        spend = live_data.get("spend", 0)
+        conversions = live_data.get("conversions", 0)
+        revenue = live_data.get("revenue", 0)
+        impressions = live_data.get("impressions", 0)
+        clicks = live_data.get("clicks", 0)
+        days_running = 7
+    elif campaign_data:
+        data_source = "provided_data"
+        spend = campaign_data.get("spend", 0)
+        conversions = campaign_data.get("conversions", 0)
+        revenue = campaign_data.get("revenue", 0)
+        impressions = campaign_data.get("impressions", 0)
+        clicks = campaign_data.get("clicks", 0)
+        days_running = campaign_data.get("days_running", 1)
+    else:
+        data_source = "demo"
+        spend = 5000
+        conversions = 30
+        revenue = 12000
+        impressions = 200000
+        clicks = 3000
+        days_running = 7
+
     if rules is None:
         rules = [
             "Pause if CPA > 2x target after 1000 impressions",
             "Increase budget 20% if ROAS > 4x for 3+ days",
             "Pause ad if CTR < 0.5% after 5000 impressions",
         ]
-
-    spend = campaign_data.get("spend", 0)
-    conversions = campaign_data.get("conversions", 0)
-    revenue = campaign_data.get("revenue", 0)
-    impressions = campaign_data.get("impressions", 0)
-    clicks = campaign_data.get("clicks", 0)
-    days_running = campaign_data.get("days_running", 1)
 
     cpa = round(spend / conversions, 2) if conversions else 0
     roas = round(revenue / spend, 2) if spend else 0
@@ -1085,6 +1172,7 @@ def auto_optimize(
     return {
         "status": "optimization_complete",
         "created_at": _now(),
+        "data_source": data_source,
         "rules_evaluated": len(rules),
         "actions_taken": actions_taken,
         "current_metrics": {
@@ -1139,17 +1227,32 @@ def campaign_report(
     campaign_name: str = "",
     period: str = "30d",
     metrics: dict[str, Any] | None = None,
+    workspace_id: str = "",
+    platform: str = "meta",
 ) -> dict[str, Any]:
-    """Generate comprehensive campaign report from ACTUAL input metrics."""
-    if metrics is None:
-        metrics = {}
+    """Generate comprehensive campaign report. Uses live API data when available."""
+    # Try live API data first
+    live_data = _get_live_ads_data(workspace_id, platform, days=30)
+    data_source = "live_api"
 
-    spend = metrics.get("spend", 0)
-    clicks = metrics.get("clicks", 0)
-    impressions = metrics.get("impressions", 0)
-    conversions = metrics.get("conversions", 0)
-    revenue = metrics.get("revenue", 0)
-    leads = metrics.get("leads", 0)
+    if live_data:
+        spend = live_data.get("spend", 0)
+        clicks = live_data.get("clicks", 0)
+        impressions = live_data.get("impressions", 0)
+        conversions = live_data.get("conversions", 0)
+        revenue = live_data.get("revenue", 0)
+    elif metrics:
+        data_source = "provided_metrics"
+        spend = metrics.get("spend", 0)
+        clicks = metrics.get("clicks", 0)
+        impressions = metrics.get("impressions", 0)
+        conversions = metrics.get("conversions", 0)
+        revenue = metrics.get("revenue", 0)
+    else:
+        data_source = "demo"
+        spend = clicks = impressions = conversions = revenue = 0
+
+    leads = (metrics or {}).get("leads", 0)
 
     # Calculate ALL derived metrics from input — no hardcoded values
     ctr = round(clicks / impressions * 100, 2) if impressions else 0
@@ -1207,6 +1310,7 @@ def campaign_report(
             "total_leads": leads,
             "cost_per_lead": f"₹{cost_per_lead}" if leads else "N/A",
         },
+        "data_source": data_source,
         "platform_breakdown": platform_breakdown if platform_breakdown else "No platform-specific data provided",
         "health": {
             "status": "Good" if not health_issues else "Needs Attention",
@@ -1546,7 +1650,15 @@ ADS_TOOLS: list[dict[str, Any]] = [
 
 
 def execute_ads_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Route tool call to the correct function."""
+    """Route tool call to the correct function.
+
+    workspace_id and platform are automatically extracted from args and passed
+    to tools that support live API mode (campaign_report, performance_analyzer,
+    auto_optimize).
+    """
+    # Tools that support live API mode
+    live_tools = {"campaign_report", "performance_analyzer", "auto_optimize"}
+
     tool_map = {
         "campaign_strategy": campaign_strategy,
         "audience_research": audience_research,
@@ -1573,6 +1685,11 @@ def execute_ads_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if fn is None:
         return {"error": f"Unknown ads tool: {name}"}
     try:
+        # Inject workspace_id and platform for tools that support live mode
+        if name in live_tools:
+            workspace_id = args.pop("workspace_id", "")
+            platform = args.pop("platform", "meta")
+            return fn(workspace_id=workspace_id, platform=platform, **args)
         return fn(**args)
     except TypeError as e:
         return {"error": f"Invalid arguments for {name}: {e}"}
