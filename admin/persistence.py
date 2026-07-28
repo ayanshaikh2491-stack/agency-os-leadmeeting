@@ -140,6 +140,7 @@ async def get_workspace_db() -> aiosqlite.Connection:
         _db.row_factory = aiosqlite.Row
         await _db.execute("PRAGMA journal_mode=WAL")
         await _db.execute("PRAGMA foreign_keys=ON")
+        await _db.commit()
         return _db
 
 
