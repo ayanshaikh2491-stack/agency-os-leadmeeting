@@ -302,6 +302,27 @@ def list_errors(workspace_id: str | None = None, unresolved_only: bool = False) 
 
 # ── Agent Routing ────────────────────────────────────────────────────────────
 
+async def _call_with_retry(agent, message: str, max_retries: int = 2) -> str:
+    """Call agent.chat with async retry + exponential backoff."""
+    last_error: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response, _ = await agent.chat(message)
+            return response
+        except TimeoutError as e:
+            last_error = e
+            logger.warning("Agent timeout (attempt %d/%d)", attempt + 1, max_retries + 1)
+        except Exception as e:
+            last_error = e
+            logger.warning("Agent error (attempt %d/%d): %s", attempt + 1, max_retries + 1, e)
+
+        if attempt < max_retries:
+            wait = 2 ** attempt  # 1s, 2s
+            await asyncio.sleep(wait)
+
+    raise last_error or RuntimeError("Agent call failed")
+
+
 async def route_to_agent(
     workspace_id: str,
     agent_type: str,
@@ -321,8 +342,7 @@ async def route_to_agent(
     if agent_type == "sba":
         from admin.agency.sba import SBAAgent
         agent = SBAAgent(workspace_name=ws.name, client_name=ws.client_name)
-        response, _ = await agent.chat(message)
-        return response
+        return await _call_with_retry(agent, message)
 
     # Domain-specific workspace agents (LangGraph-powered)
     _domain_agents = {
@@ -405,14 +425,12 @@ async def route_to_agent(
                     logger.warning("Failed to load agency/workspace knowledge: %s", e)
 
             agent = agent_class(**agent_kwargs)
-            response, _ = await agent.chat(message)
-            return response
+            return await _call_with_retry(agent, message)
         except TypeError:
             # Fallback: agents that don't accept client_context yet
             try:
                 agent = agent_class(workspace_name=ws.name, client_name=ws.client_name)
-                response, _ = await agent.chat(message)
-                return response
+                return await _call_with_retry(agent, message)
             except Exception as exc2:
                 logger.warning("Domain agent %s failed: %s", agent_type, exc2)
         except Exception as exc:

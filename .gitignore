@@ -1,11 +1,29 @@
+# Python
 __pycache__/
 *.pyc
-*.pyo
-.env
-data/outputs/
-data/workspace_content_agents/
-.pytest_cache/
-*.egg-info/
-dist/
-build/
-.gitmessage
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Data directories
+data/
+outputs/
+
+# IDE / OS
+.superpowers/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temp / generated
+admin/_gen_business.py
+admin/_live_p100_test.py
+admin/_p100_v2_test.py
+admin/tools/together_gpu.py
+agent_gpu_job_*.json
+
+# Docs
+docs/superpowers/
