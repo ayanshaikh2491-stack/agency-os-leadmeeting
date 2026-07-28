@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from admin.agency.langgraph_sba import build_sba_graph
+from admin.agency.langgraph_sba import build_sba_graph, register_chrome
 from admin.config import settings
 from admin.tools.chrome_tool import ChromeTool
 
@@ -39,6 +39,7 @@ class SBAAgent:
         self.workspace_name = workspace_name
         self.client_name = client_name or workspace_name
         self.chrome = chrome or ChromeTool(browser_name="sba", workspace=workspace_name)
+        register_chrome(workspace_name, self.chrome)
 
         # Build the LangGraph state graph for this workspace
         self.graph = build_sba_graph()

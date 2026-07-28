@@ -34,6 +34,20 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 10
 
+# ── Chrome instance registry ─────────────────────────────────────────────
+# SBAAgent registers its chrome instance here so run_tools() reuses the
+# same browser session instead of creating a fresh ChromeTool each round.
+_chrome_registry: dict[str, "ChromeTool"] = {}
+
+
+def register_chrome(workspace: str, chrome: "ChromeTool") -> None:
+    """Register an SBA chrome instance so the LangGraph graph reuses it."""
+    _chrome_registry[workspace] = chrome
+
+
+def unregister_chrome(workspace: str) -> None:
+    _chrome_registry.pop(workspace, None)
+
 # ── System prompt ────────────────────────────────────────────────────────────
 
 SBA_SYSTEM_PROMPT = """You are the SBA (Sales/Business Agent) for workspace "{workspace_name}" (client: {client_name}).
@@ -417,10 +431,14 @@ async def run_tools(state: SBAGraphState) -> dict:
     if not tool_calls:
         return {"messages": [], "tool_round": state.get("tool_round", 0) + 1}
 
-    # Get or create chrome tool from config params
-    browser_name = state.get("browser_name", "sba")
+    # Get chrome from registry (reuses SBAAgent's session)
     workspace = state.get("workspace_name", "agency")
-    chrome = ChromeTool(browser_name=browser_name, workspace=workspace)
+    chrome = _chrome_registry.get(workspace)
+    if chrome is None:
+        browser_name = state.get("browser_name", "sba")
+        chrome = ChromeTool(browser_name=browser_name, workspace=workspace)
+        _chrome_registry[workspace] = chrome
+        logger.info("Created new ChromeTool for workspace '%s'", workspace)
 
     tool_results: list[dict[str, Any]] = []
 

@@ -25,6 +25,38 @@ SBA_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "8 proven sales systems for cold outreach, DM, email prospecting",
     },
+    # ── Upwork & Freelance Lead Gen ──────────────────────────────────
+    {
+        "name": "upwork-lead-gen",
+        "keywords": [
+            "upwork", "fiverr", "freelancer", "freelance", "gig", "job post",
+            "project", "contract", "remote work", "hire", "proposal", "bid",
+            "client", "open project", "rfp", "request for proposal",
+            "freelance platform", "marketplace", "talent", "outsource",
+        ],
+        "description": "Find and win leads on Upwork, Fiverr, Freelancer — search jobs, submit proposals, convert to clients",
+    },
+    # ── LinkedIn Lead Gen ────────────────────────────────────────────
+    {
+        "name": "linkedin-lead-gen",
+        "keywords": [
+            "linkedin", "linked in", "profile", "connection", "inmail",
+            "sales navigator", "linkedin search", "linkedin prospecting",
+            "linkedin outreach", "linkedin message", "linkedin sales",
+        ],
+        "description": "LinkedIn prospecting, profile research, connection requests, InMail outreach",
+    },
+    # ── Web Research & Lead Discovery ────────────────────────────────
+    {
+        "name": "web-lead-discovery",
+        "keywords": [
+            "chrome", "browser", "website", "web search", "google search",
+            "find leads", "lead research", "company research", "industry research",
+            "competitor", "directory", "listings", "yelp", "google maps",
+            "crunchbase", "angellist", "producthunt", "g2", "capterra",
+        ],
+        "description": "Use Chrome browser to search for leads, research companies, find contact info on any platform",
+    },
     {
         "name": "alex-hormozi-pitch",
         "keywords": [
