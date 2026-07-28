@@ -10,11 +10,14 @@ CEO uses this to make data-driven decisions.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
+
+from admin.persistence import get_workspace_db, rows_to_list
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,11 @@ def _now() -> datetime:
 
 def _now_iso() -> str:
     return _now().isoformat()
+
+
+def _uuid_hex(n: int = 8) -> str:
+    import uuid
+    return uuid.uuid4().hex[:n]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -405,7 +413,46 @@ def _get_workspace_errors(workspace_id: str) -> list[dict[str, Any]]:
 
 
 def _get_workspace_activity(workspace_id: str) -> list[dict[str, Any]]:
-    """Get recent activity for a workspace."""
+    """Get recent activity for a workspace from SQLite, falling back to JSON."""
+    try:
+        import asyncio
+        from admin.persistence import get_workspace_db, rows_to_list
+
+        async def _read():
+            try:
+                db = await get_workspace_db()
+                cursor = await db.execute(
+                    "SELECT * FROM ceo_activity_log WHERE workspace_id=? ORDER BY timestamp DESC LIMIT 20",
+                    (workspace_id,),
+                )
+                rows = await cursor.fetchall()
+                entries = rows_to_list(rows)
+                for e in entries:
+                    if isinstance(e.get("metadata"), str):
+                        try:
+                            e["metadata"] = json.loads(e["metadata"])
+                        except (TypeError, json.JSONDecodeError):
+                            e["metadata"] = {}
+                return entries
+            except Exception:
+                return []
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                entries = asyncio.run_coroutine_threadsafe(_read(), loop).result(timeout=2)
+                if entries:
+                    return entries
+            else:
+                entries = loop.run_until_complete(_read())
+                if entries:
+                    return entries
+        except (RuntimeError, Exception):
+            pass
+    except Exception:
+        pass
+
+    # Fallback: JSON file
     try:
         from pathlib import Path
         import os
@@ -413,13 +460,52 @@ def _get_workspace_activity(workspace_id: str) -> list[dict[str, Any]]:
         if not activity_file.exists():
             return []
         data = json.loads(activity_file.read_text(encoding="utf-8"))
-        return data.get("entries", [])[-20:]  # last 20
+        return data.get("entries", [])[-20:]
     except Exception:
         return []
 
 
 def _get_recent_activity(limit: int = 50) -> list[dict[str, Any]]:
-    """Get recent activity across all workspaces."""
+    """Get recent activity across all workspaces from SQLite."""
+    try:
+        import asyncio
+        from admin.persistence import get_workspace_db, rows_to_list
+
+        async def _read():
+            try:
+                db = await get_workspace_db()
+                cursor = await db.execute(
+                    "SELECT * FROM ceo_activity_log ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = await cursor.fetchall()
+                entries = rows_to_list(rows)
+                for e in entries:
+                    if isinstance(e.get("metadata"), str):
+                        try:
+                            e["metadata"] = json.loads(e["metadata"])
+                        except (TypeError, json.JSONDecodeError):
+                            e["metadata"] = {}
+                return entries
+            except Exception:
+                return []
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                entries = asyncio.run_coroutine_threadsafe(_read(), loop).result(timeout=2)
+                if entries:
+                    return entries
+            else:
+                entries = loop.run_until_complete(_read())
+                if entries:
+                    return entries
+        except (RuntimeError, Exception):
+            pass
+    except Exception:
+        pass
+
+    # Fallback: read from JSON files
     try:
         from pathlib import Path
         import os
@@ -436,7 +522,6 @@ def _get_recent_activity(limit: int = 50) -> list[dict[str, Any]]:
                 all_entries.extend(data.get("entries", []))
             except Exception:
                 continue
-        # Sort by timestamp, newest first
         all_entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
         return all_entries[:limit]
     except Exception:
@@ -457,7 +542,28 @@ def log_activity(
     """Log an agent activity for CEO tracking.
 
     Called by workspace manager when agents produce output, get reviewed, etc.
+    Dual-writes to SQLite (primary) and JSON file (legacy fallback).
     """
+    now_iso = _now_iso()
+    entry_id = f"act_{_uuid_hex(8)}"
+
+    # Write to SQLite (fire-and-forget)
+    async def _write_sqlite():
+        try:
+            db = await get_workspace_db()
+            await db.execute(
+                "INSERT INTO ceo_activity_log "
+                "(id, workspace_id, agent_type, action, details, metadata, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (entry_id, workspace_id, agent_type, action, details,
+                 json.dumps(metadata or {}), now_iso),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.debug("SQLite activity write failed: %s", e)
+    asyncio.create_task(_write_sqlite())
+
+    # Legacy JSON file write
     try:
         from pathlib import Path
         import os
@@ -465,7 +571,6 @@ def log_activity(
         activity_dir.mkdir(parents=True, exist_ok=True)
         activity_file = activity_dir / f"{workspace_id}.json"
 
-        # Load existing
         data = {}
         if activity_file.exists():
             try:
@@ -475,23 +580,31 @@ def log_activity(
 
         entries = data.get("entries", [])
         entries.append({
-            "timestamp": _now_iso(),
+            "timestamp": now_iso,
             "agent_type": agent_type,
             "action": action,
             "details": details,
             "metadata": metadata or {},
         })
 
-        # Keep last 100 entries
         data["entries"] = entries[-100:]
         activity_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception as e:
-        logger.debug("Failed to log activity: %s", e)
+        logger.debug("Failed to log activity to file: %s", e)
+
+
+def get_recent_activity(limit: int = 50) -> list[dict[str, Any]]:
+    """Public: get recent activity across all workspaces, newest first."""
+    return _get_recent_activity(limit=limit)
+
+
+def get_workspace_activity(workspace_id: str) -> list[dict[str, Any]]:
+    """Public: get recent activity for a specific workspace."""
+    return _get_workspace_activity(workspace_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEALTH SCORING
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def _compute_health_score(
     tokens: list,
