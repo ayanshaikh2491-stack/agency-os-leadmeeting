@@ -28,7 +28,7 @@ LEAD_SOURCE_MAP: dict[str, dict[str, list[str]]] = {
         "platforms": ["linkedin", "crunchbase", "google"],
     },
     "tech_web": {
-        "keywords": ["web development", "website", "web app", "software", "app", "react", "python", "javascript"],
+        "keywords": ["web development", "website", "web app", "full stack", "frontend", "backend", "react", "vue", "angular", "node", "django", "flask"],
         "platforms": ["upwork", "linkedin", "fiverr", "freelancer"],
     },
     "tech_mobile": {
@@ -36,19 +36,23 @@ LEAD_SOURCE_MAP: dict[str, dict[str, list[str]]] = {
         "platforms": ["upwork", "linkedin", "fiverr"],
     },
     "marketing": {
-        "keywords": ["marketing", "seo", "ads", "social media", "content", "branding", "digital marketing"],
+        "keywords": ["marketing", "seo", "ads", "social media", "branding", "digital marketing", "ppc", "campaign", "growth hacking"],
         "platforms": ["linkedin", "upwork", "fiverr", "google"],
     },
     "consulting": {
         "keywords": ["consulting", "consultant", "strategy", "business", "coaching", "mentor"],
         "platforms": ["linkedin", "upwork"],
     },
+    "software": {
+        "keywords": ["software", "app", "developer", "programmer", "coding", "api", "python", "javascript", "java", "c++", "golang"],
+        "platforms": ["upwork", "linkedin", "fiverr", "freelancer", "github"],
+    },
     "design": {
         "keywords": ["design", "ui", "ux", "graphic design", "logo", "brand identity", "figma"],
         "platforms": ["upwork", "fiverr", "dribbble", "behance"],
     },
     "writing": {
-        "keywords": ["writing", "copywriting", "content writing", "blog", "article", "ghostwriting"],
+        "keywords": ["writing", "copywriting", "content writing", "blog", "article", "ghostwriting", "writer", "copywriter"],
         "platforms": ["upwork", "fiverr", "linkedin", "medium"],
     },
     "video_photo": {
