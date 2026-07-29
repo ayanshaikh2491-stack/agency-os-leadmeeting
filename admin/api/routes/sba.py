@@ -897,3 +897,186 @@ Answer ONLY in JSON format with keys: confidence, analysis, lead_verdict, sugges
             },
         }
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SBA MONITOR ENDPOINTS — 24/7 Background Pipeline
+#══════════════════════════════════════════════════
+
+
+@router.get("/monitor/status")
+async def sba_monitor_status():
+    """Get SBA monitor's latest pipeline status snapshot."""
+    from admin.agency.sba_monitor import get_monitor
+    monitor = get_monitor()
+    status = await monitor.get_pipeline_status()
+    return {"success": True, "data": status}
+
+
+@router.post("/monitor/start")
+async def sba_monitor_start():
+    """Start the 24/7 SBA background monitoring loop."""
+    from admin.agency.sba_monitor import get_monitor
+    monitor = get_monitor()
+    await monitor.start()
+    return {"success": True, "message": "SBA 24/7 monitor started"}
+
+
+@router.post("/monitor/stop")
+async def sba_monitor_stop():
+    """Stop the SBA background monitoring loop."""
+    from admin.agency.sba_monitor import get_monitor
+    monitor = get_monitor()
+    await monitor.stop()
+    return {"success": True, "message": "SBA monitor stopped"}
+
+
+@router.get("/monitor/alerts")
+async def sba_monitor_alerts():
+    """Get pending CEO alerts from SBA monitor."""
+    from admin.agency.sba_monitor import get_monitor
+    monitor = get_monitor()
+    alerts = monitor.get_ceo_alerts()
+    return {"success": True, "data": {"alerts": alerts}}
+
+
+# ═══════════════════════════════════════════════
+# SBA EMAIL LEAD DISCOVERY
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@router.post("/email/check")
+async def sba_email_check():
+    """Check email inbox for new lead inquiries and auto-create leads."""
+    from admin.agency.orchestrator import sba_check_email_leads
+    result = await sba_check_email_leads()
+    return {"success": True, "data": result}
+
+
+@router.get("/email/status")
+async def sba_email_status():
+    """Check if email lead service is configured and enabled."""
+    from admin.tools.email_service import EmailLeadService
+    service = EmailLeadService()
+    return {
+        "success": True,
+        "data": {
+            "enabled": service.enabled,
+            "configured": bool(
+                __import__("os").environ.get("SBA_EMAIL_IMAP_HOST", "")
+            ),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════
+# CEO-SBA INTEGRATION — Auto workspace from handoff
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post("/handoffs/{handoff_id}/auto-process")
+async def sba_handoff_auto_process(handoff_id: str):
+    """CEO auto-processes SBA handoff: creates workspace + registers all agents.
+
+    This wires the full SBA -> CEO pipeline:
+      1. Takes the handoff
+      2. Creates client workspace
+      3. Registers all 7 agents
+      4. Sets up schedules
+      5. Reports back to CEO
+    """
+    from admin.agency.orchestrator import ceo_process_sba_handoff
+    result = await ceo_process_sba_handoff(handoff_id)
+    return {"success": True, "data": result}
+
+
+@router.post("/pipeline/scan")
+async def sba_manual_pipeline_scan(workspace_id: str = "agency"):
+    """Manually trigger a pipeline scan. Reports to CEO."""
+    from admin.agency.orchestrator import sba_pipeline_scan
+    result = sba_pipeline_scan(workspace_id)
+    return {"success": True, "data": result}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SBA ULTIMATE — New Email/Meeting/Translate Endpoints
+#══════════════════════════════════════════════════════════════════
+
+
+class SendLeadEmailRequest(BaseModel):
+    to_email: str
+    subject: str
+    body_text: str
+
+
+@router.post("/email/send-lead")
+async def sba_email_send_lead(payload: SendLeadEmailRequest):
+    """Send an email to a lead using the new SBAEmailClient (App Password)."""
+    from admin.tools.sba_email_client import SBAEmailClient
+    client = SBAEmailClient()
+    if not client.enabled:
+        return {"success": False, "error": "Email not configured. Set SBA_OWNER_EMAIL and SBA_OWNER_EMAIL_PASSWORD in .env"}
+    sent = await client.send_email(
+        to_email=payload.to_email,
+        subject=payload.subject,
+        body_text=payload.body_text,
+    )
+    return {"success": sent, "data": {"sent": sent}}
+
+
+@router.post("/email/check-replies")
+async def sba_email_check_replies(mark_read: bool = True):
+    """Check inbox for lead replies using new SBAEmailClient with LLM enrichment."""
+    from admin.tools.sba_email_client import SBAEmailClient
+    client = SBAEmailClient()
+    if not client.enabled:
+        return {"success": False, "error": "Email not configured"}
+    replies = await client.check_replies(mark_read=mark_read)
+    return {"success": True, "data": {"replies": replies, "count": len(replies)}}
+
+
+class CreateMeetingRequest(BaseModel):
+    lead_id: str
+    lead_name: str
+    lead_email: str
+    proposed_time: str
+    duration_minutes: int = 30
+
+
+@router.post("/meetings/new")
+async def sba_meeting_create(payload: CreateMeetingRequest):
+    """Create a meeting using new SBAMeetingManager (calendar + meet + email)."""
+    from admin.tools.sba_meeting import SBAMeetingManager
+    mgr = SBAMeetingManager()
+    meeting = await mgr.create_meeting(
+        lead_id=payload.lead_id,
+        lead_name=payload.lead_name,
+        lead_email=payload.lead_email,
+        proposed_time=payload.proposed_time,
+        duration_minutes=payload.duration_minutes,
+    )
+    return {"success": True, "data": meeting}
+
+
+class TranslateTextRequest(BaseModel):
+    text: str
+    source_lang: str = "English"
+    target_lang: str = "English"
+
+
+@router.post("/translate/to-owner")
+async def sba_translate_to_owner(payload: TranslateTextRequest):
+    """Translate client message to Hinglish for the owner."""
+    from admin.tools.sba_translate import SBATranslationEngine
+    engine = SBATranslationEngine()
+    result = await engine.translate_for_owner(payload.text, payload.source_lang)
+    return {"success": True, "data": {"original": payload.text, "translation": result}}
+
+
+@router.post("/translate/to-client")
+async def sba_translate_to_client(payload: TranslateTextRequest):
+    """Translate owner's Hinglish to professional English for the client."""
+    from admin.tools.sba_translate import SBATranslationEngine
+    engine = SBATranslationEngine()
+    result = await engine.translate_for_client(payload.text, payload.target_lang)
+    return {"success": True, "data": {"original": payload.text, "translation": result}}
+
