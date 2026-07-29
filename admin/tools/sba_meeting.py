@@ -1,10 +1,16 @@
-"""SBA Meeting Manager — Calendar + Meet links + store wrapper.
+"""SBA Meeting Manager — Google Calendar + Meet links + Meeting Records.
 
 Handles the full meeting lifecycle:
-  1. Create calendar event (Google Calendar via gws CLI)
-  2. Generate meeting link (Google Meet)
-  3. Store meeting record via existing sba_store
-  4. Send confirmation emails via SBAEmailClient
+  1. Generate Google Meet link
+  2. Create Google Calendar event
+  3. Store meeting record in sba_store
+  4. Send confirmation email to lead
+
+Relies on:
+  - admin.agency.sba_store for CRUD
+  - gws CLI for Google Calendar/Meet integration
+  - SBAEmailClient for email notifications
+  - sba_email_templates for email formatting
 """
 
 from __future__ import annotations
@@ -23,7 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 class SBAMeetingManager:
-    """Create and manage meetings with calendar integration."""
+    """Create and manage meetings with Google Calendar + Meet integration.
+
+    Coordinates the meeting lifecycle:
+      - Generates a Google Meet link
+      - Creates a Calendar event with attendees
+      - Persists the meeting record via sba_store
+      - Sends a confirmation email to the lead
+    """
 
     def __init__(self) -> None:
         self._email = SBAEmailClient()
@@ -36,110 +49,122 @@ class SBAMeetingManager:
         proposed_time: str,
         duration_minutes: int = 30,
     ) -> dict[str, Any]:
-        """Full meeting setup: calendar event + link + email + store.
+        """Full meeting setup: Meet link -> Calendar event -> Store -> Email.
 
         Args:
             lead_id: Lead ID from sba_store.
             lead_name: Lead's display name.
-            lead_email: Lead's email for invite.
-            proposed_time: ISO format datetime string (e.g. '2026-07-30T14:00:00').
-            duration_minutes: Meeting length.
+            lead_email: Lead's email for the calendar invite.
+            proposed_time: ISO-format datetime string
+                (e.g. ``"2026-08-01T15:00:00"``).
+            duration_minutes: Meeting length in minutes.
 
-        Returns: Meeting record dict.
+        Returns:
+            Meeting record dict as stored in sba_store.
         """
-        # 1. Generate meeting link (Google Meet via calendar, or fallback)
+        # 1. Generate Google Meet link
         meeting_link = await self._generate_meet_link()
 
-        # 2. Parse date/time from ISO string
-        try:
-            dt = datetime.fromisoformat(proposed_time)
-            date_str = dt.strftime("%Y-%m-%d")
-            time_str = dt.strftime("%H:%M")
-        except Exception:
-            date_str = proposed_time[:10]
-            time_str = proposed_time[11:16] if len(proposed_time) >= 16 else "10:00"
-
-        # 3. Try to create Google Calendar event
+        # 2. Create Google Calendar event with attendees
         calendar_event_id = await self._create_calendar_event(
-            lead_name, lead_email, date_str, time_str, duration_minutes, meeting_link,
+            lead_name=lead_name,
+            lead_email=lead_email,
+            proposed_time=proposed_time,
+            duration_minutes=duration_minutes,
+            meeting_link=meeting_link,
         )
 
-        # 4. Store meeting record via existing sba_store API
+        # 3. Build structured notes with calendar / meet metadata
+        notes_list: list[dict[str, Any]] = []
+        if calendar_event_id:
+            notes_list.append({
+                "type": "calendar_event",
+                "id": calendar_event_id,
+                "text": f"Calendar event created: {calendar_event_id}",
+            })
+        notes_list.append({
+            "type": "meeting_link",
+            "url": meeting_link,
+            "text": f"Meeting link: {meeting_link}",
+        })
+
+        # Parse ISO time into date / time parts for sba_store
+        dt = datetime.fromisoformat(proposed_time)
+
+        # 4. Persist meeting record
         meeting = await sba_store.create_meeting({
             "lead_id": lead_id,
             "lead_name": lead_name,
-            "title": f"Meeting: {lead_name} — TAGS Agency",
-            "date": date_str,
-            "time": time_str,
+            "title": f"Meeting with {lead_name} — TAGS Agency",
+            "date": dt.strftime("%Y-%m-%d"),
+            "time": dt.strftime("%H:%M"),
             "duration_minutes": duration_minutes,
             "status": "scheduled",
-            "link": meeting_link,
-            "notes": [f"Calendar event: {calendar_event_id or 'N/A'}"] if calendar_event_id else [],
-            "transcript": "",
+            "notes": notes_list,
         })
 
         # 5. Send confirmation email to lead
-        if lead_email:
-            subject = f"✅ Confirmed! Meeting on {date_str}"
-            body = format_template(
+        await self._email.send_email(
+            to_email=lead_email,
+            subject=f"Confirmed! Meeting on {proposed_time[:10]}",
+            body_text=format_template(
                 "meeting_confirm",
                 lead_name=lead_name,
-                meeting_date=date_str,
-                meeting_time=time_str,
+                meeting_date=proposed_time[:10],
+                meeting_time=proposed_time[11:16],
                 meeting_link=meeting_link,
                 owner_name=OWNER_NAME,
-            )
-            await self._email.send_email(
-                to_email=lead_email,
-                subject=subject,
-                body_text=body,
-                cc_owner=True,
-            )
+            ),
+            cc_owner=True,
+        )
 
         return meeting
 
+    # ── Internals ──────────────────────────────────────────────────────────
+
     async def _generate_meet_link(self) -> str:
-        """Generate a Google Meet link via gws CLI."""
+        """Generate a Google Meet link via the gws CLI.
+
+        Creates a brief placeholder calendar event with conference data so
+        Google returns a Meet URL. Falls back to a date-based placeholder
+        if the CLI is unavailable.
+        """
         try:
-            now = datetime.now(timezone.utc)
-            start_str = now.strftime("%Y-%m-%dT%H:%M:%S")
             proc = await asyncio.create_subprocess_exec(
                 "gws", "calendar", "insert",
                 "--title", "SBA Meeting Placeholder",
-                "--start", start_str,
+                "--start", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
                 "--duration", "15",
                 "--conference", "true",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate(timeout=15)
-            output = stdout.decode("utf-8", errors="replace")
+            output = stdout.decode()
             match = re.search(r"(https?://meet\.google\.com/[-\w]+)", output)
             if match:
                 return match.group(1)
-        except Exception as exc:
-            logger.warning("Google Meet link generation failed: %s", exc)
+        except Exception:
+            logger.warning("Google Meet link generation failed, using placeholder")
 
-        # Fallback placeholder
         return f"https://meet.google.com/{datetime.now().strftime('%Y%m%d')}-sba-mtg"
 
     async def _create_calendar_event(
         self,
         lead_name: str,
         lead_email: str,
-        date_str: str,
-        time_str: str,
+        proposed_time: str,
         duration_minutes: int,
         meeting_link: str,
     ) -> str | None:
-        """Create Google Calendar event via gws CLI."""
+        """Create a Google Calendar event via the gws CLI with attendees."""
         try:
-            start_iso = f"{date_str}T{time_str}:00"
             proc = await asyncio.create_subprocess_exec(
                 "gws", "calendar", "insert",
                 "--title", f"Meeting: {lead_name} — TAGS Agency",
-                "--description", f"SBA-scheduled meeting with {lead_name}.\nLink: {meeting_link}",
-                "--start", start_iso,
+                "--description",
+                f"SBA-scheduled meeting with {lead_name}.\nLink: {meeting_link}",
+                "--start", proposed_time,
                 "--duration", str(duration_minutes),
                 "--attendees", lead_email,
                 "--attendees", OWNER_EMAIL,
@@ -147,11 +172,12 @@ class SBAMeetingManager:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate(timeout=15)
-            output = stdout.decode("utf-8", errors="replace").strip()
-            return output or None
+            return stdout.decode().strip() or None
         except Exception as exc:
             logger.warning("Calendar event creation failed: %s", exc)
             return None
+
+    # ── Meeting CRUD helpers ───────────────────
 
     async def update_meeting_status(
         self,
@@ -159,54 +185,100 @@ class SBAMeetingManager:
         status: str,
         notes: str = "",
     ) -> dict[str, Any] | None:
-        """Update meeting status (completed, no_show, cancelled)."""
+        """Update meeting status (done, cancelled, etc.).
+
+        Args:
+            meeting_id: Meeting record ID.
+            status: New status value.
+            notes: Optional reason or note for the status change.
+
+        Returns:
+            Updated meeting dict, or None if the meeting was not found.
+        """
         updates: dict[str, Any] = {"status": status}
         if notes:
-            if isinstance(notes, str):
-                notes_list = [notes]
-            else:
-                notes_list = notes
-            updates["notes"] = notes_list
+            existing = sba_store.get_meeting(meeting_id)
+            updated_notes = list(existing.get("notes", [])) if existing else []
+            updated_notes.append({
+                "type": "status_change",
+                "status": status,
+                "text": notes,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+            updates["notes"] = updated_notes
         return await sba_store.update_meeting(meeting_id, updates)
+
+    async def add_meeting_summary(
+        self,
+        meeting_id: str,
+        summary: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Record an AI-generated meeting summary and mark as done.
+
+        Args:
+            meeting_id: Meeting record ID.
+            summary: Dict with keys like ``text``, ``key_points``,
+                ``action_items``, etc.
+
+        Returns:
+            Updated meeting dict, or None if not found.
+        """
+        return await sba_store.update_meeting(
+            meeting_id,
+            {
+                "summary": summary.get("text", ""),
+                "transcript_analysis": summary,
+                "action_items": summary.get("action_items", []),
+                "status": "done",
+            },
+        )
 
     async def add_meeting_note(
         self,
         meeting_id: str,
-        note: str,
+        text: str,
+        speaker: str = "lead",
     ) -> dict[str, Any] | None:
-        """Add a note to an existing meeting."""
-        return await sba_store.add_meeting_note(meeting_id, note)
+        """Append a note to an existing meeting record.
 
-    async def set_meeting_transcript(
-        self,
-        meeting_id: str,
-        transcript: str,
-    ) -> dict[str, Any] | None:
-        """Attach a transcript to a meeting."""
-        return await sba_store.set_meeting_transcript(meeting_id, transcript)
+        Args:
+            meeting_id: Meeting record ID.
+            text: Note content.
+            speaker: Who said it (``"lead"``, ``"owner"``, ``"system"``).
 
-    async def set_meeting_summary(
-        self,
-        meeting_id: str,
-        summary: str,
-    ) -> dict[str, Any] | None:
-        """Attach an AI-generated meeting summary."""
-        meeting = sba_store.get_meeting(meeting_id)
-        if not meeting:
-            return None
-        return await sba_store.update_meeting(meeting_id, {
-            "summary": summary,
-            "status": "done",
-        })
+        Returns:
+            Updated meeting dict, or None if not found.
+        """
+        return await sba_store.add_meeting_note(
+            meeting_id,
+            text=text,
+            speaker=speaker,
+        )
 
     def get_meetings(
         self,
         lead_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List meetings, optionally filtered."""
+        """List meetings, optionally filtered by lead or status.
+
+        Args:
+            lead_id: Filter by lead ID.
+            status: Filter by status (``"scheduled"``, ``"done"``,
+                ``"cancelled"``).
+
+        Returns:
+            Sorted list of meeting dicts (newest first).
+        """
         return sba_store.list_meetings(lead_id, status)
 
     def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
-        """Get a single meeting record."""
+        """Get a single meeting record by ID.
+
+        Args:
+            meeting_id: Meeting record ID.
+
+        Returns:
+            Meeting dict or None.
+        """
         return sba_store.get_meeting(meeting_id)
