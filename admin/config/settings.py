@@ -70,3 +70,15 @@ CEO_THINKING_PHASES = [
     "plan",          # Produce a structured plan
     "execute",       # Generate the final output / delegations
 ]
+
+# ── SBA Email (Gmail App Password) ──────────────────────────────────────────
+# Owner's email credentials for SBA to send/receive lead emails.
+# Uses App Password (NOT regular password):
+#   Google → Manage Account → Security → 2-Step Verification → App Passwords
+SBA_OWNER_EMAIL: str = os.getenv("SBA_OWNER_EMAIL", "")
+SBA_OWNER_EMAIL_PASSWORD: str = os.getenv("SBA_OWNER_EMAIL_PASSWORD", "")
+SBA_OWNER_NAME: str = os.getenv("SBA_OWNER_NAME", "Ayan")
+SBA_SMTP_HOST: str = os.getenv("SBA_SMTP_HOST", "smtp.gmail.com")
+SBA_SMTP_PORT: int = int(os.getenv("SBA_SMTP_PORT", "587"))
+SBA_IMAP_HOST: str = os.getenv("SBA_IMAP_HOST", "imap.gmail.com")
+SBA_IMAP_PORT: int = int(os.getenv("SBA_IMAP_PORT", "993"))
