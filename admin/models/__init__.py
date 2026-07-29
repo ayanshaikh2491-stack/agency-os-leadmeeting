@@ -56,6 +56,7 @@ class MeetingModel(Base):
     lead_id: Mapped[str] = mapped_column(String(32), index=True, default="")
     title: Mapped[str] = mapped_column(String(255), default="Meeting")
     lead_name: Mapped[str] = mapped_column(String(255), default="")
+    link: Mapped[str] = mapped_column(String(512), default="")
     date: Mapped[str] = mapped_column(String(32), default="")
     time: Mapped[str] = mapped_column(String(32), default="")
     duration_minutes: Mapped[int] = mapped_column(Integer, default=30)
@@ -75,6 +76,7 @@ class MeetingModel(Base):
             "lead_id": self.lead_id,
             "title": self.title,
             "lead_name": self.lead_name,
+            "link": self.link,
             "date": self.date,
             "time": self.time,
             "duration_minutes": self.duration_minutes,

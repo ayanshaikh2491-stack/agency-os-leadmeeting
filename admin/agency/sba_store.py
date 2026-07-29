@@ -170,6 +170,7 @@ async def create_meeting(data: dict[str, Any]) -> dict[str, Any]:
         "lead_id": data.get("lead_id", ""),
         "title": data.get("title", "Meeting"),
         "lead_name": data.get("lead_name", ""),
+        "link": data.get("link", ""),
         "date": data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
         "time": data.get("time", datetime.now(timezone.utc).strftime("%H:%M")),
         "duration_minutes": data.get("duration_minutes", 30),
