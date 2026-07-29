@@ -1,0 +1,266 @@
+"""SBA Email Client — Send/Receive via owner's email (App Password).
+
+Owner configures Gmail/Yahoo/Outlook app password. SBA uses SMTP to send,
+IMAP to check replies, and LLM to enrich lead responses.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import smtplib
+import imaplib
+import email as email_lib
+from email.header import decode_header
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timezone
+from typing import Any
+
+import openai
+from admin.config import settings
+
+logger = logging.getLogger(__name__)
+
+# ── Email config from env ───────────────────────────────────────────────
+
+OWNER_EMAIL = os.environ.get("SBA_OWNER_EMAIL", "")
+OWNER_EMAIL_PASSWORD = os.environ.get("SBA_OWNER_EMAIL_PASSWORD", "")  # App Password
+OWNER_NAME = os.environ.get("SBA_OWNER_NAME", "Ayan")
+SMTP_HOST = os.environ.get("SBA_SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SBA_SMTP_PORT", "587"))
+IMAP_HOST = os.environ.get("SBA_IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(os.environ.get("SBA_IMAP_PORT", "993"))
+
+
+class SBAEmailClient:
+    """Send emails as owner, check replies, auto-enrich with LLM."""
+
+    def __init__(self) -> None:
+        self._enabled = bool(OWNER_EMAIL and OWNER_EMAIL_PASSWORD)
+        if not self._enabled:
+            logger.warning(
+                "SBA email disabled. Set SBA_OWNER_EMAIL and SBA_OWNER_EMAIL_PASSWORD (app password)."
+            )
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        body_text: str,
+        cc_owner: bool = True,
+    ) -> bool:
+        """Send an email as the owner via SMTP.
+
+        Args:
+            to_email: Lead's email address.
+            subject: Email subject line.
+            body_text: Plain text body.
+            cc_owner: If True, BCC a copy to owner.
+
+        Returns: True if sent successfully.
+        """
+        if not self._enabled:
+            logger.warning("Email disabled — cannot send.")
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["From"] = f"{OWNER_NAME} <{OWNER_EMAIL}>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+
+        # Plain text part
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _send() -> None:
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                    server.starttls()
+                    server.login(OWNER_EMAIL, OWNER_EMAIL_PASSWORD)
+                    server.sendmail(OWNER_EMAIL, [to_email], msg.as_string())
+                    if cc_owner:
+                        # BCC to owner
+                        bcc_msg = MIMEText(
+                            f"📧 SBA sent email to {to_email}\n\nSubject: {subject}\n\n{body_text[:500]}",
+                            "plain",
+                            "utf-8",
+                        )
+                        bcc_msg["From"] = f"SBA <{OWNER_EMAIL}>"
+                        bcc_msg["To"] = OWNER_EMAIL
+                        bcc_msg["Subject"] = f"[SBA] Sent to {to_email}: {subject}"
+                        server.sendmail(OWNER_EMAIL, [OWNER_EMAIL], bcc_msg.as_string())
+
+            await loop.run_in_executor(None, _send)
+            logger.info("Email sent to %s: %s", to_email, subject)
+            return True
+
+        except Exception as exc:
+            logger.error("Failed to send email to %s: %s", to_email, exc)
+            return False
+
+    async def check_replies(self, mark_read: bool = True) -> list[dict[str, Any]]:
+        """Check inbox for replies to SBA-sent emails.
+
+        Returns list of dicts with:
+          - from_addr, subject, body_preview, enriched (from LLM)
+        """
+        if not self._enabled:
+            return []
+
+        replies: list[dict[str, Any]] = []
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _fetch() -> list[dict[str, Any]]:
+                result: list[dict[str, Any]] = []
+                mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+                mail.login(OWNER_EMAIL, OWNER_EMAIL_PASSWORD)
+                mail.select("INBOX")
+
+                # Search for unseen emails (or recent replies)
+                status, messages = mail.search(None, "UNSEEN")
+                if status != "OK":
+                    mail.logout()
+                    return result
+
+                for num in messages[0].split():
+                    try:
+                        _status, msg_data = mail.fetch(num, "(RFC822)")
+                        if _status != "OK":
+                            continue
+
+                        raw_email = msg_data[0][1]
+                        msg = email_lib.message_from_bytes(raw_email)
+
+                        # Extract info
+                        subject, encoding = decode_header(msg["Subject"])[0]
+                        if isinstance(subject, bytes):
+                            subject = subject.decode(encoding or "utf-8", errors="replace")
+                        from_addr = msg.get("From", "")
+                        body_text = self._get_body(msg)
+
+                        # Skip auto-replies
+                        if self._is_auto(subject, from_addr):
+                            continue
+
+                        result.append({
+                            "from_addr": from_addr,
+                            "subject": subject,
+                            "body_preview": body_text[:300],
+                            "body_full": body_text[:2000],
+                        })
+
+                        if mark_read:
+                            mail.store(num, "+FLAGS", "\\Seen")
+                    except Exception:
+                        continue
+
+                mail.logout()
+                return result
+
+            raw_replies = await loop.run_in_executor(None, _fetch)
+
+            # Enrich each reply with LLM
+            for reply in raw_replies:
+                enriched = await self._enrich_reply(reply)
+                reply["enriched"] = enriched
+                replies.append(reply)
+
+        except Exception as exc:
+            logger.error("Email check failed: %s", exc)
+
+        return replies
+
+    def _get_body(self, msg: Any) -> str:
+        """Extract plain text body from email."""
+        body = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    try:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            body += payload.decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+        else:
+            try:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    body = payload.decode("utf-8", errors="replace")
+            except Exception:
+                pass
+        return body[:5000]
+
+    def _is_auto(self, subject: str, from_addr: str) -> bool:
+        """Detect auto-replies, bounces, newsletters."""
+        indicators = [
+            "out of office", "auto-reply", "autoreply",
+            "returned mail", "undeliverable", "mail delivery failed",
+            "unsubscribe", "newsletter", "noreply",
+        ]
+        text = (subject + " " + from_addr).lower()
+        return any(i in text for i in indicators)
+
+    async def _enrich_reply(self, reply: dict[str, Any]) -> dict[str, Any]:
+        """Use LLM to understand lead's reply.
+
+        Returns:
+          is_interested (bool): Lead interested in meeting?
+          suggested_time (str): If they mentioned a time.
+          sentiment (str): positive/neutral/negative
+          score_change (int): How lead score should change.
+          summary (str): One-line summary.
+        """
+        try:
+            client = openai.AsyncOpenAI(
+                api_key=settings.WORKSPACE_API_KEY or None,
+                base_url=settings.WORKSPACE_API_BASE or None,
+            )
+            resp = await client.chat.completions.create(
+                model=settings.WORKSPACE_AGENT_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are SBA's email reply analyzer. Analyze this lead reply. "
+                            "Respond in JSON only with keys: "
+                            "is_interested (bool), suggested_time (str or null), "
+                            "sentiment (positive/neutral/negative), "
+                            "score_change (-20 to 20), "
+                            "summary (str), needs_followup (bool)"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"From: {reply['from_addr']}\n"
+                            f"Subject: {reply['subject']}\n\n"
+                            f"{reply['body_full']}"
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=300,
+                response_format={"type": "json_object"},
+            )
+            text = resp.choices[0].message.content or "{}"
+            return json.loads(text)
+        except Exception:
+            return {
+                "is_interested": False,
+                "suggested_time": None,
+                "sentiment": "neutral",
+                "score_change": 0,
+                "summary": "Could not analyze reply.",
+                "needs_followup": False,
+            }
