@@ -16,7 +16,6 @@ import email as email_lib
 from email.header import decode_header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone
 from typing import Any
 
 import openai
@@ -62,7 +61,7 @@ class SBAEmailClient:
             to_email: Lead's email address.
             subject: Email subject line.
             body_text: Plain text body.
-            cc_owner: If True, BCC a copy to owner.
+            cc_owner: If True, BCC a copy to owner (the parameter is named\n                cc_owner for brevity, but it sends a BCC, not a CC).
 
         Returns: True if sent successfully.
         """
@@ -79,7 +78,7 @@ class SBAEmailClient:
         msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _send() -> None:
                 with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
@@ -102,8 +101,8 @@ class SBAEmailClient:
             logger.info("Email sent to %s: %s", to_email, subject)
             return True
 
-        except Exception as exc:
-            logger.error("Failed to send email to %s: %s", to_email, exc)
+        except Exception:
+            logger.exception("Failed to send email to %s", to_email)
             return False
 
     async def check_replies(self, mark_read: bool = True) -> list[dict[str, Any]]:
@@ -118,7 +117,7 @@ class SBAEmailClient:
         replies: list[dict[str, Any]] = []
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def _fetch() -> list[dict[str, Any]]:
                 result: list[dict[str, Any]] = []
@@ -141,10 +140,21 @@ class SBAEmailClient:
                         raw_email = msg_data[0][1]
                         msg = email_lib.message_from_bytes(raw_email)
 
-                        # Extract info
-                        subject, encoding = decode_header(msg["Subject"])[0]
-                        if isinstance(subject, bytes):
-                            subject = subject.decode(encoding or "utf-8", errors="replace")
+                        # subject and multi-part encoded subjects
+                        raw_subject = msg["Subject"]
+                        if raw_subject is None:
+                            subject = ""
+                        else:
+                            parts = decode_header(raw_subject)
+                            subject_parts: list[str] = []
+                            for raw_part, encoding in parts:
+                                if isinstance(raw_part, bytes):
+                                    subject_parts.append(
+                                        raw_part.decode(encoding or "utf-8", errors="replace")
+                                    )
+                                elif isinstance(raw_part, str):
+                                    subject_parts.append(raw_part)
+                            subject = "".join(subject_parts)
                         from_addr = msg.get("From", "")
                         body_text = self._get_body(msg)
 
@@ -175,8 +185,8 @@ class SBAEmailClient:
                 reply["enriched"] = enriched
                 replies.append(reply)
 
-        except Exception as exc:
-            logger.error("Email check failed: %s", exc)
+        except Exception:
+            logger.exception("Email check failed")
 
         return replies
 
