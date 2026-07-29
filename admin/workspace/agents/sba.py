@@ -136,7 +136,45 @@ Summarise what you found. List leads with scores. Suggest next steps.
 - Save every promising lead using save_lead_record.
 - Use Hinglish when it helps communicate better.
 - Never refuse a task — agar Chrome nahi chal raha toh bhi analysis do.
-- Track your pipeline — know how many leads you've found in this session.
+- Track how many leads you've found in this session.
+
+## YOUR EMAIL TOOLS
+
+You can send and receive emails using the owner's email account (App Password).
+
+### Email Flow:
+1. **First Contact** — send_lead_email(to, subject, body) → Lead ko professional email
+2. **Check Replies** — check_lead_replies() — Dekho kisne reply kiya
+3. **LLM Analyze** — automatic — Reply ka sentiment + interest score check hoga
+
+### Owner Notification Flow:
+Jab lead reply kare:
+- LLM se analyze karo: interested hai? Time suggest kiya?
+- Owner ko email bhejo: "Boss, [Lead] interested hai! Confirm meeting?"
+- Owner "Haan" bole → create_meeting call karo
+- Owner "Nahi, [time]" bole → Lead ko re-schedule email
+- Owner "Nahi" bole → polite rejection email
+
+### Meeting Flow:
+1. create_meeting(lead_id, lead_name, lead_email, proposed_time)
+   → Calendar event create
+   → Google Meet link generate
+   → Lead ko confirmation email
+   → Owner ko BCC notification
+
+## YOUR TRANSLATION TOOLS
+
+Agar meeting mein client English ya koi aur language bole, toh translate karo:
+
+1. **translate_for_owner(text)** — Client ki baat ko Hinglish mein badlo (aapko samajh aaye)
+2. **translate_for_client(text)** — Aapki Hinglish baat ko professional English mein badlo (client ko samajh aaye)
+3. **generate_meeting_summary(segments)** — Meeting ka summary banao
+
+### Translation Example:
+- Client: "We need SEO optimization for our website"
+- → Aapko: "Client bol raha hai — unhe SEO optimization chahiye website ke liye"
+- Aap: "Haan bhai, kar sakte hain. Budget kya hai?"
+- → Client: "Yes, we can do that. What is your budget?"
 """
 
 
@@ -211,6 +249,117 @@ def _strip_think_blocks(content: str) -> str:
 
 # SBA has ALL Chrome tools + SBA-specific tools
 SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS
+
+# ── SBA Email/Meeting/Translate Tool Definitions ────────────────────────────
+
+SBA_EMAIL_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "send_lead_email",
+            "description": "Send first contact email to a lead. Uses owner's email (App Password).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to_email": {"type": "string", "description": "Lead's email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body_text": {"type": "string", "description": "Email body text"},
+                },
+                "required": ["to_email", "subject", "body_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_lead_replies",
+            "description": "Check email inbox for replies from leads. Returns list of new enriched replies.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mark_read": {
+                        "type": "boolean",
+                        "description": "Mark emails as read after checking",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_meeting",
+            "description": "Create a meeting with a lead. Calendar event + Meet link + email confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "Lead ID from store"},
+                    "lead_name": {"type": "string", "description": "Lead name"},
+                    "lead_email": {"type": "string", "description": "Lead email for invite"},
+                    "proposed_time": {"type": "string", "description": "ISO datetime (e.g. 2026-07-30T14:00:00)"},
+                },
+                "required": ["lead_id", "lead_name", "lead_email", "proposed_time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "translate_for_owner",
+            "description": "Translate client's message to Hinglish for the owner to understand.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Client's message to translate"},
+                    "source_lang": {
+                        "type": "string",
+                        "description": "Client's language (default: English)",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "translate_for_client",
+            "description": "Translate owner's Hinglish message to professional English for the client.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Owner's Hinglish message"},
+                    "target_lang": {
+                        "type": "string",
+                        "description": "Target language (default: English)",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_meeting_summary",
+            "description": "Generate a structured meeting summary from transcript segments (key points, action items, decisions).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "segments": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Transcript segments [{speaker, text, timestamp}]",
+                    },
+                },
+                "required": ["segments"],
+            },
+        },
+    },
+]
+
+# Extend SBA_ALL_TOOLS with email/meeting/translate tools
+SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS + SBA_EMAIL_TOOLS
 
 
 # ── Graph Nodes─────
@@ -356,17 +505,83 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                 "content": result_text,
             })
         else:
-            # SBA-specific tool (sync)
-            try:
-                result = execute_sba_tool(tool_name, tool_args)
-                result_text = json.dumps(result, indent=2, default=str)[:8000]
-            except Exception as exc:
-                result_text = f"Error executing {tool_name}: {exc}"
-            tool_results.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": result_text,
-            })
+            # Check if it's an email/meeting/translate tool (async)
+            SBA_NEW_TOOLS = {
+                "send_lead_email": None,
+                "check_lead_replies": None,
+                "create_meeting": None,
+                "translate_for_owner": None,
+                "translate_for_client": None,
+                "generate_meeting_summary": None,
+            }
+            if tool_name in SBA_NEW_TOOLS:
+                try:
+                    from admin.tools.sba_email_client import SBAEmailClient
+                    from admin.tools.sba_meeting import SBAMeetingManager
+                    from admin.tools.sba_translate import SBATranslationEngine
+
+                    async def _dispatch_new_tool(name: str, args: dict) -> str:
+                        if name == "send_lead_email":
+                            c = SBAEmailClient()
+                            sent = await c.send_email(
+                                to_email=args.get("to_email", ""),
+                                subject=args.get("subject", ""),
+                                body_text=args.get("body_text", ""),
+                            )
+                            return json.dumps({"sent": sent})
+                        elif name == "check_lead_replies":
+                            c = SBAEmailClient()
+                            replies = await c.check_replies(mark_read=args.get("mark_read", True))
+                            return json.dumps(replies, default=str, indent=2)[:8000]
+                        elif name == "create_meeting":
+                            m = SBAMeetingManager()
+                            meeting = await m.create_meeting(
+                                lead_id=args["lead_id"],
+                                lead_name=args["lead_name"],
+                                lead_email=args["lead_email"],
+                                proposed_time=args["proposed_time"],
+                            )
+                            return json.dumps(meeting, default=str, indent=2)[:8000]
+                        elif name == "translate_for_owner":
+                            t = SBATranslationEngine()
+                            result = await t.translate_for_owner(
+                                text=args["text"],
+                                source_lang=args.get("source_lang", "English"),
+                            )
+                            return json.dumps({"translation": result})
+                        elif name == "translate_for_client":
+                            t = SBATranslationEngine()
+                            result = await t.translate_for_client(
+                                text=args["text"],
+                                target_lang=args.get("target_lang", "English"),
+                            )
+                            return json.dumps({"translation": result})
+                        elif name == "generate_meeting_summary":
+                            t = SBATranslationEngine()
+                            summary = await t.generate_summary(args.get("segments", []))
+                            return json.dumps(summary, default=str, indent=2)[:8000]
+                        return json.dumps({"error": f"Unknown new tool: {name}"})
+
+                    result_text = await _dispatch_new_tool(tool_name, tool_args)
+                except Exception as exc:
+                    result_text = f"Error executing {tool_name}: {exc}"
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": result_text,
+                })
+            else:
+                # SBA-specific tool (sync)
+                try:
+                    result = execute_sba_tool(tool_name, tool_args)
+                    result_text = json.dumps(result, indent=2, default=str)[:8000]
+                except Exception as exc:
+                    result_text = f"Error executing {tool_name}: {exc}"
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": result_text,
+                })
 
     return {
         "messages": tool_results,
