@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-from admin.agency.sba_store import create_lead, list_leads
+from admin.agency.sba_store import create_lead, list_leads, update_lead
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,56 @@ def qualify_lead(
     }
 
 
+def update_lead_info(
+    lead_id: str,
+    industry: str = "",
+    needs: str = "",
+    scope: str = "",
+    next_steps: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    """Update lead with industry info and context from meeting."""
+    import asyncio
+
+    context_updates = {}
+    if industry:
+        context_updates["industry"] = industry
+    if needs:
+        context_updates["needs"] = [n.strip() for n in needs.split(",") if n.strip()]
+    if scope:
+        context_updates["scope"] = scope
+    if next_steps:
+        context_updates["next_steps"] = [s.strip() for s in next_steps.split(",") if s.strip()]
+
+    notes_list = []
+    if notes:
+        notes_list.append({"text": notes, "timestamp": __import__("datetime").datetime.now().isoformat()})
+
+    try:
+        loop = asyncio.get_event_loop()
+        lead = asyncio.run_coroutine_threadsafe(
+            update_lead(lead_id, {
+                "context": context_updates,
+                "notes": notes_list,
+            }),
+            loop,
+        ).result(timeout=10)
+    except RuntimeError:
+        lead = asyncio.run(
+            update_lead(lead_id, {
+                "context": context_updates,
+                "notes": notes_list,
+            })
+        )
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+    if not lead:
+        return {"status": "error", "error": f"Lead {lead_id} not found"}
+
+    return {"status": "ok", "lead_id": lead_id, "updated": {"context": context_updates}}
+
+
 # ── OpenAI function-calling tool definitions ──────────────────────────────
 
 SBA_TOOLS: list[dict[str, Any]] = [
@@ -325,6 +375,25 @@ SBA_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_lead_info",
+            "description": "Update a lead's info — especially industry/type, needs, scope, next_steps. Call this after meeting with client to save what you learned.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lead_id": {"type": "string", "description": "Lead ID to update"},
+                    "industry": {"type": "string", "description": "Client's industry (d2c, realestate, retail, service, tech, etc)"},
+                    "needs": {"type": "string", "description": "What the client needs (comma separated)"},
+                    "scope": {"type": "string", "description": "Agreed scope of work"},
+                    "next_steps": {"type": "string", "description": "Next steps agreed with client (comma separated)"},
+                    "notes": {"type": "string", "description": "Additional notes from conversation"},
+                },
+                "required": ["lead_id"],
+            },
+        },
+    },
 ]
 
 
@@ -335,6 +404,7 @@ SBA_TOOL_DISPATCH: dict[str, str] = {
     "save_lead_record": "save_lead_record",
     "list_saved_leads": "list_saved_leads",
     "qualify_lead": "qualify_lead",
+    "update_lead_info": "update_lead_info",
 }
 
 
@@ -360,6 +430,14 @@ def execute_sba_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             has_authority=args.get("has_authority", False),
             has_need=args.get("has_need", False),
             has_timeline=args.get("has_timeline", False),
+            notes=args.get("notes", ""),
+        ),
+        "update_lead_info": lambda: update_lead_info(
+            lead_id=args.get("lead_id", ""),
+            industry=args.get("industry", ""),
+            needs=args.get("needs", ""),
+            scope=args.get("scope", ""),
+            next_steps=args.get("next_steps", ""),
             notes=args.get("notes", ""),
         ),
     }

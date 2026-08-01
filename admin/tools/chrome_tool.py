@@ -107,6 +107,8 @@ class ChromeTool:
                     "--window-size=1920,1080",
                     "--no-first-run",
                     "--mute-audio",
+                    "--js-flags=--max-old-space-size=4096",
+                    "--disable-software-rasterizer",
                     "about:blank",
                 ],
                 stdout=subprocess.DEVNULL,
@@ -288,7 +290,7 @@ class ChromeTool:
             els = await p.locator("*").all()
             if idx < len(els):
                 return await self._safe(els[idx].inner_text())
-        return {"text": (await p.inner_text("body"))[:8000]}
+        return {"text": (await p.inner_text("body"))[:4000]}
 
     async def read(self, **kwargs) -> dict[str, Any]:
         return await self.text(**kwargs)

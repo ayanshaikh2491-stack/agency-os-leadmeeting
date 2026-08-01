@@ -119,6 +119,19 @@ async def update_lead(lid: str, updates: dict[str, Any]) -> dict[str, Any] | Non
     if not lead:
         return None
     now = _now_str()
+
+    # Merge context instead of replacing
+    if "context" in updates and isinstance(updates["context"], dict):
+        existing_context = lead.get("context", {})
+        existing_context.update(updates["context"])
+        updates["context"] = existing_context
+
+    # Merge notes instead of replacing
+    if "notes" in updates and isinstance(updates["notes"], list):
+        existing_notes = lead.get("notes", [])
+        existing_notes.extend(updates["notes"])
+        updates["notes"] = existing_notes
+
     lead.update(updates)
     lead["updated_at"] = now
 
@@ -299,6 +312,8 @@ async def create_handoff(lead_id: str, ceo_message: str = "") -> dict[str, Any]:
                 "date": m["date"],
                 "notes": m["notes"],
                 "summary": m["summary"],
+                "transcript": m.get("transcript", ""),
+                "transcript_analysis": m.get("transcript_analysis", None),
                 "action_items": m["action_items"],
                 "lead_response": m["lead_response"],
             })
@@ -316,6 +331,7 @@ async def create_handoff(lead_id: str, ceo_message: str = "") -> dict[str, Any]:
             "phone": lead["phone"],
             "score": lead["score"],
             "source": lead["source"],
+            "industry": lead.get("context", {}).get("industry", "unknown"),
             "key_signals": lead.get("context", {}).get("key_signals", ""),
             "client_needs": lead.get("context", {}).get("needs", []),
             "agreed_scope": lead.get("context", {}).get("scope", ""),

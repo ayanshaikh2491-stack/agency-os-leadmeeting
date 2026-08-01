@@ -27,6 +27,33 @@ from admin.persistence import get_workspace_db
 logger = logging.getLogger(__name__)
 
 
+def _fire_and_forget(coro: Any) -> None:
+    """Run a best-effort async write with or without a running loop.
+
+    Uses asyncio.create_task when a loop is running (FastAPI context),
+    otherwise runs it once in a fresh loop (sync context, e.g. scripts)
+    and closes the shared DB connection afterwards so the aiosqlite
+    worker thread does not keep the interpreter alive at exit.
+    """
+    try:
+        asyncio.get_running_loop()
+        asyncio.create_task(coro)
+    except RuntimeError:
+        # No running loop — run the write in a fresh loop instead of dropping it.
+        from admin.persistence import close_persistence
+
+        async def _run_and_close() -> None:
+            try:
+                await coro
+            finally:
+                await close_persistence()
+
+        try:
+            asyncio.run(_run_and_close())
+        except Exception as e:
+            logger.debug("Async write failed (sync context): %s", e)
+
+
 # ── Message Types ─────────────────────────────────────────────────────────────
 
 
@@ -100,7 +127,7 @@ def send_message(
             await db.commit()
         except Exception as e:
             logger.debug("SQLite message write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
 
     logger.info(
         "Agent message: %s -> %s [%s] %s",
@@ -284,7 +311,7 @@ def share_knowledge(
             await db.commit()
         except Exception as e:
             logger.debug("SQLite knowledge write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
 
     logger.info(
         "Knowledge shared from workspace %s: %s = %s",

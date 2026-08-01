@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -1264,8 +1265,8 @@ def campaign_report(
 
     # Platform breakdown from input (if provided)
     platform_breakdown = {}
-    meta_spend = metrics.get("meta_spend")
-    google_spend = metrics.get("google_spend")
+    meta_spend = (metrics or {}).get("meta_spend")
+    google_spend = (metrics or {}).get("google_spend")
     if meta_spend is not None and google_spend is not None and spend > 0:
         meta_ratio = meta_spend / spend
         google_ratio = google_spend / spend

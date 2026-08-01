@@ -54,10 +54,11 @@ CHROME_AGENT_PATH = os.getenv(
 CHROME_AGENT_BROWSER = os.getenv("CHROME_AGENT_BROWSER", "sba")
 CHROME_AGENT_STEALTH = os.getenv("CHROME_AGENT_STEALTH", "true").lower() in ("1", "true", "yes")
 
-# ── PostgreSQL ──────────────────────────────────────────────────────────────
+# ── PostgreSQL (optional) ────────────────────────────────────────────
+# Default to SQLite local DB. Override with DATABASE_URL env var for production PG.
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    f"postgresql+asyncpg://letta:letta@{HOST}:5432/tags_agency",
+    "sqlite+aiosqlite:///./tags_agency.db",
 )
 
 

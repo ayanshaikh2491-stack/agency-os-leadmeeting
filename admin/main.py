@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from admin.api.routes import kaggle as kaggle_routes
 from admin.api.routes import orchestrator as orch_routes
 from admin.api.routes import ads as ads_routes
 from admin.api.routes import analytics as analytics_routes
+from admin.api.routes import social as social_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db
@@ -31,10 +33,21 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown lifecycle."""
+    await init_db()
+    await load_all_from_db()
+    yield
+    await close_db()
+
+
 app = FastAPI(
     title="TAGS Agency OS",
     description="Multi-tenant agent orchestration backend",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # ── CORS — allow the Next.js frontend ──────────────────────────────────────
@@ -59,20 +72,7 @@ app.include_router(kaggle_routes.router)
 app.include_router(orch_routes.router)
 app.include_router(ads_routes.router)
 app.include_router(analytics_routes.router)
-
-
-# ── Startup / shutdown ──────────────────────────────────────────────────
-
-
-@app.on_event("startup")
-async def on_startup():
-    await init_db()
-    await load_all_from_db()
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    await close_db()
+app.include_router(social_routes.router)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────

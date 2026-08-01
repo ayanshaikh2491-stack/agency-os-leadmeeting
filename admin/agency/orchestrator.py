@@ -577,8 +577,175 @@ def workspace_ceo_to_agency_ceo(workspace_id: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AUTO-SETUP: Create agency workspace + seed client
+# SBA PIPELINE SCAN
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sba_pipeline_scan(workspace_id: str) -> dict[str, Any]:
+    """SBA pipeline scan — check pipeline health and report to CEO.
+
+    Runs on schedule to:
+      1. Check for stale leads needing follow-up
+      2. Check for hot leads ready for CEO handoff
+      3. Report pipeline summary to CEO
+    """
+    from admin.agency.sba_store import list_handoffs, list_leads
+
+    leads = list_leads()
+    handoffs = [h for h in list_handoffs() if not h.get("workspace_id")]
+
+    pipeline_counts: dict[str, int] = {}
+    for s in ["new", "contacted", "meeting", "proposal", "negotiation", "closed", "lost"]:
+        pipeline_counts[s] = len([l for l in leads if l["status"] == s])
+
+    hot_leads = [l for l in leads if l.get("score", 0) >= 80 and l["status"] not in ("closed", "lost")]
+
+    summary_parts = [
+        f"SBA Pipeline Scan: {len(leads)} total leads.",
+        f"Pipeline: {pipeline_counts}.",
+    ]
+    if hot_leads:
+        summary_parts.append(f"{len(hot_leads)} hot leads ready.")
+    if handoffs:
+        summary_parts.append(f"{len(handoffs)} pending CEO handoffs.")
+
+    report = submit_report(
+        from_workspace_id=workspace_id,
+        from_agent_type="sba",
+        to_agent_type="agency_ceo",
+        report_type="sba_pipeline",
+        title=f"SBA Pipeline: {len(leads)} leads, {len(hot_leads)} hot",
+        content={
+            "workspace_id": workspace_id,
+            "total_leads": len(leads),
+            "pipeline": pipeline_counts,
+            "hot_leads": [
+                {"id": l["id"], "name": l["name"], "score": l["score"]}
+                for l in hot_leads[:10]
+            ],
+            "pending_handoffs": len(handoffs),
+        },
+        summary=" ".join(summary_parts),
+    )
+
+    return {
+        "status": "scanned",
+        "total_leads": len(leads),
+        "pipeline": pipeline_counts,
+        "hot_leads": len(hot_leads),
+        "pending_handoffs": len(handoffs),
+        "report_id": report["id"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SBA EMAIL LEAD AUTO-CREATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def sba_check_email_leads() -> dict[str, Any]:
+    """SBA checks email inbox for new lead inquiries and auto-creates leads.
+
+    Returns summary of what was found and created.
+    """
+    from admin.tools.email_service import EmailLeadService
+
+    service = EmailLeadService()
+    if not service.enabled:
+        return {"status": "disabled", "message": "Email service not configured"}
+
+    created = await service.process_and_create_leads(auto_qualify=True)
+    return {
+        "status": "checked",
+        "emails_processed": len(created),
+        "leads_created": [
+            {"id": l["id"], "name": l["name"], "score": l.get("score", 0)}
+            for l in created
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CEO-SBA INTEGRATION: Auto workspace creation on hand══════════════════════════════════════════════════════════════
+
+
+async def ceo_process_sba_handoff(handoff_id: str) -> dict[str, Any]:
+    """CEO processes an SBA handoff: creates workspace + registers agents.
+
+    This wires SBA --> CEO flow:
+      1. Take the handoff
+      2. Auto-create a client workspace
+      3. Register all agents
+      4. Set up default schedules
+      5. Return workspace info
+    """
+    from admin.agency.sba_store import get_handoff, mark_handoff_workspace_created
+
+    handoff = get_handoff(handoff_id)
+    if not handoff:
+        return {"error": f"Handoff {handoff_id} not found"}
+
+    brief = handoff.get("brief", {})
+    lead_name = brief.get("lead_name", "New Client")
+    business_name = brief.get("business_name", lead_name)
+
+    # Create workspace
+    ws = create_workspace(
+        name=f"{business_name} Workspace",
+        client_name=business_name,
+        workspace_type="client",
+        settings={
+            "lead_name": lead_name,
+            "handoff_id": handoff_id,
+            "source": brief.get("source", "sba_handoff"),
+        },
+    )
+    ws_id = ws["id"]
+
+    # Register all agents
+    for agent_type in ["sba", "seo", "content", "website", "social", "ads", "analytics"]:
+        register_agent(ws_id, agent_type, config={
+            "lead_name": lead_name,
+            "business_name": business_name,
+            "handoff_source": "sba",
+        })
+
+    # Set up default schedules
+    from admin.agency.scheduler import setup_default_schedules
+    setup_default_schedules(ws_id)
+
+    # Mark handoff as processed
+    await mark_handoff_workspace_created(handoff_id, ws_id)
+
+    # Submit report to CEO
+    report = submit_report(
+        from_workspace_id=ws_id,
+        from_agent_type="sba",
+        to_agent_type="agency_ceo",
+        report_type="workspace_created",
+        title=f"Workspace created: {business_name}",
+        content={
+            "workspace_id": ws_id,
+            "workspace_name": ws["name"],
+            "client_name": business_name,
+            "handoff_id": handoff_id,
+            "agents_registered": ["sba", "seo", "content", "website", "social", "ads", "analytics"],
+        },
+        summary=f"SBA handoff processed. Workspace '{business_name}' created with all agents.",
+    )
+
+    return {
+        "status": "workspace_created",
+        "workspace_id": ws_id,
+        "workspace_name": ws["name"],
+        "client_name": business_name,
+        "agents_registered": 7,
+        "report_id": report["id"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-SETUP: Create agency workspace + seed client══════════════════════════════════════════════════════════════════════════
 
 def setup_agency() -> dict[str, Any]:
     """Create the agency workspace with all agent slots."""

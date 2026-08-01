@@ -89,22 +89,22 @@ to actually find them. For every new client, your first step is:
 
 ### Chrome Browser Tools (use these to BROWSE and FIND leads)
 Use chrome_goto → chrome_inspect → chrome_extract pipeline:
-1. chrome_goto(url) — Navigate to a lead source
-2. chrome_inspect() — See page structure, get element UIDs
-3. chrome_extract(selector, limit) — Extract lead data from results
-4. chrome_click(uid) — Click elements
-5. chrome_fill(value, uid) — Fill search forms
-6. chrome_text(uid) — Read text from page
-7. chrome_scroll() — Load more results
-8. chrome_wait(what, pattern) — Wait for content
+1. chrome_goto — Navigate to a lead source
+2. chrome_inspect — See page structure, get element UIDs
+3. chrome_extract — Extract lead data from results
+4. chrome_click — Click elements
+5. chrome_fill — Fill search forms
+6. chrome_text — Read text from page
+7. chrome_scroll — Load more results
+8. chrome_wait — Wait for content
 
 ### Lead Strategy Tools
-9. detect_lead_sources(industry, market) — Get platform recommendations
-10. save_lead_record(name, business_name, source, ...) — Save a lead
+9. detect_lead_sources — Get platform recommendations
+10. save_lead_record — Save a lead
 
 ### Lead Management Tools
-11. list_saved_leads(status) — See your pipeline
-12. qualify_lead(lead_score, ...) — BANT qualification
+11. list_saved_leads — See your pipeline
+12. qualify_lead — BANT qualification
 
 ## YOUR THINKING PROCESS
 Before answering, reason through these phases inside ```think blocks:
@@ -143,8 +143,8 @@ Summarise what you found. List leads with scores. Suggest next steps.
 You can send and receive emails using the owner's email account (App Password).
 
 ### Email Flow:
-1. **First Contact** — send_lead_email(to, subject, body) → Lead ko professional email
-2. **Check Replies** — check_lead_replies() — Dekho kisne reply kiya
+1. **First Contact** — send_lead_email tool → Lead ko professional email
+2. **Check Replies** — check_lead_replies tool — Dekho kisne reply kiya
 3. **LLM Analyze** — automatic — Reply ka sentiment + interest score check hoga
 
 ### Owner Notification Flow:
@@ -156,7 +156,7 @@ Jab lead reply kare:
 - Owner "Nahi" bole → polite rejection email
 
 ### Meeting Flow:
-1. create_meeting(lead_id, lead_name, lead_email, proposed_time)
+1. create_meeting tool use karo
    → Calendar event create
    → Google Meet link generate
    → Lead ko confirmation email
@@ -166,15 +166,30 @@ Jab lead reply kare:
 
 Agar meeting mein client English ya koi aur language bole, toh translate karo:
 
-1. **translate_for_owner(text)** — Client ki baat ko Hinglish mein badlo (aapko samajh aaye)
-2. **translate_for_client(text)** — Aapki Hinglish baat ko professional English mein badlo (client ko samajh aaye)
-3. **generate_meeting_summary(segments)** — Meeting ka summary banao
+1. **translate_for_owner** — Client ki baat ko Hinglish mein badlo (aapko samajh aaye)
+2. **translate_for_client** — Aapki Hinglish baat ko professional English mein badlo (client ko samajh aaye)
+3. **generate_meeting_summary** — Meeting ka summary banao
+
+### AFTER MEETING — CRITICAL: Save Industry & Context
+
+Meeting ke baad, yeh 3 kaam karna CRITICAL hai:
+
+1. **Puchho client ka industry/type** — "Aapka business kis type ka hai? D2C/Ecommerce? Real Estate? Service Business? Retail?"
+2. **Update lead info** — update_lead_info tool call karo
+3. **Create handoff** — Jab sab info save ho jaye, tab `create_meeting` ke saath handoff process karo
+
+Is tarah CEO ko pata chalega ki client kis industry ka hai aur uske hisaab se agents set kar payega.
 
 ### Translation Example:
 - Client: "We need SEO optimization for our website"
 - → Aapko: "Client bol raha hai — unhe SEO optimization chahiye website ke liye"
 - Aap: "Haan bhai, kar sakte hain. Budget kya hai?"
 - → Client: "Yes, we can do that. What is your budget?"
+
+## TOOL CALL FORMAT
+Jab bhi tool call karo, sirf tool ka EXACT naam use karo (jaise chrome_goto, detect_lead_sources).
+Arguments hamesha ek valid JSON object ke roop mein do: {{"key": "value"}}.
+Tool signatures ya markdown code blocks kabhi mat likho.
 """
 
 
@@ -365,6 +380,56 @@ SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS + SBA_EMAIL_TOOLS
 # ── Graph Nodes─────
 
 
+# Max retries when Groq rejects a malformed tool call.
+# llama-3.3-70b-versatile occasionally emits a function call in the wrong
+# format (e.g. name+args as one string). A corrective retry fixes it.
+MAX_LLM_TOOL_RETRIES = 2
+
+
+async def _llm_call_with_retry(
+    client_api: openai.AsyncOpenAI,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> Any:
+    """Call the LLM with tools, retrying on tool_use_failed errors.
+
+    Lower temperature keeps function calling stable, and a corrective
+    system note helps the model recover if it emits a malformed call.
+    """
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_LLM_TOOL_RETRIES + 1):
+        try:
+            return await client_api.chat.completions.create(
+                model=settings.WORKSPACE_AGENT_MODEL,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.3,
+                max_tokens=4096,
+            )
+        except openai.BadRequestError as exc:
+            last_exc = exc
+            body = exc.body or {}
+            code = (body.get("error") or {}).get("code", "") if isinstance(body, dict) else ""
+            if code != "tool_use_failed" or attempt >= MAX_LLM_TOOL_RETRIES:
+                raise
+            logger.warning("SBA tool call rejected (attempt %d), retrying with correction", attempt + 1)
+            messages = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "[System correction] Tumhara last function call galat format mein tha "
+                        "aur reject ho gaya. Sirf tool ka EXACT naam use karo aur arguments "
+                        "ek valid JSON object mein do, jaise: {\"key\": \"value\"}. "
+                        "Koi aur text mat likho, sirf function call do."
+                    ),
+                }
+            ]
+
+    raise last_exc  # pragma: no cover
+
+
 async def sba_call_llm(state: SBAAgentState) -> dict[str, Any]:
     """Call the LLM with Chrome + SBA tools. Returns tool calls or final response."""
     system = SBA_SYSTEM_PROMPT.format(
@@ -387,13 +452,10 @@ async def sba_call_llm(state: SBAAgentState) -> dict[str, Any]:
             api_key=settings.WORKSPACE_API_KEY or None,
             base_url=settings.WORKSPACE_API_BASE or None,
         )
-        response = await client_api.chat.completions.create(
-            model=settings.WORKSPACE_AGENT_MODEL,
+        response = await _llm_call_with_retry(
+            client_api,
             messages=messages,
             tools=SBA_ALL_TOOLS,
-            tool_choice="auto",
-            temperature=0.7,
-            max_tokens=8192,
         )
     except Exception as exc:
         logger.exception("SBA Agent LLM call failed")
@@ -532,7 +594,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                         elif name == "check_lead_replies":
                             c = SBAEmailClient()
                             replies = await c.check_replies(mark_read=args.get("mark_read", True))
-                            return json.dumps(replies, default=str, indent=2)[:8000]
+                            return json.dumps(replies, default=str, indent=2)[:4000]
                         elif name == "create_meeting":
                             m = SBAMeetingManager()
                             meeting = await m.create_meeting(
@@ -541,7 +603,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                                 lead_email=args["lead_email"],
                                 proposed_time=args["proposed_time"],
                             )
-                            return json.dumps(meeting, default=str, indent=2)[:8000]
+                            return json.dumps(meeting, default=str, indent=2)[:4000]
                         elif name == "translate_for_owner":
                             t = SBATranslationEngine()
                             result = await t.translate_for_owner(
@@ -559,7 +621,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                         elif name == "generate_meeting_summary":
                             t = SBATranslationEngine()
                             summary = await t.generate_summary(args.get("segments", []))
-                            return json.dumps(summary, default=str, indent=2)[:8000]
+                            return json.dumps(summary, default=str, indent=2)[:4000]
                         return json.dumps({"error": f"Unknown new tool: {name}"})
 
                     result_text = await _dispatch_new_tool(tool_name, tool_args)
@@ -574,7 +636,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                 # SBA-specific tool (sync)
                 try:
                     result = execute_sba_tool(tool_name, tool_args)
-                    result_text = json.dumps(result, indent=2, default=str)[:8000]
+                    result_text = json.dumps(result, indent=2, default=str)[:4000]
                 except Exception as exc:
                     result_text = f"Error executing {tool_name}: {exc}"
                 tool_results.append({

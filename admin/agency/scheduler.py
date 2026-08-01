@@ -140,6 +140,9 @@ def run_due_tasks() -> dict[str, Any]:
             elif task_type == "workspace_ceo_to_agency":
                 from admin.agency.orchestrator import workspace_ceo_to_agency_ceo
                 result = workspace_ceo_to_agency_ceo(workspace_id)
+            elif task_type == "sba_pipeline_scan":
+                from admin.agency.orchestrator import sba_pipeline_scan
+                result = sba_pipeline_scan(workspace_id)
             else:
                 from admin.tools.seo_tools import execute_seo_tool
                 result = execute_seo_tool(task_type, params)
@@ -229,6 +232,13 @@ def setup_default_schedules(workspace_id: str) -> list[dict[str, Any]]:
     # Daily: SEO scan + report up chain
     schedules.append(create_schedule(
         workspace_id, "seo_scan",
+        params={},
+        frequency="daily",
+    ))
+
+    # SBA: lead pipeline scan every 6 hours
+    schedules.append(create_schedule(
+        workspace_id, "sba_pipeline_scan",
         params={},
         frequency="daily",
     ))

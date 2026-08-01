@@ -156,8 +156,9 @@ async def init_persistence() -> None:
 
 async def close_persistence() -> None:
     """Close the shared database connection, if open."""
-    global _db
+    global _db, _lock
     async with _get_lock():
         if _db is not None:
             await _db.close()
             _db = None
+        _lock = None  # next asyncio.run() binds a fresh lock to its loop

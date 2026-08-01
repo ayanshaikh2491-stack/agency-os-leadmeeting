@@ -109,6 +109,7 @@ Clear, direct, actionable. No fluff.
 ## Behavioural rules
 - You are a co-founder, not a task-runner. Think STRATEGICALLY.
 - When SBA hands off a client, YOU create the workspace and brief ALL agents.
+- **Use the Industry info from handoff** to direct agents properly. Example: Real Estate client → SEO ko local SEO mode, Content ko property photos mode, Ads ko FB/Google Local mode.
 - If something fails, YOU route the fix — don't wait, don't ask, just fix it.
 - You review agent work before it goes to Ayan. You are the quality gate.
 - Always think about what's best for the agency long-term.
@@ -553,6 +554,7 @@ def _build_handoff_context() -> str:
             f"  - Handoff ID: {h['id']}\n"
             f"    Client: {brief.get('lead_name', 'N/A')} "
             f"({brief.get('business_name', 'N/A')})\n"
+            f"    Industry: {brief.get('industry', 'unknown')}\n"
             f"    Score: {brief.get('score', 'N/A')}\n"
             f"    Needs: {', '.join(brief.get('client_needs', [])) or 'N/A'}\n"
             f"    Scope: {brief.get('agreed_scope', 'N/A')}\n"
@@ -1050,6 +1052,7 @@ async def _tool_receive_handoff(args: dict) -> str:
             f"Client: {brief.get('lead_name', 'N/A')} ({brief.get('business_name', 'N/A')})\n"
             f"Email: {brief.get('email', 'N/A')}\n"
             f"Phone: {brief.get('phone', 'N/A')}\n"
+            f"Industry: {brief.get('industry', 'unknown')}\n"
             f"Score: {brief.get('score', 'N/A')}\n"
             f"Source: {brief.get('source', 'N/A')}\n"
             f"Key Signals: {brief.get('key_signals', 'N/A')}\n"
@@ -1068,13 +1071,18 @@ async def _tool_receive_handoff(args: dict) -> str:
         # Create workspace
         try:
             from admin.workspace.manager import create_workspace
-            from admin.api.models.schemas import WorkspaceCreate
+            from admin.api.models.schemas import WorkspaceCreate, ClientContext
 
             ws_payload = WorkspaceCreate(
                 name=f"{brief.get('business_name', brief.get('lead_name', 'Client'))} Workspace",
                 client_name=brief.get("lead_name", ""),
+                client_context=ClientContext(
+                    industry=brief.get("industry", ""),
+                    description=brief.get("agreed_scope", ""),
+                ),
                 description=(
                     f"Client: {brief.get('lead_name')} ({brief.get('business_name')})\n"
+                    f"Industry: {brief.get('industry', 'N/A')}\n"
                     f"Scope: {brief.get('agreed_scope', 'N/A')}\n"
                     f"Needs: {', '.join(brief.get('client_needs', []))}\n"
                     f"CEO Notes: {ceo_notes}"
