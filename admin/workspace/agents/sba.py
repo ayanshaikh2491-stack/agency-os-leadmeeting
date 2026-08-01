@@ -447,6 +447,19 @@ async def sba_call_llm(state: SBAAgentState) -> dict[str, Any]:
     if not has_user:
         messages.append({"role": "user", "content": "Hello"})
 
+    # Near the tool-round cap: tell the model to wrap up with a real answer
+    # using data already collected, instead of starting more searches.
+    tool_round = state.get("tool_round", 0)
+    if tool_round >= MAX_TOOL_ROUNDS - 2:
+        messages.append({
+            "role": "user",
+            "content": (
+                "[System] Tum tool-round limit ke paas ho. Ab koi nayi search ya "
+                "naya tool mat chalao. Jo data pehle mil chuka hai usi se final "
+                "answer do: potential lead sources, kya mila, aur next steps."
+            ),
+        })
+
     try:
         client_api = openai.AsyncOpenAI(
             api_key=settings.WORKSPACE_API_KEY or None,
@@ -671,6 +684,21 @@ async def sba_finalize(state: SBAAgentState) -> dict[str, Any]:
     if state.get("error"):
         return {"final_output": f"SBA Agent error: {state['error'][:200]}"}
 
+    # Synthesize a readable summary from tool results (max-rounds case).
+    tool_outputs: list[str] = []
+    for msg in state.get("messages", []):
+        if isinstance(msg, dict) and msg.get("role") == "tool" and msg.get("content"):
+            text = str(msg["content"]).strip()
+            if text and text not in tool_outputs:
+                tool_outputs.append(text[:600])
+
+    if tool_outputs:
+        lines = ["SBA lead generation summary (tool data):", ""]
+        for i, text in enumerate(tool_outputs[:8], 1):
+            lines.append(f"{i}. {text}")
+            lines.append("")
+        return {"final_output": "\n".join(lines)}
+
     # Use thinking phases as fallback
     phases = state.get("thinking_phases", [])
     if phases:
@@ -758,7 +786,11 @@ class SBAAgent:
         try:
             result = await self.graph.ainvoke(
                 initial_state,
-                config={"configurable": {"thread_id": self._thread_id}},
+                config={
+                    "configurable": {"thread_id": self._thread_id},
+                    # 12 tool rounds x 2 nodes + finalize > default 25
+                    "recursion_limit": 100,
+                },
             )
         except Exception:
             logger.exception("SBA Agent execution failed")
@@ -767,6 +799,13 @@ class SBAAgent:
                 "Thodi der mein try karte hain.",
                 [],
             )
+        finally:
+            # Release the playwright connection so its driver subprocess
+            # doesn't leak at loop shutdown. Chrome daemon stays alive.
+            try:
+                await self._chrome.close()
+            except Exception:
+                pass
 
         final_output = result.get("final_output", "")
         thinking_phases = result.get("thinking_phases", [])

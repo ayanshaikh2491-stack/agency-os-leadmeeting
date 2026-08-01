@@ -27,3 +27,5 @@ agent_gpu_job_*.json
 
 # Docs
 docs/superpowers/
+# Local secrets  
+.env  

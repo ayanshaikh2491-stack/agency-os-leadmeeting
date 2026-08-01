@@ -35,7 +35,10 @@ COOKIE_FILE_PATH = "/tmp/sba_cookies.json"
 def _cdp_port_for_workspace(workspace: str) -> int:
     if workspace in ("agency", "sba", ""):
         return BASE_CDP_PORT
-    return BASE_CDP_PORT + 1 + (abs(hash(workspace)) % 100)
+    # Stable across processes (builtin hash() is randomized per process).
+    import hashlib
+    digest = hashlib.sha256(workspace.encode("utf-8")).hexdigest()
+    return BASE_CDP_PORT + 1 + (int(digest[:8], 16) % 100)
 
 
 try:
@@ -95,6 +98,11 @@ class ChromeTool:
             user_data = os.path.expanduser(r"~\.sba-chrome-profile")
             os.makedirs(user_data, exist_ok=True)
 
+            # Kill stale daemons holding this profile (Chrome won't start with
+            # the user-data-dir locked). Only targets our own daemons, never
+            # the user's real Chrome.
+            self._kill_stale_daemons(user_data)
+
             subprocess.Popen(
                 [
                     chrome_exe,
@@ -119,6 +127,51 @@ class ChromeTool:
             logger.info("Auto-started Chrome daemon on port %s", self.cdp_port)
         except Exception as e:
             logger.warning("Failed to auto-start Chrome: %s", e)
+
+    def _kill_stale_daemons(self, user_data: str) -> None:
+        """Kill leftover SBA Chrome daemons locking the profile dir.
+
+        Scans chrome.exe processes and kills only ones whose command line
+        references ``user_data``. The current CDP port is left alone so an
+        already-running daemon for this workspace is reused.
+        """
+        try:
+            import subprocess as sp
+            import json
+            script = (
+                "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+            )
+            out = sp.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True, text=True, timeout=15,
+                creationflags=sp.CREATE_NO_WINDOW if hasattr(sp, "CREATE_NO_WINDOW") else 0,
+            )
+            raw = out.stdout.strip()
+            if not raw or raw == "null":
+                return
+            try:
+                procs = json.loads(raw)
+            except json.JSONDecodeError:
+                return
+            if isinstance(procs, dict):
+                procs = [procs]
+            own_port = f"--remote-debugging-port={self.cdp_port}"
+            for proc in procs:
+                cmdline = proc.get("CommandLine") or ""
+                pid = proc.get("ProcessId")
+                if not pid or user_data not in cmdline:
+                    continue
+                if own_port in cmdline:
+                    continue  # healthy daemon for this workspace
+                sp.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, timeout=10,
+                    creationflags=sp.CREATE_NO_WINDOW if hasattr(sp, "CREATE_NO_WINDOW") else 0,
+                )
+                logger.info("Killed stale SBA Chrome daemon (pid %s)", pid)
+        except Exception as exc:
+            logger.warning("Stale daemon cleanup skipped: %s", exc)
 
     async def _random_delay(self, min_s: float = 0.5, max_s: float = 2.0):
         await asyncio.sleep(random.uniform(min_s, max_s))
@@ -348,6 +401,16 @@ class ChromeTool:
 
     async def close(self, **kwargs) -> dict[str, Any]:
         self._page = None
+        # Stop the playwright driver (Node subprocess) so no asyncio
+        # transports leak at loop shutdown. The Chrome daemon itself is a
+        # separate persistent process and stays alive for the next call.
+        try:
+            if self._play:
+                await self._play.stop()
+        except Exception:
+            pass
+        self._play = None
+        self._browser = None
         return {"text": "page released"}
 
     async def eval(self, expression: str) -> dict[str, Any]:
