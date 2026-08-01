@@ -34,7 +34,11 @@ if _using_fallback or "sqlite" in DATABASE_URL or "postgresql" not in DATABASE_U
     _fallback_url = "sqlite+aiosqlite:///./tags_agency.db"
     try:
         import aiosqlite  # noqa: F401
-        engine = create_async_engine(_fallback_url, echo=False)
+        # NullPool: every session opens its own connection. aiosqlite workers are
+        # loop-bound, so pooled connections break when sync code calls
+        # asyncio.run() multiple times (each run creates a fresh loop).
+        from sqlalchemy.pool import NullPool
+        engine = create_async_engine(_fallback_url, echo=False, poolclass=NullPool)
         logger.info("Using SQLite fallback: %s", _fallback_url)
     except ImportError:
         logger.warning("aiosqlite not installed — DB persistence disabled")

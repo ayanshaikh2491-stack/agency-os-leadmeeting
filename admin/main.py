@@ -37,9 +37,12 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
+    from admin.persistence import close_persistence, set_persistent_mode
+    set_persistent_mode(True)  # long-running loop owns the shared DB connection
     await init_db()
     await load_all_from_db()
     yield
+    await close_persistence()
     await close_db()
 
 

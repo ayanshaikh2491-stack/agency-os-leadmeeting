@@ -30,18 +30,28 @@ logger = logging.getLogger(__name__)
 def _fire_and_forget(coro: Any) -> None:
     """Run a best-effort async write with or without a running loop.
 
-    Uses asyncio.create_task when a loop is running (FastAPI context),
-    otherwise runs it once in a fresh loop (sync context, e.g. scripts)
-    and closes the shared DB connection afterwards so the aiosqlite
-    worker thread does not keep the interpreter alive at exit.
+    - Loop running (FastAPI or script): schedule the write as a task.
+      In script mode (loop not marked persistent) the shared DB connection
+      is closed after the write so the aiosqlite worker thread does not
+      keep the interpreter alive at exit.
+    - No running loop (sync context, e.g. scripts): run the write once in a
+      fresh loop and close the connection afterwards.
     """
+    from admin.persistence import close_persistence, in_persistent_mode
+
     try:
         asyncio.get_running_loop()
-        asyncio.create_task(coro)
+
+        async def _run_and_maybe_close() -> None:
+            try:
+                await coro
+            finally:
+                if not in_persistent_mode():
+                    await close_persistence()
+
+        asyncio.create_task(_run_and_maybe_close())
     except RuntimeError:
         # No running loop — run the write in a fresh loop instead of dropping it.
-        from admin.persistence import close_persistence
-
         async def _run_and_close() -> None:
             try:
                 await coro

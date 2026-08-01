@@ -13,6 +13,7 @@ from typing import Any
 
 from admin.api.models.schemas import WorkspaceCreate, WorkspaceOut
 from admin.persistence import get_workspace_db, row_to_dict
+from admin.workspace.agent_bus import _fire_and_forget
 
 import logging
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ def _sync_ws_to_db(record: dict[str, Any]) -> None:
             await db.commit()
         except Exception as e:
             logger.debug("SQLite write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
 
 
 def create_workspace(payload: WorkspaceCreate) -> WorkspaceOut:
@@ -179,7 +180,7 @@ def store_agent_output(
             await db.commit()
         except Exception as e:
             logger.debug("SQLite agent_output write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
     return record
 
 
@@ -235,7 +236,7 @@ def store_review(
             await db.commit()
         except Exception as e:
             logger.debug("SQLite review write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
 
     return record
 
@@ -285,7 +286,7 @@ def store_error(
             await db.commit()
         except Exception as e:
             logger.debug("SQLite error_log write failed: %s", e)
-    asyncio.create_task(_write())
+    _fire_and_forget(_write())
 
     return record
 

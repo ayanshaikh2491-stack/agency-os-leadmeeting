@@ -1,122 +1,80 @@
-"""Quick import + smoke test for orchestrator system."""
+"""Orchestrator quick smoke tests — workspace CRUD, report chain, scheduler, planner."""
 import sys
+from datetime import datetime, timezone
+
 sys.path.insert(0, ".")
 
-print("=== IMPORTS ===")
 
-try:
-    from admin.agency.orchestrator import (
+def test_orchestrator_imports():
+    from admin.agency.orchestrator import (  # noqa: F401
         create_workspace, list_workspaces, get_workspace, delete_workspace,
         register_agent, submit_report, get_pending_reports,
-        run_seo_agent_for_workspace, aggregate_client_reports, submit_sba_to_ceo,
-        setup_agency, setup_client_workspace
+        run_seo_agent_for_workspace, setup_agency, setup_client_workspace,
     )
-    print("  [PASS] orchestrator imports")
-except Exception as e:
-    print(f"  [FAIL] orchestrator imports: {e}")
-    sys.exit(1)
-
-try:
-    from admin.agency.planner import create_seo_plan, execute_plan, get_plans
-    print("  [PASS] planner imports")
-except Exception as e:
-    print(f"  [FAIL] planner imports: {e}")
-    sys.exit(1)
-
-try:
-    from admin.agency.scheduler import (
+    from admin.agency.scheduler import (  # noqa: F401
         create_schedule, get_schedules, run_due_tasks, get_due_tasks,
-        setup_default_schedules, setup_agency_schedules
+        setup_default_schedules,
     )
-    print("  [PASS] scheduler imports")
-except Exception as e:
-    print(f"  [FAIL] scheduler imports: {e}")
-    sys.exit(1)
+    from admin.api.routes.orchestrator import router  # noqa: F401
 
-try:
-    from admin.api.routes.orchestrator import router
-    paths = [r.path for r in router.routes if hasattr(r, "path")]
-    print(f"  [PASS] API routes: {len(paths)} endpoints")
-    for p in sorted(paths):
-        print(f"         {p}")
-except Exception as e:
-    print(f"  [FAIL] API routes: {e}")
-    sys.exit(1)
 
-print("\n=== WORKSPACE CRUD ===")
+def test_workspace_crud():
+    from admin.agency.orchestrator import (
+        create_workspace, delete_workspace, get_workspace, list_workspaces,
+    )
 
-ws = create_workspace("TestClient", "John Doe", "client", {"target_url": "https://example.com"})
-print(f"  [PASS] Created workspace: {ws['id']}")
-assert ws["name"] == "TestClient"
+    ws = create_workspace("SmokeClient", "John Doe", "client", {"target_url": "https://example.com"})
+    try:
+        assert ws["name"] == "SmokeClient"
+        assert ws["id"]
+        assert any(w["id"] == ws["id"] for w in list_workspaces())
+        got = get_workspace(ws["id"])
+        assert got["id"] == ws["id"]
+    finally:
+        delete_workspace(ws["id"])
 
-all_ws = list_workspaces()
-print(f"  [PASS] Listed workspaces: {len(all_ws)} found")
 
-got = get_workspace(ws["id"])
-assert got["id"] == ws["id"]
-print("  [PASS] Get workspace by ID")
+def test_report_chain():
+    from admin.agency.orchestrator import (
+        get_pending_reports, setup_agency, setup_client_workspace, submit_report,
+    )
 
-print("\n=== REPORTING CHAIN (without live crawling) ===")
+    agency = setup_agency()
+    client = setup_client_workspace("SmokeDemo", "https://example.com", ["seo tips", "marketing"])
+    try:
+        report = submit_report(
+            client["id"], "seo", "seo", "agency",
+            "onpage_check",
+            {"url": "https://example.com", "seo_score": 75},
+            summary="Demo report for testing",
+        )
+        assert report["id"]
+        pending = get_pending_reports("seo")
+        assert isinstance(pending, list)
+    finally:
+        from admin.agency.orchestrator import delete_workspace
+        delete_workspace(client["id"])
+        delete_workspace(agency["id"])
 
-agency = setup_agency()
-client = setup_client_workspace("DemoClient", "https://example.com", ["seo tips", "marketing"])
-print(f"  [PASS] Setup: agency={agency['id']}, client={client['id']}")
 
-# Submit a manual report to test the chain
-report = submit_report(
-    client["id"], "seo", "seo", "agency",
-    "onpage_check",
-    {"url": "https://example.com", "seo_score": 75},
-    summary="Demo report for testing"
-)
-print(f"  [PASS] Report submitted: {report['id']}")
+def test_planner_creates_plan():
+    from admin.agency.planner import create_seo_plan
 
-pending = get_pending_reports("seo")
-print(f"  [PASS] Pending reports for agency SEO: {len(pending)}")
+    plan = create_seo_plan("smoke_ws", "https://example.com", ["seo", "marketing"])
+    assert "tasks" in plan
+    assert len(plan["tasks"]) > 0
 
-# Test aggregator (will work even with empty/old reports)
-try:
-    agg = aggregate_client_reports()
-    print(f"  [PASS] Aggregated reports -> submitted to SBA")
-except Exception as e:
-    print(f"  [INFO] Aggregate (ok if no fresh reports): {e}")
 
-try:
-    sba = submit_sba_to_ceo()
-    print(f"  [PASS] SBA -> CEO briefing submitted")
-except Exception as e:
-    print(f"  [INFO] SBA->CEO (ok if no fresh reports): {e}")
+def test_scheduler_due_tasks():
+    from admin.agency.orchestrator import delete_workspace
+    from admin.agency.scheduler import (
+        _schedules, create_schedule, get_due_tasks, get_schedules,
+    )
 
-print("\n=== PLANNER ===")
-
-plan = create_seo_plan("test_ws", "https://example.com", ["seo", "marketing"])
-print(f"  [PASS] Plan created: {len(plan['tasks'])} tasks")
-for t in plan["tasks"]:
-    print(f"         [{t['priority']}] {t['type']}: {t['status']}")
-
-print("\n=== SCHEDULER ===")
-
-sched = create_schedule("test_ws", "onpage_check", {"url": "https://x.com"}, "daily")
-print(f"  [PASS] Schedule created: {sched['id']}")
-assert sched["frequency"] == "daily"
-
-schedules = get_schedules("test_ws")
-print(f"  [PASS] Schedules for test_ws: {len(schedules)}")
-
-# Force a schedule to be due
-scheds = get_schedules()
-from admin.agency.scheduler import _schedules
-for s in scheds:
-    _schedules[s["id"]]["next_run"] = "2020-01-01T00:00:00+00:00"
-due = get_due_tasks()
-print(f"  [PASS] Due tasks detected: {len(due)}")
-
-print("\n=== CLEANUP ===")
-delete_workspace(agency["id"])
-delete_workspace(client["id"])
-delete_workspace(ws["id"])
-print("  [PASS] Cleaned up test workspaces")
-
-print("\n" + "=" * 50)
-print("ALL TESTS PASSED!")
-print("=" * 50)
+    sched = create_schedule("smoke_ws", "onpage_check", {"url": "https://x.com"}, "daily")
+    assert sched["frequency"] == "daily"
+    # Force due so get_due_tasks sees it
+    for s in get_schedules():
+        _schedules[s["id"]]["next_run"] = "2020-01-01T00:00:00+00:00"
+    due = get_due_tasks()
+    assert isinstance(due, list)

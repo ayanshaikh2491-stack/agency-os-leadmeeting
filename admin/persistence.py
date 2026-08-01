@@ -13,6 +13,23 @@ import aiosqlite
 
 _db: aiosqlite.Connection | None = None
 _lock: asyncio.Lock | None = None
+_persistent_mode: bool = False  # True when a long-running app (FastAPI) owns the loop
+
+
+def set_persistent_mode(value: bool) -> None:
+    """Mark the current loop as long-running (FastAPI) vs script.
+
+    In persistent mode, fire-and-forget writes keep the shared connection
+    open across calls. In script mode, the connection is closed after each
+    write so the non-daemon aiosqlite thread does not keep the interpreter
+    alive at exit.
+    """
+    global _persistent_mode
+    _persistent_mode = value
+
+
+def in_persistent_mode() -> bool:
+    return _persistent_mode
 
 
 def _get_lock() -> asyncio.Lock:
