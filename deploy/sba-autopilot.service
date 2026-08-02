@@ -1,0 +1,16 @@
+# deploy/sba-autopilot.service
+[Unit]
+Description=SBA 24/7 Autopilot (always-on lead/email/meeting loop)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/sba-backend
+EnvironmentFile=/home/ubuntu/sba-backend/.env
+ExecStart=/home/ubuntu/sba-backend/venv/bin/python -m admin.agency.sba_autopilot
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
