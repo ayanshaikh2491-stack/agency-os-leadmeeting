@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from admin.agency.sba import SBAAgent
@@ -1086,3 +1087,232 @@ async def sba_translate_to_client(payload: TranslateTextRequest):
     result = await engine.translate_for_client(payload.text, payload.target_lang)
     return {"success": True, "data": {"original": payload.text, "translation": result}}
 
+
+
+# ── Meeting Speech-to-Speech + Notes ───────────────────────────────────────
+
+
+@router.post("/meetings/audio/translate")
+async def api_meeting_audio_translate(
+    audio: UploadFile = File(...),
+    meeting_id: str = Form(""),
+    source_lang: str = Form("English"),
+    play_as: str = Form("en"),
+):
+    """Speech-to-speech: upload a spoken utterance, get translated text + audio.
+
+    Flow: audio → transcribe → translate (client⇄Hinglish) → TTS audio.
+    """
+    from admin.tools.sba_translate import SBATranslationEngine
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(400, "Empty audio upload")
+
+    tmp = None
+    try:
+        import os
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with open(tmp, "wb") as f:
+            f.write(raw)
+
+        engine = SBATranslationEngine()
+        segments = await engine.transcribe_audio(tmp)
+        translated = await engine.translate_meeting_live(segments)
+        text = " ".join(s.get("translation", "") or s.get("text", "") for s in translated).strip()
+
+        speech = await engine.synthesize(text, lang=play_as)
+
+        if meeting_id:
+            from admin.agency import sba_store
+
+            for seg in translated:
+                await sba_store.add_meeting_note(
+                    mid=meeting_id,
+                    text=f"{seg.get('text', '')}  →  {seg.get('translation', '')}",
+                    language=source_lang,
+                    speaker=seg.get("speaker", "Unknown"),
+                )
+
+        return {
+            "success": True,
+            "data": {
+                "text": text,
+                "segments": translated,
+                "audio_b64": speech["audio_b64"],
+                "tts_provider": speech["provider"],
+                "saved_to_meeting": bool(meeting_id),
+            },
+        }
+    except Exception as exc:
+        logger.exception("Audio translate failed: %s", exc)
+        raise HTTPException(500, f"Audio translate failed: {exc}")
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@router.post("/meetings/process")
+async def api_meeting_process(
+    audio: UploadFile = File(...),
+    meeting_id: str = Form(""),
+):
+    """Full meeting flow: transcribe → translate → summarize → save notes.
+
+    Notes are saved to the meeting record (when meeting_id is given) and to a
+    markdown file under data/meetings/.
+    """
+    from admin.tools.sba_translate import SBATranslationEngine
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(400, "Empty audio upload")
+
+    tmp = None
+    try:
+        import os
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with open(tmp, "wb") as f:
+            f.write(raw)
+
+        engine = SBATranslationEngine()
+        result = await engine.process_meeting(tmp, meeting_id=meeting_id or None)
+        return {"success": True, "data": result}
+    except Exception as exc:
+        logger.exception("Meeting process failed: %s", exc)
+        raise HTTPException(500, f"Meeting process failed: {exc}")
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@router.post("/meetings/tts")
+async def api_meeting_tts(payload: TranslateTextRequest):
+    """Text → speech audio for the translated phrase (speech-to-speech tail)."""
+    from admin.tools.sba_translate import SBATranslationEngine
+
+    engine = SBATranslationEngine()
+    speech = await engine.synthesize(payload.text, lang=payload.target_lang)
+    return {
+        "success": True,
+        "data": {
+            "text": payload.text,
+            "audio_b64": speech["audio_b64"],
+            "tts_provider": speech["provider"],
+        },
+    }
+
+
+_MEETING_TRANSLATE_PAGE = """<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SBA Meeting Translator</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px;
+         max-width: 640px; margin: 0 auto; background: #0f172a; color: #e2e8f0; }
+  h1 { font-size: 20px; margin: 8px 0 4px; }
+  p { color: #94a3b8; font-size: 13px; margin: 4px 0 16px; }
+  #btn { width: 100%; padding: 16px; font-size: 18px; border: 0; border-radius: 12px;
+         background: #2563eb; color: #fff; cursor: pointer; }
+  #btn.rec { background: #dc2626; }
+  .box { background: #1e293b; border-radius: 12px; padding: 14px; margin-top: 14px; }
+  .label { font-size: 11px; text-transform: uppercase; color: #64748b; margin-bottom: 4px; }
+  .text { font-size: 16px; line-height: 1.5; white-space: pre-wrap; }
+  audio { width: 100%; margin-top: 10px; }
+  #log { font-size: 12px; color: #64748b; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h1>🎙️ SBA Meeting Translator</h1>
+  <p>Bolo — client ko English mein sunai dega. Ya client bole — aapko Hinglish mein.
+     Har utterance translate + notes mein save hota hai.</p>
+  <button id="btn">▶ Start Talking</button>
+  <div id="meeting" style="display:none">
+    <input id="mid" placeholder="Meeting ID (optional)" style="width:100%; padding:10px;
+           margin-top:12px; border-radius:8px; border:1px solid #334155; background:#0f172a;
+           color:#e2e8f0; box-sizing:border-box;">
+  </div>
+  <div id="result" class="box" style="display:none">
+    <div class="label">Translation</div>
+    <div id="text" class="text"></div>
+    <div class="label" style="margin-top:10px">Speech (play karne ke liye)</div>
+    <audio id="play" controls autoplay></audio>
+  </div>
+  <div id="log"></div>
+<script>
+let rec = null, chunks = [], speaking = false;
+const btn = document.getElementById('btn');
+const result = document.getElementById('result');
+const textEl = document.getElementById('text');
+const play = document.getElementById('play');
+const logEl = document.getElementById('log');
+const mid = document.getElementById('mid');
+function log(m) { logEl.textContent = m; }
+function toB64(blob) {
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onloadend = () => res(r.result.split(',')[1]);
+    r.readAsDataURL(blob);
+  });
+}
+async function send() {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  chunks = [];
+  const b64 = await toB64(blob);
+  const body = new FormData();
+  body.append('audio', new File([blob], 'utt.webm', { type: 'audio/webm' }));
+  if (mid.value.trim()) body.append('meeting_id', mid.value.trim());
+  log('Translating...');
+  const r = await fetch('/api/sba/meetings/audio/translate', { method: 'POST', body });
+  const j = await r.json();
+  if (!j.success) throw new Error(j.error || 'failed');
+  textEl.textContent = j.data.text;
+  play.src = 'data:audio/wav;base64,' + j.data.audio_b64;
+  result.style.display = 'block';
+  log('Saved to meeting: ' + j.data.saved_to_meeting + ' | TTS: ' + j.data.tts_provider);
+}
+btn.onclick = async () => {
+  if (!speaking) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = send;
+      rec.start();
+      speaking = true;
+      btn.textContent = '⏹ Stop';
+      btn.classList.add('rec');
+      log('Sun raha hoon... bolo!');
+    } catch (e) { log('Mic error: ' + e.message); }
+  } else {
+    rec.stop();
+    rec.stream.getTracks().forEach(t => t.stop());
+    speaking = false;
+    btn.textContent = '▶ Start Talking';
+    btn.classList.remove('rec');
+  }
+};
+</script>
+</body>
+</html>
+"""
+
+
+@router.get("/meetings/translate-page", response_class=HTMLResponse)
+async def sba_meeting_translate_page():
+    """Companion page for live speech-to-speech translation during meetings."""
+    return HTMLResponse(content=_MEETING_TRANSLATE_PAGE)
