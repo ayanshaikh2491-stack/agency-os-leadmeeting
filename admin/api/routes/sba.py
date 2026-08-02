@@ -140,6 +140,12 @@ async def sba_status():
     }
 
 
+@router.get("/autopilot/status")
+async def sba_autopilot_status():
+    from admin.agency.sba_autopilot import SBAAutopilot
+    return {"status": SBAAutopilot().status()}
+
+
 # ── Chat ────────────────────────────────────────────────────────────────────
 
 

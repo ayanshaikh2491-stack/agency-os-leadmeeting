@@ -83,3 +83,13 @@ SBA_SMTP_HOST: str = os.getenv("SBA_SMTP_HOST", "smtp.gmail.com")
 SBA_SMTP_PORT: int = int(os.getenv("SBA_SMTP_PORT", "587"))
 SBA_IMAP_HOST: str = os.getenv("SBA_IMAP_HOST", "imap.gmail.com")
 SBA_IMAP_PORT: int = int(os.getenv("SBA_IMAP_PORT", "993"))
+
+# ── SBA 24/7 Autopilot ────────────────────────────────────────────
+SBA_OWNER_TIMEZONE: str = os.getenv("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
+SBA_AUTOPILOT_INTERVAL_MINUTES: int = int(os.getenv("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
+SBA_DAILY_EMAIL_CAP: int = int(os.getenv("SBA_DAILY_EMAIL_CAP", "30"))
+
+# Lowercase aliases (consumed by tests and some call sites).
+sba_owner_timezone: str = SBA_OWNER_TIMEZONE
+sba_autopilot_interval_minutes: int = SBA_AUTOPILOT_INTERVAL_MINUTES
+sba_daily_email_cap: int = SBA_DAILY_EMAIL_CAP

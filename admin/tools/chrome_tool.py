@@ -742,6 +742,48 @@ CHROME_TOOLS = [
     },
 ]
 
+SBA_LEAD_SOURCE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "sba_find_leads",
+            "description": "Find local businesses WITHOUT a website from one platform (google_maps, yelp, yellowpages, bing_maps, facebook_pages).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "enum": ["google_maps", "yelp", "yellowpages", "bing_maps", "facebook_pages"]},
+                    "category": {"type": "string"},
+                    "city": {"type": "string"},
+                    "state": {"type": "string"},
+                    "max_candidates": {"type": "integer"},
+                },
+                "required": ["source", "category", "city", "state"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sba_find_leads_all",
+            "description": "Find local businesses WITHOUT a website from ALL platforms at once (Google Maps, Yelp, YellowPages, Bing, Facebook).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string"},
+                    "city": {"type": "string"},
+                    "state": {"type": "string"},
+                    "max_per_source": {"type": "integer"},
+                },
+                "required": ["category", "city", "state"],
+            },
+        },
+    },
+]
+
+# Re-assign so lead-source tools ride along with the chrome toolset everywhere
+# it is imported (SBA chat agent, workspace agents, etc.).
+CHROME_TOOLS = [*CHROME_TOOLS, *SBA_LEAD_SOURCE_TOOLS]
+
 CHROME_TOOL_DISPATCH: dict[str, str] = {
     "chrome_goto": "goto",
     "chrome_inspect": "inspect",
@@ -763,6 +805,27 @@ CHROME_TOOL_DISPATCH: dict[str, str] = {
 
 async def execute_chrome_tool(tool_name: str, tool_args: dict[str, Any], chrome: ChromeTool) -> str:
     """Execute a chrome tool call and return a string result for the LLM."""
+    if tool_name == "sba_find_leads":
+        from admin.tools.sba_lead_sources import find_leads
+        leads = await find_leads(
+            tool_args.get("source", "google_maps"),
+            tool_args.get("category", ""),
+            tool_args.get("city", ""),
+            tool_args.get("state", ""),
+            max_candidates=int(tool_args.get("max_candidates", 10)),
+            chrome=chrome,
+        )
+        return json.dumps(leads, ensure_ascii=False, default=str)[:4000]
+    if tool_name == "sba_find_leads_all":
+        from admin.tools.sba_lead_sources import find_leads_all
+        leads = await find_leads_all(
+            tool_args.get("category", ""),
+            tool_args.get("city", ""),
+            tool_args.get("state", ""),
+            max_per_source=int(tool_args.get("max_per_source", 5)),
+            chrome=chrome,
+        )
+        return json.dumps(leads, ensure_ascii=False, default=str)[:4000]
     method_name = CHROME_TOOL_DISPATCH.get(tool_name)
     if not method_name:
         return f"Unknown chrome tool: {tool_name}"
