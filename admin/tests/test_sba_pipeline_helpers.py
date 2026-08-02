@@ -22,6 +22,15 @@ def test_classify_reply_no():
 
 def test_classify_reply_maybe():
     assert classify_reply("I will discuss this later") == "maybe"
+    assert classify_reply("I will let you know") == "maybe"
+
+
+def test_classify_reply_word_boundaries():
+    # "no" inside "know" must not be "no"; "ok" inside "book" stays "yes"
+    assert classify_reply("I will let you know") == "maybe"
+    assert classify_reply("I want to book a meeting") == "yes"
+    assert classify_reply("Please stop contacting me") == "no"
+    assert classify_reply("Nahin bhai, thank you") == "no"
 
 
 def test_parse_owner_command_haan():

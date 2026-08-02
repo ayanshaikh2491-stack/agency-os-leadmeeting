@@ -93,14 +93,19 @@ INTERESTED_WORDS = ["yes", "interested", "sure", "sounds good", "let's talk", "l
                     "haan", "hain", "ji haan", "theek hai", "confirm"]
 NOT_INTERESTED_WORDS = ["no", "not interested", "stop", "don't", "dont", "unsubscribe",
                         "leave me alone", "not right now", "no thanks", "no thank you",
-                        "nahi", "nhi", "not now"]
+                        "nahi", "nahin", "nhi", "not now"]
+
+
+def _has_phrase(text: str, phrase: str) -> bool:
+    """True if phrase appears as a standalone word/word-group in text."""
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
 
 
 def classify_reply(text: str) -> str:
     t = (text or "").lower()
-    if any(w in t for w in NOT_INTERESTED_WORDS):
+    if any(_has_phrase(t, w) for w in NOT_INTERESTED_WORDS):
         return "no"
-    if any(w in t for w in INTERESTED_WORDS):
+    if any(_has_phrase(t, w) for w in INTERESTED_WORDS):
         return "yes"
     return "maybe"
 

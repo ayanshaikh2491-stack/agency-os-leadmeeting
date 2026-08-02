@@ -95,9 +95,9 @@ def next_business_time(lead: dict, tz: str | None = None) -> str:
 
 
 def meeting_slot(lead: dict, owner_tz: str = OWNER_TZ) -> tuple[str, str]:
-    """Pick a slot overlapping lead's 9-17 and owner's 9-18 local.
+    """Pick the lead's next business morning at 10:00 local (skips weekends/past).
 
-    Returns (iso datetime, human text like "India raat 8:30 = US subah 10").
+    Returns (iso UTC datetime, human text like "India raat 8:30 = US subah 10").
     """
     lead_tz = lead_timezone(lead)
     lead_now = now_in(lead_tz)
