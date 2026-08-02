@@ -1,0 +1,63 @@
+[maps] Re-verifying 265 suspicious candidates with 3 workers (poll 40s)
+Stale daemon cleanup skipped: Command '['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress']' timed out after 15 seconds
+Stale daemon cleanup skipped: Command '['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress']' timed out after 15 seconds
+Stale daemon cleanup skipped: Command '['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress']' timed out after 15 seconds
+[maps] PROGRESS 5/265 | leads 5 | has-site 0 | skipped 0
+OSError: [Errno 28] No space left on device
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\maps_reverify.py", line 164, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\maps_reverify.py", line 159, in main
+    asyncio.run(main_async(workers_n, poll_sec))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python313\Lib\asyncio\runners.py", line 194, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Program Files\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Program Files\Python313\Lib\asyncio\base_events.py", line 721, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\maps_reverify.py", line 149, in main_async
+    await asyncio.gather(*[worker(i, slices[i], stats, poll_sec) for i in range(workers_n)])
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\maps_reverify.py", line 104, in worker
+    _append(GOOD_JSONL, cand)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\maps_reverify.py", line 52, in _append
+    with open(path, "a", encoding="utf-8") as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 28] No space left on device
+Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x000002517FB6FCE0>
+Traceback (most recent call last):
+  File "C:\Program Files\Python313\Lib\asyncio\base_subprocess.py", line 130, in __del__
+    self.close()
+  File "C:\Program Files\Python313\Lib\asyncio\base_subprocess.py", line 107, in close
+    proto.pipe.close()
+  File "C:\Program Files\Python313\Lib\asyncio\proactor_events.py", line 109, in close
+    self._loop.call_soon(self._call_connection_lost, None)
+  File "C:\Program Files\Python313\Lib\asyncio\base_events.py", line 829, in call_soon
+    self._check_closed()
+  File "C:\Program Files\Python313\Lib\asyncio\base_events.py", line 552, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x000002517FB6FCE0>
+Traceback (most recent call last):
+  File "C:\Program Files\Python313\Lib\asyncio\base_subprocess.py", line 130, in __del__
+    self.close()
+  File "C:\Program Files\Python313\Lib\asyncio\base_subprocess.py", line 107, in close
+    proto.pipe.close()
+  File "C:\Program Files\Python313\Lib\asyncio\proactor_events.py", line 109, in close
+    self._loop.call_soon(self._call_connection_lost, None)
+  File "C:\Program Files\Python313\Lib\asyncio\base_events.py", line 829, in call_soon
+    self._check_closed()
+  File "C:\Program Files\Python313\Lib\asyncio\base_events.py", line 552, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+Exception ignored in: <function _ProactorBasePipeTransport.__del__ at 0x000002517EC91BC0>
+Traceback (most recent call last):
+ValueError: I/O operation on closed pipe

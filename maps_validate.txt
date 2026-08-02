@@ -1,0 +1,14 @@
+[maps] Chrome status: {'text': '✅ Connected |  | about:blank'}
+[maps] Searching: plumber Houston, TX
+[maps] 37 cards, 1 without website
+[maps] running candidates: 1
+[maps] Searching: roofer Austin, TX
+[maps] 38 cards, 0 without website
+[maps] running candidates: 1
+[maps] Saved 1 candidates to data/sba_maps_candidates.json
+
+[maps] Verifying 1 candidates on place pages...
+
+============================================================
+VERIFIED LEADS: 1 -> data/sba_maps_leads.csv
+  - First Aid Plumbing Specialist | plumber | Houston, TX | Copy address | +18322793065

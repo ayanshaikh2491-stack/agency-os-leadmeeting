@@ -1,0 +1,490 @@
+[maps] Chrome status: {'text': '✅ Connected | First Aid Plumbing Specialist - Google Maps | https://www.google.com/maps/place/First+Aid+Plumbing+Specialist/@29.8094884,-95.4193322,17z/data=!3m1!4b1!4m6!3m5!1s0x84ab7f0ef348b499:0x3ce9384f6f7ac29!8m2!3d29.8094884!4d-95.4193322!16s%2Fg%2F11p66h50cb?authuser=0&hl=en&entry=ttu&g_ep=EgoyMDI2MDcyOS4wIKXMDSoASAFQAw%3D%3D'}
+[maps] Searching [card]: plumber Houston, TX
+[maps] 36 cards, 1 without website (mode=card)
+[maps] running candidates: 1
+[maps] Searching [card]: roofer Austin, TX
+[maps] 28 cards, 0 without website (mode=card)
+[maps] running candidates: 1
+[maps] Searching [card]: hvac Phoenix, AZ
+[maps] 36 cards, 0 without website (mode=card)
+[maps] running candidates: 1
+[maps] Searching [card]: electrician San Antonio, TX
+[maps] 35 cards, 6 without website (mode=card)
+[maps] running candidates: 7
+[maps] Searching [card]: auto repair Dallas, TX
+[maps] 33 cards, 13 without website (mode=card)
+[maps] running candidates: 20
+[maps] Searching [card]: auto repair Phoenix, AZ
+[maps] 34 cards, 1 without website (mode=card)
+[maps] running candidates: 21
+[maps] Searching [card]: auto repair Columbus, OH
+[maps] 37 cards, 3 without website (mode=card)
+[maps] running candidates: 24
+[maps] Searching [card]: landscaper Denver, CO
+[maps] 34 cards, 2 without website (mode=card)
+[maps] running candidates: 26
+[maps] Searching [card]: cleaning service Charlotte, NC
+[maps] 35 cards, 0 without website (mode=card)
+[maps] running candidates: 26
+[maps] Searching [card]: handyman Nashville, TN
+[maps] 38 cards, 5 without website (mode=card)
+[maps] running candidates: 31
+[maps] Searching [card]: handyman Tampa, FL
+[maps] 34 cards, 5 without website (mode=card)
+[maps] running candidates: 36
+[maps] Searching [card]: locksmith Tampa, FL
+[maps] 37 cards, 3 without website (mode=card)
+[maps] running candidates: 39
+[maps] Searching [card]: locksmith Kansas City, MO
+[maps] 34 cards, 2 without website (mode=card)
+[maps] running candidates: 41
+[maps] Searching [card]: junk removal Orlando, FL
+[maps] 34 cards, 6 without website (mode=card)
+[maps] running candidates: 47
+[maps] Searching [card]: junk removal Houston, TX
+[maps] 37 cards, 1 without website (mode=card)
+[maps] running candidates: 48
+[maps] Searching [card]: garage door repair Las Vegas, NV
+[maps] 24 cards, 0 without website (mode=card)
+[maps] running candidates: 48
+[maps] Searching [card]: window cleaning Columbus, OH
+[maps] 27 cards, 4 without website (mode=card)
+[maps] running candidates: 52
+[maps] Searching [card]: carpet cleaning Indianapolis, IN
+[maps] 46 cards, 3 without website (mode=card)
+[maps] running candidates: 55
+[maps] Searching [card]: pest control Kansas City, MO
+[maps] 38 cards, 1 without website (mode=card)
+[maps] running candidates: 56
+[maps] Searching [card]: appliance repair Memphis, TN
+[maps] 36 cards, 10 without website (mode=card)
+[maps] running candidates: 66
+[maps] Searching [card]: fencing contractor Louisville, KY
+[maps] 20 cards, 1 without website (mode=card)
+[maps] running candidates: 67
+[maps] Searching [card]: moving company Oklahoma City, OK
+[maps] 20 cards, 0 without website (mode=card)
+[maps] running candidates: 67
+[maps] Searching [card]: dumpster rental Albuquerque, NM
+[maps] 37 cards, 5 without website (mode=card)
+[maps] running candidates: 72
+[maps] Searching [card]: tree service Tampa, FL
+[maps] 38 cards, 0 without website (mode=card)
+[maps] running candidates: 72
+[maps] Searching [card]: power washing Charlotte, NC
+[maps] 37 cards, 3 without website (mode=card)
+[maps] running candidates: 75
+[maps] Searching [all]: dentist Columbus, OH
+[maps] 24 cards, 24 without website (mode=all)
+[maps] running candidates: 99
+[maps] Searching [all]: dentist Nashville, TN
+[maps] 30 cards, 30 without website (mode=all)
+[maps] running candidates: 129
+[maps] Searching [all]: auto body shop Houston, TX
+[maps] 33 cards, 4 without website (mode=all)
+[maps] running candidates: 162
+[maps] Searching [all]: mechanic San Antonio, TX
+[maps] 36 cards, 6 without website (mode=all)
+[maps] running candidates: 198
+[maps] Searching [all]: hair salon Denver, CO
+[maps] 24 cards, 24 without website (mode=all)
+[maps] running candidates: 222
+[maps] Searching [all]: barber shop Indianapolis, IN
+[maps] 23 cards, 23 without website (mode=all)
+[maps] running candidates: 245
+[maps] Searching [all]: restaurant Louisville, KY
+[maps] 20 cards, 20 without website (mode=all)
+[maps] running candidates: 265
+[maps] Searching [all]: dog groomer Las Vegas, NV
+[maps] 36 cards, 3 without website (mode=all)
+[maps] running candidates: 301
+[maps] Searching [all]: veterinarian Memphis, TN
+[maps] 23 cards, 0 without website (mode=all)
+[maps] running candidates: 324
+[maps] Saved 324 candidates to data/sba_maps_candidates.json
+
+[maps] Verifying 324 candidates on place pages...
+[maps] verified 10/324 -> 10 confirmed leads (0 have sites)
+[maps] verified 20/324 -> 20 confirmed leads (0 have sites)
+[maps] verified 30/324 -> 30 confirmed leads (0 have sites)
+[maps] verified 40/324 -> 40 confirmed leads (0 have sites)
+[maps] verified 50/324 -> 50 confirmed leads (0 have sites)
+Chrome CDP op failed
+Traceback (most recent call last):
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\..\..\admin\tools\chrome_tool.py", line 228, in _safe
+    try:
+    
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\async_api\_generated.py", line 9764, in goto
+    await self._impl_obj.goto(
+    ...<4 lines>...
+    )
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_page.py", line 560, in goto
+    return await self._main_frame.goto(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_frame.py", line 156, in goto
+    await self._channel.send(
+        "goto", self._navigation_timeout, locals_to_params(locals())
+    )
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_connection.py", line 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_connection.py", line 563, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Page.goto: Timeout 45000ms exceeded.
+Call log:
+  - navigating to "https://www.google.com/maps/place/American+Carpet+Cleaners/data=!4m7!3m6!1s0x886b589aef8015d5:0xcddabf9c92324bb3!8m2!3d39.7811975!4d-86.1596041!16s%2Fg%2F1vyk37jf!19sChIJ1RWA75pYa4gRs0sykpy_2s0?authuser=0&hl=en&rclk=1", waiting until "domcontentloaded"
+
+Chrome CDP op failed
+Traceback (most recent call last):
+  File "C:\Users\TAUSHEF\Downloads\int\admin\tools\..\..\admin\tools\chrome_tool.py", line 228, in _safe
+    try:
+    
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\async_api\_generated.py", line 9764, in goto
+    await self._impl_obj.goto(
+    ...<4 lines>...
+    )
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_page.py", line 560, in goto
+    return await self._main_frame.goto(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_frame.py", line 156, in goto
+    await self._channel.send(
+        "goto", self._navigation_timeout, locals_to_params(locals())
+    )
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_connection.py", line 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\TAUSHEF\AppData\Roaming\Python\Python313\site-packages\playwright\_impl\_connection.py", line 563, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Page.goto: Timeout 45000ms exceeded.
+Call log:
+  - navigating to "https://www.google.com/maps/place/We+Can+Clean+That/data=!4m7!3m6!1s0x886b53aefa517e2d:0x76c220e2d0dd8df8!8m2!3d39.868931!4d-86.141608!16s%2Fg%2F11f2wbz8fn!19sChIJLX5R-q5Ta4gR-I3d0OIgwnY?authuser=0&hl=en&rclk=1", waiting until "domcontentloaded"
+
+Chrome eval_json failed: Page.evaluate: Target page, context or browser has been closed
+[maps] verify goto failed for A Master's Touch Carpet Cleaning: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Pest Control KC: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for JE APPLIANCE REPAIR & HVAC: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Reliable Used Appliances: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for R G Appliances: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Bluff City Appliances and Parts: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 60/324 -> 60 confirmed leads (0 have sites)
+[maps] verify goto failed for Burns Appliance Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Tech Life Appliance Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Multi-task Repairs: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Maclin's A/C & Appliance Service: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Norwood Used Appliance and Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Cjs Used Appliances: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Fuqua Fence: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Waste Removal - Albuquerque Dumpster Rentals: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Unlimited Waste: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Comet Dumspter Rental Santa Fe: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 70/324 -> 70 confirmed leads (0 have sites)
+[maps] verify goto failed for East Mountain Disposal: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Daniel Trujillo Dump Truck: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Kings Power Washing of Charlotte: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Queen City Pressure Washing: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for A1 Pressure Washing: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Grandview Dental Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Merion Village Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Ohio Cosmetic Dentists: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Capstone Dental Downtown: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Capital City Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 80/324 -> 80 confirmed leads (0 have sites)
+[maps] verify goto failed for Alum Creek Dental Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Dennison Dental Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Trillium Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Capitol Square Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Creative Smiles: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Gentle Family Dental Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Advanced Dental Wellness: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Lifetime Dental Health: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Riverview Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for 4th St Dental Studio: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 90/324 -> 90 confirmed leads (0 have sites)
+[maps] verify goto failed for Community Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Marshall Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Oak Creek Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Emergency Dental of Columbus: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Carroll Family Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Riverglen Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Christopher M. Will, DDS: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for DentalWorks Easton: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Vadhi Ohio Family Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Dentistry of Nashville: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 100/324 -> 100 confirmed leads (0 have sites)
+[maps] verify goto failed for Smiles Up Dentistry: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Downtown Dental Nashville: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Nashville Dental Center: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Gulch Dental Studio: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Midtown Smiles: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Smile On Nashville: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Tennessee Family Dental Care - Midtown PLLC: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Iroquois Dentistry: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Belle Meade Family Dentistry - Nashville, TN: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Music City Dental: Family, Cosmetic, & Implant Dentistry PLLC: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 110/324 -> 110 confirmed leads (0 have sites)
+[maps] verify goto failed for Emergency Dental of Nashville: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Berry Hill Dental Group: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Germantown Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Nations Dental Studio: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Roach Family Dentistry & Associates: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for BiTE Dentistry | Dr. Cristin Lewis, Nashville Root-Cause Airway & Whole Body Health Wellness: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for East Side Smiles: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Interfaith Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Tennessee Family Dental (Green Hills): Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for David Wickness, DMD- Nashville Cosmetic Dentist: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 120/324 -> 120 confirmed leads (0 have sites)
+[maps] verify goto failed for Lenox Village Dentistry: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Dental Haus Germantown: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Castle Dental & Orthodontics - Nashville, TN (White Bridge): Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Nashville Dentistry Co.: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Nashville Cosmetic and Implant Dentistry: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for West Meade Dental: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Thomas Nabors, DDS: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Family Dental Health of Belle Meade: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Castle Dental & Orthodontics - Nashville, TN (Nashville Zoo Area): Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Uptown Automotive Auto Body Shop Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 130/324 -> 130 confirmed leads (0 have sites)
+[maps] verify goto failed for JJ Auto Body: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Santa Ana Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Finest Auto Body and Paint LLC: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Manriquez Collision & Mechanic Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Royal Collision Auto Paint & Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Car Body Repair by Car Body Club: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Cho's Auto Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Leo's Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Javiers Auto Body: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for David's Auto Collision: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 140/324 -> 140 confirmed leads (0 have sites)
+[maps] verify goto failed for Elevated Auto & Collision: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Regency Auto Repair & Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Brookston Body Shop BBS: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Metropolitan Collision: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Texas Auto Repair & Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for U.S. Auto Connection: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Master Car Care & Collision: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Master Auto Body & Upholstery: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for TOB Auto Body Repair Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jimmy's Auto Repair Body: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 150/324 -> 150 confirmed leads (0 have sites)
+[maps] verify goto failed for Mr. Joe & Son Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Montes Collision Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Caliber Collision: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Calcena body shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for JOE'S BODY SHOP: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for River Oaks Paint & Body: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Best Collision Center: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Filam Auto & Body Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for 290 Auto Repair & Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for IMPERIAL COLLISION SPECIALIST: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 160/324 -> 160 confirmed leads (0 have sites)
+[maps] verify goto failed for ABS Auto Body Specialists: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for G-Man Automotive & Body Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for AT Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Sam's Hybrid Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Your Mechanic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Chad Miller Auto Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Eurasian Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Kingdom Auto Repair Service: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Goose Euro - Downtown: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Mike's Downtown Garage: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 170/324 -> 170 confirmed leads (0 have sites)
+[maps] verify goto failed for Texas Auto Repairs: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Seymour's Garage: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for VIP Mobile Mechanic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for A Good Mechanic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for AutoWorks: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Broadway Tire & Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Auto Service Experts: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Mr. Mechanic & Tire Muffler Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Thrash Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Intune mobile mechanic: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 180/324 -> 180 confirmed leads (0 have sites)
+[maps] verify goto failed for Roy's Mobile Mechanic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jackie's Auto Clinic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Christian Brothers Automotive Alamo Heights: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Surgo Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Goose Euro - West Ave: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for John's Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Sun Auto Tire & Service: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Aspeed Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Paleo Car Care: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Ewing Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 190/324 -> 190 confirmed leads (0 have sites)
+[maps] verify goto failed for Belden's Automotive & Tires: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for USA Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for NuBrakes Mobile Brake Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Larson's Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Babcock Automotive: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Cambridge Auto Center, Inc.: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for AA Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Goose Auto Repair: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Station Hair Studio ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Factory Hair Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 200/324 -> 200 confirmed leads (0 have sites)
+[maps] verify goto failed for SALON VO | Hair Salon Denver ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Clementines A Boutique Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Goldie x Bob Hair Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Studio: A Collective Of Stylists: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Organic Salon Denver: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Color House Denver ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Blake Denver: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Deseo Salon & BlowDry: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Fleur Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for 303 Salon Lohi: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 210/324 -> 210 confirmed leads (0 have sites)
+[maps] verify goto failed for Indigo Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Define Hair Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Salon Thirty Eight: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Let Em Have It Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for 3 Little Birds Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Luxe de Vil Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Cult of Mane: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Fox and Jane Salon ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Arrow Beauty Denver ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Muse Modern Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 220/324 -> 220 confirmed leads (0 have sites)
+[maps] verify goto failed for Three Cutters On Pearl ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Salon Joa ✂: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Fountain Square Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for 4:59 Barber Lounge - Indianapolis: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jack's Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Black Orchid Barbers [MASS AVE]: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for All In The Wrists Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Chop Chop Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Brick & Mortar Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Fatboys Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 230/324 -> 230 confirmed leads (0 have sites)
+[maps] verify goto failed for The Real Cut Above Barbershop Phase ll: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Chad's Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Mike's Traditional Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Legends Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Black Orchid Barbers [SoBro]: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Machos Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Warfleigh Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Blendzz Exclusive Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Wild's Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for XG Groom Room: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 240/324 -> 240 confirmed leads (0 have sites)
+[maps] verify goto failed for DeHart’s Barber Shop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Eric's Barber Shop & Hair Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for BASIL BEAUTY BARBER AND BRAIDER: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for RazorEdge Family Barbershop: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jersi Shore Barber & Beauty Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Porch Kitchen & Bar: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Varanese Restaurant: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Proof On Main: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jack Fry's: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for La Bodeguita De Mima: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 250/324 -> 250 confirmed leads (0 have sites)
+[maps] verify goto failed for Mayan Cafe: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Hammerheads: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Volare Italian Ristorante: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Steakhouse Bourré Bonne: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Jeff Ruby's Steakhouse - Louisville: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for CURED Restaurant: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for MeeshMeesh Mediterranean: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Buck's Restaurant: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Le Moo: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Repeal Oak Fired Steakhouse: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 260/324 -> 260 confirmed leads (0 have sites)
+[maps] verify goto failed for The Table: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Lou Lou on Market: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Fat Lamb Modern Kitchen & Bar: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Merle's Whiskey Kitchen: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Agave & Rye Louisville: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Piggy Tails Pet Spa & More: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Paw Wow: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Hair Of The Dog Grooming Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Groomer Has It: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Happy And Lucky Pet Salon And Mobile Grooming.: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 270/324 -> 270 confirmed leads (0 have sites)
+[maps] verify goto failed for SOS Dog Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Barks and Bubbles Salon & Mobile Pet Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Suds N Bubbles: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for PinkPaw Pet Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Barking Dogs Self Wash & Grooming Centennial Hills: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Calling All Paws: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Royalty Paw Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for PAWlish Pet Salon & Mobile Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Lucky's Pet Grooming & Boutique: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Best In Show: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 280/324 -> 280 confirmed leads (0 have sites)
+[maps] verify goto failed for Z Dog Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Las vegas zen Dog grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Well Groomed Pets Summerlin: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Man's Best Friend: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Pet Story: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Majestic Mutts: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Pawsh Palace: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Doug King’s Pup Star Pet Salon: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Barking Dogs Self-Wash & Grooming Mountains Edge: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Shaggy Shaggy Shake: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 290/324 -> 290 confirmed leads (0 have sites)
+[maps] verify goto failed for Well Groomed Pets Las Vegas: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for A Doggie's Delight: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Pretty Paws Pet Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Hair of the dog Nellis: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Lovely Dog Services.: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Desert Pet Spa: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Groom Room: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Tailwaggers Pet Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Desert Doggies Grooming: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Las Vegas Pet Spa: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 300/324 -> 300 confirmed leads (0 have sites)
+[maps] verify goto failed for Punky Pets Pawlor LLC: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Memphis Animal Clinic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Memphis Veterinary Specialists: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for The Pet Hospitals: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Animal Emergency Center: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Walnut Grove Animal Clinic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for East Memphis Pet Hospital & Resort: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Raleigh Bartlett Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Hillcrest Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for McGehee Clinic For Animals: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 310/324 -> 310 confirmed leads (0 have sites)
+[maps] verify goto failed for Central Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Utopia Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Eastgate Animal Clinic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Summer Avenue Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Spay Memphis: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Grace Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Southern Crossing Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Cloverleaf Animal Clinic: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Shelby Center Hospital for Animals: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Community Pet Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verified 320/324 -> 320 confirmed leads (0 have sites)
+[maps] verify goto failed for PetVax Complete Care Centers - East Memphis: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Northgate Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Wolfchase Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] verify goto failed for Southwind Animal Hospital: Browser.new_page: Target page, context or browser has been closed
+[maps] DONE verifying: 324 leads, 0 with websites
+
+============================================================
+VERIFIED LEADS: 324 -> data/sba_maps_leads.csv
+  - First Aid Plumbing Specialist | plumber | Houston, TX | Copy address | +18322793065
+  - KJ Electric Co. Inc. | electrician | San Antonio, TX | Copy address | +12107366155
+  - Dominguez Electric | electrician | San Antonio, TX | Copy address | +12108896836
+  - Alpha Electrician San Antonio | electrician | San Antonio, TX | no-addr | +12108645223
+  - Home Electrician San Antonio | electrician | San Antonio, TX | Copy address | +17262566925
+  - Bright Electric | electrician | San Antonio, TX | no-addr | +12109663785
+  - Best Electric San Antonio | electrician | San Antonio, TX | Copy address | +12105239935
+  - Al's Auto Repair Shop | auto repair | Dallas, TX | Copy address | +12149464100
+  - Motor City Auto Repair | auto repair | Dallas, TX |  · 2939 S Ervay St | no-phone
+  - GBG Auto Repair & Inspection | auto repair | Dallas, TX | Copy address | +12143700375
+  - P V Auto Services | auto repair | Dallas, TX |  · 1712 N Fitzhugh Ave | no-phone
+  - Fuentes auto repair | auto repair | Dallas, TX |  · 5354 W Jefferson Blvd Suit 106 | no-phone
+  - 24 hour mobile mechanic | auto repair | Dallas, TX | 319 Flowers Ave | no-phone
+  - Advanced Auto Repair Services | auto repair | Dallas, TX |  · 13444 Floyd Cir | no-phone
+  - Dallas Auto Repair | auto repair | Dallas, TX | 3806 Buckner Blvd | no-phone
+  - Coit auto repair & tires | auto repair | Dallas, TX |  · 14045 Coit Rd | no-phone
+  - Flores Auto Repair | auto repair | Dallas, TX | no-addr | no-phone
+  - El Mundo’s Auto Service | auto repair | Dallas, TX |  · 527 N Haskell Ave. | no-phone
+  - J & E Express Auto Service | auto repair | Dallas, TX |  · 2220 W Clarendon Dr | no-phone
+  - Pro Automotive Complete Car Care | auto repair | Dallas, TX | Copy address | +12143810400
+  ... aur 304 leads (CSV mein)

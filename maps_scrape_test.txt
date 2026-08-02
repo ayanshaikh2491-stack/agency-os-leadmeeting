@@ -1,0 +1,7 @@
+[maps] Chrome status: {'text': '✅ Connected | plumber Houston TX - Google Maps | https://www.google.com/maps/search/plumber+Houston+TX/@29.6975606,-95.2727955,8z/data=!3m1!4b1?entry=ttu&g_ep=EgoyMDI2MDcyOS4wIKXMDSoASAFQAw%3D%3D'}
+[maps] Searching: plumber Houston, TX  ->  https://www.google.com/maps/search/plumber+Houston+TX/
+[maps] got 38 cards, 0 without website
+[maps] running total leads: 0
+
+============================================================
+LEADS SAVED: 0 -> data/sba_maps_leads.csv

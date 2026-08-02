@@ -1,0 +1,12 @@
+[maps] Chrome status: {'text': '✅ Connected | Grandview Dental Care - Google Maps | https://www.google.com/maps/place/Grandview+Dental+Care/@39.982447,-83.0446783,17z/data=!3m1!4b1!4m6!3m5!1s0x88388e522942fb8f:0x945a090772415886!8m2!3d39.982447!4d-83.0446783!16s%2Fg%2F1tp_71fx?authuser=0&hl=en&entry=ttu&g_ep=EgoyMDI2MDcyOS4wIKXMDSoASAFQAw%3D%3D'}
+[maps] Searching: plumber Houston, TX
+[maps] 38 cards, 0 without website
+[maps] running candidates: 0
+[maps] Searching: roofer Austin, TX
+[maps] 39 cards, 0 without website
+[maps] running candidates: 0
+
+[maps] Verifying 0 candidates on place pages...
+
+============================================================
+VERIFIED LEADS: 0 -> data/sba_maps_leads.csv

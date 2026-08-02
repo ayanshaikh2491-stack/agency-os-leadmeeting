@@ -51,11 +51,12 @@ except ImportError:
 class ChromeTool:
     """Connects to persistent Chrome daemon via CDP."""
 
-    def __init__(self, browser_name: str = "sba", workspace: str = "agency") -> None:
+    def __init__(self, browser_name: str = "sba", workspace: str = "agency", profile_dir: str | None = None) -> None:
         self.browser_name = browser_name
         self.workspace = workspace
         self.cdp_port = _cdp_port_for_workspace(workspace)
         self.cdp_url = f"http://127.0.0.1:{self.cdp_port}"
+        self.profile_dir = profile_dir or os.path.expanduser(r"~\.sba-chrome-profile")
         self._play = None
         self._browser = None
         self._page = None
@@ -95,7 +96,7 @@ class ChromeTool:
                 logger.warning("No Chrome binary found for daemon auto-start")
                 return
 
-            user_data = os.path.expanduser(r"~\.sba-chrome-profile")
+            user_data = self.profile_dir
             os.makedirs(user_data, exist_ok=True)
 
             # Kill stale daemons holding this profile (Chrome won't start with
@@ -418,6 +419,17 @@ class ChromeTool:
         if not p:
             return {"error": "Chrome daemon unavailable"}
         return await self._safe(p.evaluate(expression))
+
+    async def eval_json(self, expression: str) -> Any:
+        """Evaluate JS and return the raw JSON-serializable value (not str)."""
+        p = await self._ensure_page()
+        if not p:
+            return None
+        try:
+            return await p.evaluate(expression)
+        except Exception as exc:
+            logger.warning("Chrome eval_json failed: %s", exc)
+            return None
 
     # ── Cookie management (LinkedIn/Upwork session persistence) ──
 
