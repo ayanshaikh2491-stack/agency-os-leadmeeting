@@ -40,6 +40,7 @@ class ChatRequest(BaseModel):
     message: str
     workspace_name: str = "Default"
     client_name: str = "Client"
+    skip_skills: bool = False
 
 
 class AnalyzeRequest(BaseModel):
@@ -128,9 +129,31 @@ class UptimeRequest(BaseModel):
 async def chat(req: ChatRequest):
     """Chat with Website Agent."""
     from admin.workspace.agents.website import WebsiteAgent
+    from admin.agency.website_skills import build_skill_context, detect_skills, list_website_skills
+
+    message = req.message
+    if not message:
+        raise HTTPException(400, "Message is required")
+
+    # Auto-detect website skills (frontend-design, nextjs, ui-design-system, etc.)
+    skill_context = ""
+    matched: list = []
+    if not req.skip_skills:
+        matched = detect_skills(message)
+        if matched:
+            skill_context = build_skill_context(matched)
+
+    if skill_context:
+        message = f"{skill_context}\n\n{message}"
+
     agent = WebsiteAgent(workspace_name=req.workspace_name, client_name=req.client_name)
-    output, thread_id = await agent.chat(req.message)
-    return {"response": output, "thread_id": thread_id}
+    output, thread_id = await agent.chat(message)
+    return {
+        "response": output,
+        "thread_id": thread_id,
+        "agent_type": "website",
+        "matched_skills": [s["name"] for s in matched],
+    }
 
 
 @router.post("/analyze")

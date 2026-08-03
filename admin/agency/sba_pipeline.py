@@ -36,7 +36,7 @@ def _env(key: str, default: str = "") -> str:
 
 
 def supabase_config() -> tuple[str, str] | None:
-    url = _env("SUPABASE_URL", "http://18.213.66.136:8050")
+    url = _env("SUPABASE_URL", "http://localhost:8050")
     key = _env("SUPABASE_SERVICE_KEY", "")
     if not key:
         logger.warning("SUPABASE_SERVICE_KEY missing — pipeline disabled")
