@@ -64,6 +64,502 @@ def _soup(html: str) -> BeautifulSoup:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WEBSITE PROJECT BUILDER (shared by build_site + generate_code)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_WEBSITE_PALETTES = {
+    "modern": {"primary": "#2563EB", "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
+    "minimal": {"primary": "#000000", "secondary": "#666666", "accent": "#2563EB", "bg": "#FFFFFF", "text": "#333333"},
+    "bold": {"primary": "#DC2626", "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
+    "warm": {"primary": "#D97706", "secondary": "#92400E", "accent": "#059669", "bg": "#FFFBEB", "text": "#451A03"},
+    "tech": {"primary": "#7C3AED", "secondary": "#1E1B4B", "accent": "#06B6D4", "bg": "#FFFFFF", "text": "#1E1B4B"},
+}
+
+_DEFAULT_SERVICES = ["Fast Delivery", "Secure Builds", "Scalable Design"]
+
+
+def _slugify(name: str) -> str:
+    """Convert a name into a safe directory slug."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
+    return slug or "website"
+
+
+def _escape_html(text: Any) -> str:
+    """Escape text for safe HTML embedding (XSS-safe)."""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _html_section(sec: str, ctx: dict) -> str:
+    esc = _escape_html
+    title = esc(ctx["title"])
+    tagline = esc(ctx["tagline"])
+    email = esc(ctx["business_email"])
+    services = ctx["services"]
+    svc_cards = "".join(
+        f'<div class="card"><h3>{esc(s)}</h3><p>Expert {esc(s.lower())} tailored to your goals.</p></div>'
+        for s in services
+    )
+    if sec == "hero":
+        subtitle = f'<p class="sub">{tagline}</p>' if tagline else ""
+        return (
+            f'<section class="hero"><h1>{title}</h1>{subtitle}'
+            '<p>We build modern, fast, and secure websites that help your business grow.</p>'
+            '<a href="#contact" class="btn">Get Started</a></section>'
+        )
+    if sec == "services":
+        return f'<section class="services" id="services"><h2>Our Services</h2><div class="grid">{svc_cards}</div></section>'
+    if sec == "about":
+        return f'<section class="about" id="about"><h2>About Us</h2><p>{title} is a team of passionate builders creating impactful digital experiences.</p></section>'
+    if sec == "testimonials":
+        return (
+            '<section class="testimonials" id="testimonials"><h2>What Clients Say</h2>'
+            '<blockquote>"Professional, fast, and creative. Highly recommended!" — Happy Client</blockquote></section>'
+        )
+    if sec == "contact":
+        contact_line = f'<p>Email us at <a href="mailto:{email}">{email}</a></p>' if email else ""
+        return (
+            f'<section class="contact" id="contact"><h2>Contact Us</h2>{contact_line}'
+            '<form><input type="text" placeholder="Name" required><input type="email" placeholder="Email" required>'
+            '<textarea placeholder="Message" required></textarea><button type="submit">Send</button></form></section>'
+        )
+    if sec == "footer":
+        return f"<footer><p>&copy; 2026 {title}. All rights reserved.</p></footer>"
+    if sec == "cta":
+        return (
+            '<section class="cta"><h2>Ready to Get Started?</h2>'
+            '<p>Contact us today and let\'s build something amazing together.</p>'
+            '<a href="#contact" class="btn">Contact Us</a></section>'
+        )
+    if sec == "features":
+        return (
+            '<section class="features" id="features"><h2>Features</h2><div class="grid">'
+            '<div class="card"><h3>Fast</h3><p>Lightning fast performance</p></div>'
+            '<div class="card"><h3>Secure</h3><p>Enterprise-grade security</p></div>'
+            '<div class="card"><h3>Scalable</h3><p>Grows with your business</p></div>'
+            '</div></section>'
+        )
+    if sec == "pricing":
+        return (
+            '<section class="pricing" id="pricing"><h2>Pricing</h2><div class="grid">'
+            '<div class="card"><h3>Starter</h3><p>$29/mo</p></div>'
+            '<div class="card"><h3>Pro</h3><p>$79/mo</p></div>'
+            '<div class="card"><h3>Enterprise</h3><p>$199/mo</p></div>'
+            '</div></section>'
+        )
+    return f'<section class="{sec}" id="{sec}"><h2>{sec.title()}</h2><p>Content for the {sec} section.</p></section>'
+
+
+def _html_page(ctx: dict, body: str) -> str:
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+        "  <meta charset=\"UTF-8\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+        f"  <title>{_escape_html(ctx['title'])}</title>\n"
+        "  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n"
+        f"{body}\n</body>\n</html>"
+    )
+
+
+def _html_css(ctx: dict) -> str:
+    c = ctx["colors"]
+    return f"""/* Generated by Website Agent */
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: 'Inter', system-ui, sans-serif; color: {c['text']}; background: {c['bg']}; }}
+.hero {{ min-height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {c['secondary']}; color: white; }}
+.hero h1 {{ font-size: 3.5rem; margin-bottom: 1rem; }}
+.hero .sub {{ font-size: 1.4rem; margin-bottom: 1rem; opacity: 0.95; }}
+.hero p {{ font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; }}
+.services, .about, .testimonials, .pricing, .features, .contact {{ padding: 5rem 2rem; text-align: center; }}
+.services h2, .about h2, .testimonials h2, .pricing h2, .features h2, .contact h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
+.card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
+.card h3 {{ color: {c['primary']}; margin-bottom: 0.5rem; }}
+.cta {{ background: {c['primary']}; color: white; padding: 5rem 2rem; text-align: center; }}
+.cta h2 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
+.cta p {{ font-size: 1.1rem; margin-bottom: 2rem; opacity: 0.9; }}
+.btn {{ display: inline-block; padding: 1rem 2.5rem; background: {c['accent']}; color: {c['secondary']}; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 1.1rem; transition: transform 0.2s; }}
+.btn:hover {{ transform: translateY(-2px); }}
+footer {{ background: {c['secondary']}; color: white; text-align: center; padding: 2rem; }}
+form {{ display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin: 0 auto; }}
+input, textarea {{ padding: 0.75rem; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }}
+button {{ padding: 0.75rem; background: {c['primary']}; color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
+blockquote {{ font-size: 1.2rem; font-style: italic; max-width: 600px; margin: 0 auto; padding: 2rem; border-left: 4px solid {c['primary']}; }}
+@media (max-width: 768px) {{ .hero h1 {{ font-size: 2.2rem; }} }}
+"""
+
+
+def _nextjs_component(sec: str, ctx: dict) -> str:
+    c = ctx["colors"]
+    title = ctx["title"]
+    tagline = ctx["tagline"]
+    email = ctx["business_email"]
+    services = ctx["services"]
+    if sec == "services":
+        return f"""export default function Services() {{
+  const services = {json.dumps(services, ensure_ascii=False)};
+  return (
+    <section className="py-20 px-8 text-center" id="services">
+      <h2 className="text-4xl font-bold mb-12">Our Services</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        {{services.map((s, i) => (
+          <div key={{i}} className="bg-white rounded-xl p-8 shadow-lg">
+            <h3 className="text-lg font-bold mb-2" style={{{{color: '{c['primary']}'}}}}>{{s}}</h3>
+            <p className="text-gray-600">Expert {{s.toLowerCase()}} tailored to your goals.</p>
+          </div>
+        ))}}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "hero":
+        return f"""export default function Hero() {{
+  const title = {json.dumps(title, ensure_ascii=False)};
+  const tagline = {json.dumps(tagline, ensure_ascii=False)};
+  return (
+    <section className="min-h-[80vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
+      <h1 className="text-5xl font-bold mb-4">{{title}}</h1>
+      {{tagline && <p className="text-xl mb-4 opacity-95">{{tagline}}</p>}}
+      <p className="text-xl mb-8 opacity-90">We build modern, fast, and secure websites that help your business grow.</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
+    </section>
+  );
+}}"""
+    if sec == "about":
+        return f"""export default function About() {{
+  const title = {json.dumps(title, ensure_ascii=False)};
+  return (
+    <section className="py-20 px-8 text-center" id="about">
+      <h2 className="text-4xl font-bold mb-12">About Us</h2>
+      <p className="text-gray-600 max-w-2xl mx-auto">{{title}} is a team of passionate builders creating impactful digital experiences.</p>
+    </section>
+  );
+}}"""
+    if sec == "testimonials":
+        return """export default function Testimonials() {
+  return (
+    <section className="py-20 px-8 text-center" id="testimonials">
+      <h2 className="text-4xl font-bold mb-12">What Clients Say</h2>
+      <blockquote className="text-xl italic max-w-2xl mx-auto border-l-4 border-blue-600 pl-8 text-left">
+        "Professional, fast, and creative. Highly recommended!" — Happy Client
+      </blockquote>
+    </section>
+  );
+}"""
+    if sec == "contact":
+        email_block = ""
+        if email:
+            email_block = ('<p className="text-lg mb-4">Email us at <a href="mailto:{email}" className="underline">{email}</a></p>')
+        return f"""export default function Contact() {{
+  const email = {json.dumps(email, ensure_ascii=False)};
+  return (
+    <section className="py-20 px-8 text-center" id="contact">
+      <h2 className="text-4xl font-bold mb-12">Contact Us</h2>
+      {email_block}
+      <form className="flex flex-col gap-4 max-w-md mx-auto" onSubmit={{e => e.preventDefault()}}>
+        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Name" required />
+        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Email" required />
+        <textarea className="p-3 border border-gray-300 rounded-lg" placeholder="Message" required />
+        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Send</button>
+      </form>
+    </section>
+  );
+}}"""
+    if sec == "footer":
+        return f"""export default function Footer() {{
+  const title = {json.dumps(title, ensure_ascii=False)};
+  return (
+    <footer className="bg-slate-800 text-white text-center py-6">
+      <p>&copy; 2026 {{title}}. All rights reserved.</p>
+    </footer>
+  );
+}}"""
+    if sec == "features":
+        return """export default function Features() {
+  const features = [
+    { title: "Fast", desc: "Lightning fast performance" },
+    { title: "Secure", desc: "Enterprise-grade security" },
+    { title: "Scalable", desc: "Grows with your business" },
+  ];
+  return (
+    <section className="py-20 px-8 text-center" id="features">
+      <h2 className="text-4xl font-bold mb-12">Features</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        {features.map((f, i) => (
+          <div key={i} className="bg-white rounded-xl p-8 shadow-lg">
+            <h3 className="text-lg font-bold text-blue-600 mb-2">{f.title}</h3>
+            <p className="text-gray-600">{f.desc}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}"""
+    if sec == "cta":
+        return """export default function CTA() {
+  return (
+    <section className="py-20 px-8 text-center bg-blue-600 text-white">
+      <h2 className="text-4xl font-bold mb-4">Ready to Get Started?</h2>
+      <p className="text-lg mb-8 opacity-90">Contact us today.</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Contact Us</a>
+    </section>
+  );
+}"""
+    if sec == "pricing":
+        return """export default function Pricing() {
+  return (
+    <section className="py-20 px-8 text-center" id="pricing">
+      <h2 className="text-4xl font-bold mb-12">Pricing</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Starter</h3><p>$29/mo</p></div>
+        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Pro</h3><p>$79/mo</p></div>
+        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Enterprise</h3><p>$199/mo</p></div>
+      </div>
+    </section>
+  );
+}"""
+    name = sec.title().replace(" ", "")
+    return f"""export default function {name}() {{
+  return (
+    <section className="py-20 px-8 text-center" id="{sec}">
+      <h2 className="text-4xl font-bold mb-4">{sec.title()}</h2>
+      <p className="text-gray-600">Content for the {sec} section.</p>
+    </section>
+  );
+}}"""
+
+
+def _nextjs_page(section_list: list[str], ctx: dict) -> str:
+    imports = "\n".join(
+        f"import {s.title().replace(' ', '')} from './components/{s.title().replace(' ', '')}';"
+        for s in section_list
+    )
+    calls = "\n      ".join(f"<{s.title().replace(' ', '')} />" for s in section_list)
+    title = json.dumps(ctx["title"], ensure_ascii=False)
+    return f"""// app/page.tsx — Generated by Website Agent
+{imports}
+
+export default function Home() {{
+  const title = {title};
+  return (
+    <main>
+      <h1 className="text-4xl font-bold text-center py-12">{{title}}</h1>
+      {calls}
+    </main>
+  );
+}}
+"""
+
+
+def _nextjs_layout(ctx: dict) -> str:
+    title = _escape_html(ctx["title"])
+    return f"""// app/layout.tsx — Generated by Website Agent
+import type {{ Metadata }} from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {{
+  title: "{title}",
+  description: "Official website of {title}.",
+}};
+
+export default function RootLayout({{ children }}: {{ children: React.ReactNode }}) {{
+  return (
+    <html lang="en">
+      <body>{{children}}</body>
+    </html>
+  );
+}}
+"""
+
+
+def _nextjs_globals_css(ctx: dict) -> str:
+    c = ctx["colors"]
+    return f"""@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {{
+  --color-primary: {c['primary']};
+  --color-secondary: {c['secondary']};
+  --color-accent: {c['accent']};
+  --color-bg: {c['bg']};
+  --color-text: {c['text']};
+}}
+
+body {{
+  color: var(--color-text);
+  background: var(--color-bg);
+}}
+"""
+
+
+def _nextjs_package_json(title: str) -> str:
+    return json.dumps({
+        "name": _slugify(title),
+        "version": "0.1.0",
+        "private": True,
+        "scripts": {"dev": "next dev", "build": "next build", "start": "next start", "lint": "next lint"},
+        "dependencies": {"next": "^14.2.0", "react": "^18.3.1", "react-dom": "^18.3.1"},
+        "devDependencies": {
+            "@types/node": "^20", "@types/react": "^18", "@types/react-dom": "^18",
+            "autoprefixer": "^10", "postcss": "^8", "tailwindcss": "^3.4.0", "typescript": "^5",
+        },
+    }, indent=2)
+
+
+def _nextjs_tailwind_config(ctx: dict) -> str:
+    c = ctx["colors"]
+    return f"""import type {{ Config }} from "tailwindcss";
+
+const config: Config = {{
+  content: [
+    "./app/**/*.{{js,ts,jsx,tsx,mdx}}",
+    "./components/**/*.{{js,ts,jsx,tsx,mdx}}",
+  ],
+  theme: {{
+    extend: {{
+      colors: {{
+        primary: "{c['primary']}",
+        secondary: "{c['secondary']}",
+        accent: "{c['accent']}",
+      }},
+    }},
+  }},
+  plugins: [],
+}};
+
+export default config;
+"""
+
+
+def _build_readme(ctx: dict, framework: str) -> str:
+    if framework == "html":
+        return f"""# {ctx['title']}
+
+Generated by the Website Agent.
+
+## Run locally
+Open `index.html` in a browser (or run `python -m http.server`).
+
+## Customize
+Edit `style.css` for colors and fonts. Sections live in `index.html`.
+"""
+    return f"""# {ctx['title']}
+
+Generated by the Website Agent.
+
+## Run locally
+```bash
+npm install
+npm run dev
+```
+
+## Build & deploy
+```bash
+npm run build
+npx vercel deploy --prod
+```
+
+## Structure
+- `app/page.tsx` — home page (imports section components)
+- `app/layout.tsx` — root layout + metadata
+- `app/globals.css` — Tailwind + design tokens
+- `components/*.tsx` — Hero, Services, About, Testimonials, Contact, Footer
+"""
+
+
+def _build_instructions(framework: str, title: str) -> str:
+    if framework == "html":
+        return "Save files next to each other and open index.html in a browser. Ready to deploy to any static host (Vercel, Netlify, GitHub Pages)."
+    return "1. npm install\n2. npm run dev — preview locally\n3. npm run build && npx vercel deploy --prod — deploy to Vercel"
+
+
+def _build_website_project(
+    *,
+    title: str = "My Website",
+    tagline: str = "",
+    industry: str = "",
+    services: list[str] | None = None,
+    business_email: str = "",
+    sections: list[str] | None = None,
+    style: str = "modern",
+    color_primary: str = "#2563EB",
+    framework: str = "nextjs",
+    skills: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a complete website project dict (rel_path -> content). Deterministic, no network, no LLM."""
+    skills = [s for s in (skills or []) if s]
+    title = (title or "").strip() or "My Website"
+    tagline = (tagline or "").strip()
+    services = [s.strip() for s in (services or []) if s and s.strip()] or list(_DEFAULT_SERVICES)
+    section_list = [s.strip().lower() for s in (sections or ["hero", "services", "about", "testimonials", "contact", "footer"]) if s and s.strip()]
+    if not section_list:
+        section_list = ["hero", "services", "about", "testimonials", "contact", "footer"]
+
+    colors = dict(_WEBSITE_PALETTES.get(style, _WEBSITE_PALETTES["modern"]))
+    colors["primary"] = color_primary or colors["primary"]
+
+    if "nextjs-developer" in skills or "react-expert" in skills:
+        framework = framework or "nextjs"
+
+    ctx = {
+        "title": title,
+        "tagline": tagline,
+        "industry": industry,
+        "services": services,
+        "business_email": business_email or "",
+        "colors": colors,
+        "style": style,
+    }
+
+    if framework == "html":
+        body = "".join(_html_section(s, ctx) for s in section_list)
+        page_code = _html_page(ctx, body)
+        files = {"index.html": page_code, "style.css": _html_css(ctx)}
+        components = {}
+    else:
+        components = {}
+        for s in section_list:
+            name = s.title().replace(" ", "")
+            components[f"components/{name}.tsx"] = _nextjs_component(s, ctx)
+        page_code = _nextjs_page(section_list, ctx)
+        files = {
+            "package.json": _nextjs_package_json(title),
+            "app/layout.tsx": _nextjs_layout(ctx),
+            "app/globals.css": _nextjs_globals_css(ctx),
+            "app/page.tsx": page_code,
+            "tailwind.config.ts": _nextjs_tailwind_config(ctx),
+            "README.md": _build_readme(ctx, framework),
+        }
+        files.update(components)
+
+    return {
+        "framework": framework,
+        "style": style,
+        "sections": section_list,
+        "colors": colors,
+        "title": title,
+        "tagline": tagline,
+        "industry": industry,
+        "services": services,
+        "business_email": business_email or "",
+        "skills_applied": skills,
+        "page_code": page_code,
+        "files": files,
+        "components": components,
+        "file_count": len(files),
+        "instructions": _build_instructions(framework, title),
+        "generated_at": _now(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. ANALYZE WEBSITE
 # ═══════════════════════════════════════════════════════════════════════════════
 
