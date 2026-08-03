@@ -23,6 +23,7 @@ Action (5):
 """
 from __future__ import annotations
 
+import os
 import re
 import ssl
 import json
@@ -1416,6 +1417,57 @@ export default function Home() {{
     return nextjs_code
 
 
+def build_site(
+    title: str = "My Website",
+    tagline: str = "",
+    industry: str = "",
+    sections: str = "hero,services,about,testimonials,contact,footer",
+    style: str = "modern",
+    color_primary: str = "#2563EB",
+    framework: str = "nextjs",
+    services: str = "",
+    business_email: str = "",
+    output_dir: str = "",
+    skills: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a complete website project on disk from business info.
+
+    Writes real files (Next.js project or HTML) and returns the file list.
+    """
+    if isinstance(skills, str):
+        skills = [s.strip() for s in skills.split(",") if s.strip()]
+    project = _build_website_project(
+        title=title,
+        tagline=tagline,
+        industry=industry,
+        services=[s.strip() for s in services.split(",") if s.strip()],
+        business_email=business_email,
+        sections=[s.strip() for s in sections.split(",") if s.strip()],
+        style=style,
+        color_primary=color_primary,
+        framework=framework,
+        skills=skills or [],
+    )
+    if not output_dir:
+        output_dir = os.path.join("generated_sites", _slugify(project["title"]))
+    written = []
+    for rel_path, content in project["files"].items():
+        full_path = os.path.join(output_dir, rel_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        written.append(rel_path)
+    preview = "open index.html in a browser" if project["framework"] == "html" else f"run `npm run dev` in {output_dir}"
+    return {
+        **project,
+        "status": "built",
+        "output_dir": output_dir,
+        "files_written": written,
+        "file_count": len(written),
+        "preview_url_hint": preview,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 12. DEPLOY TO VERCEL
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1918,6 +1970,30 @@ WEBSITE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "build_site",
+            "description": "Build a complete website project on disk (Next.js or HTML) from business info: title, tagline, services, email, sections, colors. Writes real files and returns the file list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Website/business name", "default": "My Website"},
+                    "tagline": {"type": "string", "description": "One-line value proposition", "default": ""},
+                    "industry": {"type": "string", "description": "Industry (tech, food, agency, etc.)", "default": ""},
+                    "sections": {"type": "string", "description": "Comma-separated sections: hero,services,about,testimonials,contact,footer", "default": "hero,services,about,testimonials,contact,footer"},
+                    "style": {"type": "string", "enum": ["modern", "minimal", "bold", "warm", "tech"], "default": "modern"},
+                    "color_primary": {"type": "string", "description": "Primary color hex code", "default": "#2563EB"},
+                    "framework": {"type": "string", "enum": ["nextjs", "html"], "default": "nextjs"},
+                    "services": {"type": "string", "description": "Comma-separated service names (e.g. Web Design, SEO, Branding)", "default": ""},
+                    "business_email": {"type": "string", "description": "Contact email shown in contact section + footer", "default": ""},
+                    "output_dir": {"type": "string", "description": "Where to write the project (default generated_sites/<title-slug>)", "default": ""},
+                    "skills": {"type": "array", "items": {"type": "string"}, "description": "Matched skill names to bias defaults", "default": []},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deploy_vercel",
             "description": "Deploy a project to Vercel (frontend+backend). Uses vercel CLI. Returns deploy URL.",
             "parameters": {
@@ -2015,6 +2091,19 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             sections=a.get("sections", "hero,features,cta,footer"),
             color_primary=a.get("color_primary", "#2563EB"),
             title=a.get("title", "My Website"),
+        ),
+        "build_site": lambda a: build_site(
+            title=a.get("title", "My Website"),
+            tagline=a.get("tagline", ""),
+            industry=a.get("industry", ""),
+            sections=a.get("sections", "hero,services,about,testimonials,contact,footer"),
+            style=a.get("style", "modern"),
+            color_primary=a.get("color_primary", "#2563EB"),
+            framework=a.get("framework", "nextjs"),
+            services=a.get("services", ""),
+            business_email=a.get("business_email", ""),
+            output_dir=a.get("output_dir", ""),
+            skills=a.get("skills", []),
         ),
         "deploy_vercel": lambda a: deploy_vercel(
             project_path=a.get("project_path", "."),

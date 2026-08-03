@@ -64,3 +64,58 @@ def test_builder_services_fallback_and_skills_bias():
 def test_slugify_and_escape_helpers():
     assert _slugify("Acme Bakery!") == "acme-bakery"
     assert _escape_html("<b>&\"x\"</b>") == "&lt;b&gt;&amp;&quot;x&quot;&lt;/b&gt;"
+
+
+# ── build_site ────────────────────────────────────────────────────────────────
+
+from admin.tools.website_tools import WEBSITE_TOOLS, build_site, execute_website_tool
+
+
+def test_build_site_writes_real_files(tmp_path):
+    result = build_site(
+        title="Acme Bakery",
+        tagline="Fresh bread daily",
+        services="Cakes, Pastries, Catering",
+        business_email="hello@acme.example",
+        output_dir=str(tmp_path),
+        framework="nextjs",
+    )
+    assert result["status"] == "built"
+    for rel in ["package.json", "app/page.tsx", "app/layout.tsx", "app/globals.css", "README.md"]:
+        assert os.path.isfile(os.path.join(str(tmp_path), rel)), rel
+    page = (tmp_path / "app" / "page.tsx").read_text(encoding="utf-8")
+    assert "Acme Bakery" in page
+    contact = (tmp_path / "components" / "Contact.tsx").read_text(encoding="utf-8")
+    assert "hello@acme.example" in contact
+
+
+def test_build_site_html_variant_writes_files(tmp_path):
+    result = build_site(title="Portfolio", framework="html", output_dir=str(tmp_path))
+    assert os.path.isfile(os.path.join(str(tmp_path), "index.html"))
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "Portfolio" in html
+    assert os.path.isfile(os.path.join(str(tmp_path), "style.css"))
+
+
+def test_build_site_custom_color_and_services(tmp_path):
+    result = build_site(
+        title="SaaS Flow",
+        tagline="Automate everything",
+        services="Analytics, Automation, Reports",
+        business_email="team@saasflow.example",
+        color_primary="#FF5500",
+        output_dir=str(tmp_path),
+    )
+    globals_css = (tmp_path / "app" / "globals.css").read_text(encoding="utf-8")
+    assert "#FF5500" in globals_css
+    services_tsx = (tmp_path / "components" / "Services.tsx").read_text(encoding="utf-8")
+    assert "Analytics" in services_tsx and "Reports" in services_tsx
+
+
+def test_build_site_registered_and_dispatchable(tmp_path):
+    names = {t["function"]["name"] for t in WEBSITE_TOOLS}
+    assert "build_site" in names
+    out = execute_website_tool("build_site", {"title": "X", "output_dir": str(tmp_path)})
+    assert out["status"] == "built"
+    assert os.path.isfile(os.path.join(str(tmp_path), "app", "page.tsx"))
+    assert out["file_count"] >= 7
