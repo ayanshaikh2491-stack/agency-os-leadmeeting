@@ -23,6 +23,7 @@ from admin.api.routes import orchestrator as orch_routes
 from admin.api.routes import ads as ads_routes
 from admin.api.routes import analytics as analytics_routes
 from admin.api.routes import social as social_routes
+from admin.api.routes import workflows as workflows_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db
@@ -76,6 +77,7 @@ app.include_router(orch_routes.router)
 app.include_router(ads_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(social_routes.router)
+app.include_router(workflows_routes.router)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
@@ -88,6 +90,36 @@ async def health():
         ceo_ready=True,
         workspace_count=len(workspaces),
     )
+
+
+@app.get("/api/status", tags=["system"])
+async def api_status():
+    """Agency status — pipeline summary + workspace count.
+
+    Shape matches what the frontend expects:
+      status?.pipeline?.queue?.total / .new / .leads_found_today
+    """
+    from admin.agency.sba_store import list_leads
+
+    all_leads = list_leads()
+    by_status: dict[str, int] = {}
+    for s in ["new", "contacted", "meeting", "proposal", "negotiation", "closed", "lost"]:
+        by_status[s] = len([l for l in all_leads if l["status"] == s])
+
+    new_count = by_status.get("new", 0)
+    total_in_pipeline = sum(by_status.values())
+    hot_leads = len([l for l in all_leads if l.get("score", 0) >= 80 and l["status"] != "closed"])
+
+    return {
+        "success": True,
+        "pipeline": {
+            "leads_found_today": new_count,
+            "queue": {"total": total_in_pipeline, "new": new_count},
+            "by_status": by_status,
+            "hot_leads": hot_leads,
+        },
+        "workspaces": len(list_workspaces()),
+    }
 
 
 # ── Entry ──────────────────────────────────────────────────────────────────
