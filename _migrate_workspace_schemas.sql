@@ -111,6 +111,63 @@ BEGIN
       created_at TIMESTAMPTZ DEFAULT now()
     )$ddl$, sch);
 
+  -- ── Generic per-agent tables (any agent in this workspace) ──
+  -- agent_memory: key/value memory per agent (what it learned, state, notes)
+  EXECUTE format($ddl$
+    CREATE TABLE IF NOT EXISTS %I.agent_memory (
+      id BIGSERIAL PRIMARY KEY,
+      agent_name TEXT NOT NULL DEFAULT 'agent',   -- sba|website|seo|social|content|ads|analytics
+      memory_key TEXT NOT NULL,
+      value JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(agent_name, memory_key)
+    )$ddl$, sch);
+  -- agent_messages: per-agent chat history
+  EXECUTE format($ddl$
+    CREATE TABLE IF NOT EXISTS %I.agent_messages (
+      id BIGSERIAL PRIMARY KEY,
+      agent_name TEXT NOT NULL DEFAULT 'agent',
+      role TEXT NOT NULL,          -- user|assistant|system|tool
+      content TEXT DEFAULT '',
+      meta JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )$ddl$, sch);
+  -- agent_data: arbitrary per-agent documents/state (JSON)
+  EXECUTE format($ddl$
+    CREATE TABLE IF NOT EXISTS %I.agent_data (
+      id BIGSERIAL PRIMARY KEY,
+      agent_name TEXT NOT NULL DEFAULT 'agent',
+      data_key TEXT NOT NULL,
+      payload JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(agent_name, data_key)
+    )$ddl$, sch);
+  -- agent_checkpoints: LangGraph memory (checkpoint per thread)
+  EXECUTE format($ddl$
+    CREATE TABLE IF NOT EXISTS %I.agent_checkpoints (
+      agent_name TEXT NOT NULL DEFAULT 'agent',
+      thread_id TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      checkpoint JSONB NOT NULL,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      parent_checkpoint_id TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (agent_name, thread_id, checkpoint_id)
+    )$ddl$, sch);
+  -- agent_checkpoint_writes: pending writes per checkpoint task
+  EXECUTE format($ddl$
+    CREATE TABLE IF NOT EXISTS %I.agent_checkpoint_writes (
+      agent_name TEXT NOT NULL DEFAULT 'agent',
+      thread_id TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      writes JSONB DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      PRIMARY KEY (agent_name, thread_id, checkpoint_id, task_id)
+    )$ddl$, sch);
+
   EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%s_website_builds ON %I.website_builds (client_name)', replace(sch, '.', '_'), sch);
   EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%s_website_docs ON %I.website_docs (client_name, doc_type)', replace(sch, '.', '_'), sch);
   EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%s_website_log ON %I.website_build_log (client_name, created_at DESC)', replace(sch, '.', '_'), sch);

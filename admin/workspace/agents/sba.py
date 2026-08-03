@@ -21,7 +21,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.chrome_tool import (
     CHROME_TOOLS,
@@ -713,7 +713,7 @@ async def sba_finalize(state: SBAAgentState) -> dict[str, Any]:
 # ── Build Graph ──────────────────────────────────────────────────────────────
 
 
-def build_sba_workspace_graph() -> StateGraph:
+def build_sba_workspace_graph(checkpointer=None) -> StateGraph:
     """Build the compiled LangGraph state graph for SBA.
 
     Graph structure:
@@ -740,7 +740,7 @@ def build_sba_workspace_graph() -> StateGraph:
     workflow.add_edge("run_tools", "call_llm")
     workflow.add_edge("finalize", END)
 
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())
 
 
 # ── Agent Class ──────────────────────────────────────────────────────────────
@@ -755,7 +755,7 @@ class SBAAgent:
         client_name: str = "Client",
         workspace_id: str | None = None,
     ):
-        self.graph = build_sba_workspace_graph()
+        self.graph = build_sba_workspace_graph(get_checkpointer(self.workspace_name, "sba"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self.workspace_id = workspace_id or workspace_name

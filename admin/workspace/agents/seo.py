@@ -21,7 +21,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.seo_tools import SEO_TOOLS, execute_seo_tool
 from admin.workspace.agent_bus import send_message
@@ -288,7 +288,7 @@ def seo_finalize(state: SEOAgentState) -> dict[str, Any]:
 
 # ── Build Graph ──────────────────────────────────────────────────────────────
 
-def build_seo_graph() -> StateGraph:
+def build_seo_graph(checkpointer=None) -> StateGraph:
     workflow = StateGraph(SEOAgentState)
     workflow.add_node("call_llm", seo_call_llm)
     workflow.add_node("finalize", seo_finalize)
@@ -298,7 +298,7 @@ def build_seo_graph() -> StateGraph:
         "finalize": "finalize",
     })
     workflow.add_edge("finalize", END)
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())
 
 
 # ── Agent Class ──────────────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ class SEOAgent:
     """SEO Agent for a specific workspace — with real tools."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_seo_graph()
+        self.graph = build_seo_graph(get_checkpointer(self.workspace_name, "seo"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self._thread_id = f"seo_{workspace_name}"

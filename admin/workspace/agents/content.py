@@ -25,7 +25,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.together_gpu import generate_image, generate_video, get_platform_size
 from admin.tools.visual_tools import discover_brand_identity
@@ -939,7 +939,7 @@ def route_after_validate(state: ContentState) -> str:
 # LANGGRAPH BUILD
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_content_graph() -> StateGraph:
+def build_content_graph(checkpointer=None) -> StateGraph:
     """Build the 6-node content generation pipeline."""
     graph = StateGraph(ContentState)
 
@@ -967,7 +967,7 @@ def build_content_graph() -> StateGraph:
         END: END,
     })
 
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=checkpointer or MemorySaver())
 
 
 _graph = None
@@ -995,7 +995,7 @@ class ContentAgent:
         self.client_name = client_name
         self.client_website = client_website
         self.brand: dict[str, Any] = {}
-        self._graph = get_content_graph()
+        self._graph = build_content_graph(get_checkpointer(self.workspace_name, "content"))
 
         # Load or create memory
         _content_store.get_or_create(

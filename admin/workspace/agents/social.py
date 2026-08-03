@@ -42,7 +42,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.social_tools import SOCIAL_TOOLS, execute_social_tool
 from admin.workspace.agent_bus import send_message
@@ -243,7 +243,7 @@ def social_finalize(state: SocialAgentState) -> dict[str, Any]:
 
 # ── Graph ────────────────────────────────────────────────────────────────────
 
-def build_social_graph() -> StateGraph:
+def build_social_graph(checkpointer=None) -> StateGraph:
     graph = StateGraph(SocialAgentState)
     graph.add_node("call_llm", social_call_llm)
     graph.add_node("run_tools", social_run_tools)
@@ -255,7 +255,7 @@ def build_social_graph() -> StateGraph:
     })
     graph.add_edge("run_tools", "call_llm")
     graph.add_edge("finalize", END)
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=checkpointer or MemorySaver())
 
 
 _graph = None
@@ -276,7 +276,7 @@ class SocialAgent:
         self.workspace_name = workspace_name
         self.client_name = client_name
         self._thread_id = f"social_{workspace_name}"
-        self._graph = get_social_graph()
+        self._graph = build_social_graph(get_checkpointer(self.workspace_name, "social"))
 
     async def chat(self, message: str) -> tuple[str, str]:
         """Process a social media request."""

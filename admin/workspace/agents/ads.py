@@ -17,7 +17,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.ads_tools import ADS_TOOLS, execute_ads_tool
 from admin.workspace.agent_bus import send_message
@@ -199,7 +199,7 @@ async def ads_finalize(state: AdsAgentState) -> dict:
     return {"final_output": "Ads Agent analysis complete."}
 
 
-def build_ads_graph() -> StateGraph:
+def build_ads_graph(checkpointer=None) -> StateGraph:
     workflow = StateGraph(AdsAgentState)
     workflow.add_node("call_llm", ads_call_llm)
     workflow.add_node("run_tools", ads_run_tools)
@@ -208,14 +208,14 @@ def build_ads_graph() -> StateGraph:
     workflow.add_conditional_edges("call_llm", ads_route, {"run_tools": "run_tools", "finalize": "finalize"})
     workflow.add_edge("run_tools", "call_llm")
     workflow.add_edge("finalize", END)
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())
 
 
 class AdsAgent:
     """Ads Agent for a specific workspace."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_ads_graph()
+        self.graph = build_ads_graph(get_checkpointer(self.workspace_name, "ads"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self._thread_id = f"ads_{workspace_name}"

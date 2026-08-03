@@ -18,7 +18,7 @@ from typing import Annotated, Any, TypedDict
 import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 from admin.tools.analytics_tools import ANALYTICS_TOOLS, execute_analytics_tool
 from admin.workspace.agent_bus import send_message
@@ -222,7 +222,7 @@ async def analytics_finalize(state: AnalyticsAgentState) -> dict:
     return {"final_output": "Analytics Agent analysis complete."}
 
 
-def build_analytics_graph() -> StateGraph:
+def build_analytics_graph(checkpointer=None) -> StateGraph:
     workflow = StateGraph(AnalyticsAgentState)
     workflow.add_node("call_llm", analytics_call_llm)
     workflow.add_node("run_tools", analytics_run_tools)
@@ -233,14 +233,14 @@ def build_analytics_graph() -> StateGraph:
     })
     workflow.add_edge("run_tools", "call_llm")
     workflow.add_edge("finalize", END)
-    return workflow.compile(checkpointer=MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())
 
 
 class AnalyticsAgent:
     """Analytics Agent for a specific workspace."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_analytics_graph()
+        self.graph = build_analytics_graph(get_checkpointer(self.workspace_name, "analytics"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self._thread_id = f"analytics_{workspace_name}"
