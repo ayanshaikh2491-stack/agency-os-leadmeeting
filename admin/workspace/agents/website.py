@@ -154,6 +154,8 @@ class WebsiteAgentState(TypedDict):
     tool_round: int
     final_output: str
     error: str | None
+    skills_meta: str
+    thinking_phases: list[dict[str, Any]]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -167,11 +169,14 @@ def _get_llm_client() -> openai.OpenAI:
 # ── Graph Nodes ──────────────────────────────────────────────────────────────
 
 async def website_call_llm(state: WebsiteAgentState) -> dict[str, Any]:
-    """Call the LLM with tools."""
+    """Call the LLM with tools. Returns tool calls (unexecuted) or final response."""
     system = WEBSITE_SYSTEM_PROMPT.format(
         workspace_name=state.get("workspace_name", "Default"),
         client_name=state.get("client_name", "Client"),
     )
+    if state.get("skills_meta"):
+        system = f"{system}\n\n{state['skills_meta']}"
+
     messages = [{"role": "system", "content": system}]
     messages.extend(state.get("messages", []))
 
@@ -206,29 +211,14 @@ async def website_call_llm(state: WebsiteAgentState) -> dict[str, Any]:
                 for tc in tool_calls
             ],
         })
-
-        for tc in tool_calls:
-            tool_name = tc.function.name
-            try:
-                args = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-
-            logger.info("Website tool call: %s(%s)", tool_name, args)
-            result = execute_website_tool(tool_name, args)
-            result_str = json.dumps(result, default=str)[:8000]
-
-            new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
-
         return {"messages": new_messages, "error": None}
 
-    # No tool calls — final response
     new_messages.append({"role": "assistant", "content": content})
     return {"messages": new_messages, "final_output": content, "error": None}
 
 
 def website_route(state: WebsiteAgentState) -> str:
-    """Route: tool_calls -> loop, no calls -> finalize."""
+    """Route: tool_calls -> run_tools, tool results -> back to LLM, else finalize."""
     if state.get("error"):
         return "finalize"
     if state.get("tool_round", 0) >= MAX_TOOL_ROUNDS:
@@ -239,8 +229,11 @@ def website_route(state: WebsiteAgentState) -> str:
         return "finalize"
 
     last = msgs[-1]
-    if isinstance(last, dict) and last.get("tool_calls"):
-        return "run_tools"
+    if isinstance(last, dict):
+        if last.get("tool_calls"):
+            return "run_tools"
+        if last.get("role") == "tool":
+            return "call_llm"
 
     return "finalize"
 
@@ -297,6 +290,7 @@ def build_website_graph() -> StateGraph:
     graph.set_entry_point("call_llm")
     graph.add_conditional_edges("call_llm", website_route, {
         "run_tools": "run_tools",
+        "call_llm": "call_llm",
         "finalize": "finalize",
     })
     graph.add_edge("run_tools", "call_llm")

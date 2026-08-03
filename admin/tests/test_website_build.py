@@ -146,3 +146,99 @@ def test_generate_code_backward_compatible_and_writes(tmp_path):
     # html framework still works
     out3 = generate_code(framework="html", title="Static", output_dir=str(tmp_path / "static"))
     assert (tmp_path / "static" / "index.html").is_file()
+
+
+# ── Task 4: LangGraph loop (tool results reach the LLM) ─────────────────────
+
+from admin.workspace.agents.website import WebsiteAgent, build_website_graph, website_route
+
+
+def test_route_sends_tool_results_back_to_llm():
+    state = {
+        "messages": [{"role": "tool", "tool_call_id": "call_1", "content": '{"status":"built"}'}],
+        "tool_round": 1,
+    }
+    assert website_route(state) == "call_llm"
+
+
+def test_route_executes_pending_tool_calls():
+    state = {
+        "messages": [{"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "build_site", "arguments": "{}"}}]}],
+        "tool_round": 1,
+    }
+    assert website_route(state) == "run_tools"
+
+
+def test_route_finalizes_on_plain_answer():
+    state = {"messages": [{"role": "assistant", "content": "Here is your website."}], "tool_round": 1}
+    assert website_route(state) == "finalize"
+
+
+def test_route_finalizes_on_round_cap():
+    state = {"messages": [{"role": "tool", "tool_call_id": "c", "content": "x"}], "tool_round": 8}
+    assert website_route(state) == "finalize"
+
+
+# ── full graph loop (fake LLM, no network) ────────────────────────────────────
+
+class _FakeChoice:
+    class _Msg:
+        def __init__(self, content, tool_calls):
+            self.content = content
+            self.tool_calls = tool_calls
+
+    def __init__(self, content, tool_calls):
+        self.message = self._Msg(content, tool_calls)
+
+
+class _FakeResp:
+    def __init__(self, content, tool_calls):
+        self.choices = [_FakeChoice(content, tool_calls)]
+
+
+class _FakeTC:
+    def __init__(self, name, arguments):
+        self.id = "call_fake"
+        self.type = "function"
+        self.function = type("F", (), {"name": name, "arguments": arguments})()
+
+
+class _FakeCompletions:
+    def __init__(self, calls):
+        self.calls = calls
+        self.idx = 0
+
+    def create(self, **kwargs):
+        r = self.calls[min(self.idx, len(self.calls) - 1)]
+        self.idx += 1
+        return r
+
+
+class _FakeClient:
+    def __init__(self, calls):
+        self.chat = type("C", (), {"completions": _FakeCompletions(calls)})()
+
+
+def test_full_graph_loop_feeds_tool_result_back(monkeypatch, tmp_path):
+    import admin.workspace.agents.website as wsmod
+
+    fake = _FakeClient([
+        _FakeResp("", [_FakeTC("build_site", json.dumps({"title": "LoopCo", "output_dir": str(tmp_path)}))]),
+        _FakeResp("Done! I built the LoopCo site. Files are in the output directory.", []),
+    ])
+    monkeypatch.setattr(wsmod, "_get_llm_client", lambda: fake)
+
+    graph = build_website_graph()
+    state = {
+        "messages": [{"role": "user", "content": "build a website for LoopCo"}],
+        "workspace_name": "test",
+        "client_name": "Client",
+        "skills_meta": "",
+        "tool_round": 0,
+        "final_output": "",
+        "error": None,
+        "thinking_phases": [],
+    }
+    result = asyncio.run(graph.ainvoke(state, config={"configurable": {"thread_id": "t1"}}))
+    assert "LoopCo" in result["final_output"]
+    assert (tmp_path / "app" / "page.tsx").is_file()
