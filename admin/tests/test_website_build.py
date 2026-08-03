@@ -119,3 +119,30 @@ def test_build_site_registered_and_dispatchable(tmp_path):
     assert out["status"] == "built"
     assert os.path.isfile(os.path.join(str(tmp_path), "app", "page.tsx"))
     assert out["file_count"] >= 7
+
+
+# ── generate_code ──────────────────────────────────────────────────────────
+
+def test_generate_code_backward_compatible_and_writes(tmp_path):
+    from admin.tools.website_tools import generate_code
+
+    out = generate_code(title="Acme", sections="hero,features,cta,footer", framework="nextjs")
+    assert out["page_code"]
+    assert out["framework"] == "nextjs"
+    assert out["title"] == "Acme"
+    assert "components" in out
+    assert out["components"]
+
+    out2 = generate_code(
+        title="Acme Services",
+        services="Design, SEO",
+        business_email="hi@acme.example",
+        output_dir=str(tmp_path),
+        skills=["nextjs-developer"],
+    )
+    assert out2["status"] == "built"
+    assert os.path.isfile(os.path.join(str(tmp_path), "app", "page.tsx"))
+    html_path = tmp_path / "index.html"
+    # html framework still works
+    out3 = generate_code(framework="html", title="Static", output_dir=str(tmp_path / "static"))
+    assert (tmp_path / "static" / "index.html").is_file()

@@ -1194,227 +1194,43 @@ def generate_code(
     sections: str = "hero,features,cta,footer",
     color_primary: str = "#2563EB",
     title: str = "My Website",
+    tagline: str = "",
+    services: str = "",
+    business_email: str = "",
+    output_dir: str = "",
+    skills: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Generate starter code for a website page (Next.js or HTML/CSS)."""
-    section_list = [s.strip() for s in sections.split(",") if s.strip()]
+    """Generate starter code for a website page (Next.js or HTML/CSS).
 
-    # Color palette
-    palette = {
-        "modern": {"primary": color_primary, "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
-        "minimal": {"primary": "#000000", "secondary": "#666666", "accent": color_primary, "bg": "#FFFFFF", "text": "#333333"},
-        "bold": {"primary": "#DC2626", "secondary": "#1E293B", "accent": "#F59E0B", "bg": "#FFFFFF", "text": "#1E293B"},
-        "warm": {"primary": "#D97706", "secondary": "#92400E", "accent": "#059669", "bg": "#FFFBEB", "text": "#451A03"},
-        "tech": {"primary": "#7C3AED", "secondary": "#1E1B4B", "accent": "#06B6D4", "bg": "#FFFFFF", "text": "#1E1B4B"},
-    }
-    colors = palette.get(style, palette["modern"])
-
-    if framework == "html":
-        # Generate plain HTML + CSS
-        sections_html = ""
-        for sec in section_list:
-            if sec == "hero":
-                sections_html += f"""
-  <section class="hero">
-    <h1>{title}</h1>
-    <p>Welcome to our website. We build amazing things.</p>
-    <a href="#contact" class="btn">Get Started</a>
-  </section>"""
-            elif sec == "features":
-                sections_html += """
-  <section class="features">
-    <h2>Features</h2>
-    <div class="grid">
-      <div class="card"><h3>Fast</h3><p>Lightning fast performance</p></div>
-      <div class="card"><h3>Secure</h3><p>Enterprise-grade security</p></div>
-      <div class="card"><h3>Scalable</h3><p>Grows with your business</p></div>
-    </div>
-  </section>"""
-            elif sec == "cta":
-                sections_html += """
-  <section class="cta">
-    <h2>Ready to Get Started?</h2>
-    <p>Contact us today and let's build something amazing together.</p>
-    <a href="#contact" class="btn">Contact Us</a>
-  </section>"""
-            elif sec == "footer":
-                sections_html += """
-  <footer>
-    <p>&copy; 2026 """ + title + """. All rights reserved.</p>
-  </footer>"""
-            elif sec == "about":
-                sections_html += """
-  <section class="about">
-    <h2>About Us</h2>
-    <p>We are a team of passionate developers building the future of web.</p>
-  </section>"""
-            elif sec == "contact":
-                sections_html += """
-  <section class="contact" id="contact">
-    <h2>Contact Us</h2>
-    <form><input type="text" placeholder="Name" required><input type="email" placeholder="Email" required><textarea placeholder="Message" required></textarea><button type="submit">Send</button></form>
-  </section>"""
-            elif sec == "testimonials":
-                sections_html += """
-  <section class="testimonials">
-    <h2>What Our Clients Say</h2>
-    <blockquote>"Amazing work! Highly recommend." — Client Name</blockquote>
-  </section>"""
-            elif sec == "pricing":
-                sections_html += """
-  <section class="pricing">
-    <h2>Pricing</h2>
-    <div class="grid">
-      <div class="card"><h3>Starter</h3><p>$29/mo</p></div>
-      <div class="card"><h3>Pro</h3><p>$79/mo</p></div>
-      <div class="card"><h3>Enterprise</h3><p>$199/mo</p></div>
-    </div>
-  </section>"""
-            else:
-                sections_html += f'\n  <section class="{sec}"><h2>{sec.title()}</h2><p>Content for {sec} section.</p></section>'
-
-        html_code = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
-  <style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: 'Inter', system-ui, sans-serif; color: {colors['text']}; background: {colors['bg']}; }}
-    .hero {{ min-height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {colors['secondary']}; color: white; }}
-    .hero h1 {{ font-size: 3.5rem; margin-bottom: 1rem; }}
-    .hero p {{ font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; }}
-    .features, .about, .testimonials, .pricing, .contact {{ padding: 5rem 2rem; text-align: center; }}
-    .features h2, .about h2, .testimonials h2, .pricing h2, .contact h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
-    .card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
-    .card h3 {{ color: {colors['primary']}; margin-bottom: 0.5rem; }}
-    .cta {{ background: {colors['primary']}; color: white; padding: 5rem 2rem; text-align: center; }}
-    .cta h2 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
-    .cta p {{ font-size: 1.1rem; margin-bottom: 2rem; opacity: 0.9; }}
-    .btn {{ display: inline-block; padding: 1rem 2.5rem; background: {colors['accent']}; color: {colors['secondary']}; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 1.1rem; transition: transform 0.2s; }}
-    .btn:hover {{ transform: translateY(-2px); }}
-    footer {{ background: {colors['secondary']}; color: white; text-align: center; padding: 2rem; }}
-    form {{ display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin: 0 auto; }}
-    input, textarea {{ padding: 0.75rem; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }}
-    button {{ padding: 0.75rem; background: {colors['primary']}; color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
-    blockquote {{ font-size: 1.2rem; font-style: italic; max-width: 600px; margin: 0 auto; padding: 2rem; border-left: 4px solid {colors['primary']}; }}
-    @media (max-width: 768px) {{ .hero h1 {{ font-size: 2.2rem; }} }}
-  </style>
-</head>
-<body>
-{sections_html}
-</body>
-</html>"""
-
-        return {
-            "framework": "html",
-            "style": style,
-            "sections": section_list,
-            "colors": colors,
-            "title": title,
-            "code": html_code,
-            "instructions": "Save as index.html and open in browser. Ready to deploy.",
-            "generated_at": _now(),
-        }
-
-    # Next.js (default)
-    components = []
-    for sec in section_list:
-        if sec == "hero":
-            components.append("""export default function Hero() {
-  return (
-    <section className="min-h-[80vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
-      <h1 className="text-5xl font-bold mb-4">{title}</h1>
-      <p className="text-xl mb-8 opacity-90">Welcome to our website. We build amazing things.</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
-    </section>
-  );
-}""")
-        elif sec == "features":
-            components.append("""export default function Features() {
-  const features = [
-    { title: "Fast", desc: "Lightning fast performance" },
-    { title: "Secure", desc: "Enterprise-grade security" },
-    { title: "Scalable", desc: "Grows with your business" },
-  ];
-  return (
-    <section className="py-20 px-8 text-center">
-      <h2 className="text-4xl font-bold mb-12">Features</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-        {features.map((f, i) => (
-          <div key={i} className="bg-white rounded-xl p-8 shadow-lg">
-            <h3 className="text-lg font-bold text-blue-600 mb-2">{f.title}</h3>
-            <p className="text-gray-600">{f.desc}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}""")
-        elif sec == "cta":
-            components.append(f"""export default function CTA() {{
-  return (
-    <section className="py-20 px-8 text-center bg-blue-600 text-white">
-      <h2 className="text-4xl font-bold mb-4">Ready to Get Started?</h2>
-      <p className="text-lg mb-8 opacity-90">Contact us today.</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Contact Us</a>
-    </section>
-  );
-}}""")
-        elif sec == "footer":
-            components.append(f"""export default function Footer() {{
-  return (
-    <footer className="bg-slate-800 text-white text-center py-6">
-      <p>&copy; 2026 {title}. All rights reserved.</p>
-    </footer>
-  );
-}}""")
-        else:
-            components.append(f"""export default function {sec.title()}() {{
-  return (
-    <section className="py-20 px-8 text-center">
-      <h2 className="text-4xl font-bold mb-4">{sec.title()}</h2>
-      <p className="text-gray-600">Content for {sec} section.</p>
-    </section>
-  );
-}}""")
-
-    # Build page.tsx
-    imports = "\n".join(f"import {sec.title()} from './components/{sec.title()}';" for sec in section_list)
-    calls = "\n      ".join(f"<{sec.title()} />" for sec in section_list)
-
-    page_code = f"""// app/page.tsx — Generated by Website Agent
-{imports}
-
-export default function Home() {{
-  return (
-    <main>
-      {calls}
-    </main>
-  );
-}}
-"""
-
-    nextjs_code = {
-        "framework": "nextjs",
-        "style": style,
-        "sections": section_list,
-        "colors": colors,
-        "title": title,
-        "page_code": page_code,
-        "components": {sec.title(): code for sec, code in zip(section_list, components)},
-        "instructions": (
-            "1. Create Next.js project: npx create-next-app@latest\n"
-            "2. Replace app/page.tsx with page_code above\n"
-            "3. Create components/ folder with each component file\n"
-            "4. Run: npm run dev\n"
-            "5. Deploy: vercel deploy"
-        ),
-        "generated_at": _now(),
-    }
-
-    return nextjs_code
+    Uses the shared project builder so output includes real files and
+    business info (services, email, tagline). Pass output_dir to write
+    the project to disk.
+    """
+    if isinstance(skills, str):
+        skills = [s.strip() for s in skills.split(",") if s.strip()]
+    project = _build_website_project(
+        title=title,
+        tagline=tagline,
+        services=[s.strip() for s in services.split(",") if s.strip()],
+        business_email=business_email,
+        sections=[s.strip() for s in sections.split(",") if s.strip()],
+        style=style,
+        color_primary=color_primary,
+        framework=framework,
+        skills=skills or [],
+    )
+    if output_dir:
+        written = []
+        for rel_path, content in project["files"].items():
+            full_path = os.path.join(output_dir, rel_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            written.append(rel_path)
+        project["status"] = "built"
+        project["output_dir"] = output_dir
+        project["files_written"] = written
+    return project
 
 
 def build_site(
