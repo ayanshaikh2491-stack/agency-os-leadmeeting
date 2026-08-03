@@ -183,6 +183,7 @@ async def create_meeting(data: dict[str, Any]) -> dict[str, Any]:
         "lead_id": data.get("lead_id", ""),
         "title": data.get("title", "Meeting"),
         "lead_name": data.get("lead_name", ""),
+        "purpose": data.get("purpose", ""),
         "link": data.get("link", ""),
         "date": data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
         "time": data.get("time", datetime.now(timezone.utc).strftime("%H:%M")),
@@ -290,6 +291,47 @@ async def add_meeting_note(
             await session.close()
 
     return meeting
+
+
+def backup_meeting(mid: str) -> dict[str, Any] | None:
+    """Structured backup of one meeting — karan, notes, transcript, analysis."""
+    meeting = _meetings.get(mid)
+    if not meeting:
+        return None
+    lead = _leads.get(meeting.get("lead_id", ""))
+    return {
+        "backup_type": "meeting",
+        "backup_time": _now_str(),
+        "meeting": meeting,
+        "lead": lead,
+        "summary": {
+            "id": meeting["id"],
+            "title": meeting["title"],
+            "lead_name": meeting["lead_name"],
+            "purpose": meeting.get("purpose", ""),
+            "date": meeting["date"],
+            "time": meeting["time"],
+            "status": meeting["status"],
+            "note_count": len(meeting.get("notes", [])),
+            "action_items": len(meeting.get("action_items", [])),
+        },
+    }
+
+
+def backup_all() -> dict[str, Any]:
+    """Full system backup — leads, meetings, handoffs (sab kuch ek JSON me)."""
+    return {
+        "backup_type": "full_sba",
+        "backup_time": _now_str(),
+        "leads": list(_leads.values()),
+        "meetings": list(_meetings.values()),
+        "handoffs": list(_handoffs.values()),
+        "counts": {
+            "leads": len(_leads),
+            "meetings": len(_meetings),
+            "handoffs": len(_handoffs),
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -20,6 +20,8 @@ from admin.agency.sba import SBAAgent
 from admin.agency.sba_skills import build_skill_context, detect_skills, list_sba_skills
 from admin.agency.sba_store import (
     add_meeting_note,
+    backup_all,
+    backup_meeting,
     create_handoff,
     create_lead,
     create_meeting,
@@ -72,6 +74,7 @@ class MeetingCreate(BaseModel):
     lead_id: str
     title: str = "Meeting"
     lead_name: str = ""
+    purpose: str = ""  # Meeting ka karan / agenda
     date: str = ""
     time: str = ""
     duration_minutes: int = 30
@@ -79,6 +82,7 @@ class MeetingCreate(BaseModel):
 
 class MeetingUpdate(BaseModel):
     title: str | None = None
+    purpose: str | None = None  # Meeting ka karan / agenda
     date: str | None = None
     time: str | None = None
     duration_minutes: int | None = None
@@ -325,6 +329,27 @@ async def api_add_meeting_note(meeting_id: str, payload: MeetingNoteAdd):
     if not meeting:
         raise HTTPException(404, "Meeting not found")
     return {"success": True, "data": {"meeting": meeting}}
+
+
+# ── Backup (meeting notes + karan + transcript export) ──────────────────────
+
+
+@router.get("/meetings/{meeting_id}/backup")
+async def api_backup_meeting(meeting_id: str):
+    """Meeting ka full backup — karan, notes, transcript, analysis, action items.
+
+    Returns structured JSON jo download kar ke save kar sakte ho.
+    """
+    backup = backup_meeting(meeting_id)
+    if not backup:
+        raise HTTPException(404, "Meeting not found")
+    return {"success": True, "data": backup}
+
+
+@router.get("/backup")
+async def api_backup_all():
+    """Full SBA backup — saare leads, meetings, handoffs ek JSON me."""
+    return {"success": True, "data": backup_all()}
 
 
 # ── Handoff (SBA → CEO) ────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ class SBAMeetingManager:
         lead_email: str,
         proposed_time: str,
         duration_minutes: int = 30,
+        purpose: str = "",
     ) -> dict[str, Any]:
         """Full meeting setup: Meet link -> Calendar event -> Store -> Email.
 
@@ -58,6 +59,7 @@ class SBAMeetingManager:
             proposed_time: ISO-format datetime string
                 (e.g. ``"2026-08-01T15:00:00"``).
             duration_minutes: Meeting length in minutes.
+            purpose: Meeting ka karan / agenda (optional).
 
         Returns:
             Meeting record dict as stored in sba_store.
@@ -96,6 +98,7 @@ class SBAMeetingManager:
             "lead_id": lead_id,
             "lead_name": lead_name,
             "title": f"Meeting with {lead_name} — TAGS Agency",
+            "purpose": purpose,
             "date": dt.strftime("%Y-%m-%d"),
             "time": dt.strftime("%H:%M"),
             "duration_minutes": duration_minutes,
