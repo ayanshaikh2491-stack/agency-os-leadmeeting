@@ -242,3 +242,34 @@ def test_full_graph_loop_feeds_tool_result_back(monkeypatch, tmp_path):
     result = asyncio.run(graph.ainvoke(state, config={"configurable": {"thread_id": "t1"}}))
     assert "LoopCo" in result["final_output"]
     assert (tmp_path / "app" / "page.tsx").is_file()
+
+
+# ── Task 5: thinking phases + reasoning chain wired into chat ───────────────
+
+def test_build_thinking_phases_local_fallback(monkeypatch):
+    import admin.workspace.agents.website_reasoning_chain as wrc
+    monkeypatch.setattr(wrc, "_llm_call", lambda *a, **k: '{"error": "no llm"}')
+
+    agent = WebsiteAgent(workspace_name="w", client_name="c")
+    phases = agent._build_thinking_phases("build a website for my bakery", "Website built.", skills=["frontend-design"])
+    assert len(phases) == 5
+    assert phases[0]["phase"] == "understand"
+    assert "DEVELOP" in phases[0]["summary"]
+    assert all("phase" in p and "summary" in p for p in phases)
+
+
+def test_chat_returns_phases_tuple(monkeypatch):
+    import admin.workspace.agents.website_reasoning_chain as wrc
+    monkeypatch.setattr(wrc, "_llm_call", lambda *a, **k: '{"error": "no llm"}')
+
+    agent = WebsiteAgent(workspace_name="w", client_name="c")
+
+    class _FakeGraph:
+        def invoke(self, state, config=None):
+            return {"final_output": "Site ready.", "error": None}
+
+    agent._graph = _FakeGraph()
+    out, phases = asyncio.run(agent.chat("build a site", skills=["nextjs-developer"]))
+    assert out == "Site ready."
+    assert isinstance(phases, list)
+    assert len(phases) == 5

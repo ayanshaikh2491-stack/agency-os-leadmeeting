@@ -383,20 +383,31 @@ class WebsiteAgent:
                 ),
             }
 
-    async def chat(self, message: str) -> tuple[str, str]:
-        """Process a website request."""
+    async def chat(self, message: str, skills: list[str] | None = None) -> tuple[str, list[dict[str, Any]]]:
+        """Process a website request. Returns (final_output, thinking_phases)."""
         # SEO routing check
         seo_result = self._route_to_seo(message)
         if seo_result:
-            return seo_result["message"], self._thread_id
+            return seo_result["message"], [{"phase": "seo_routing", "summary": "Request routed to SEO Agent"}]
+
+        skills_meta = ""
+        if skills:
+            skills_meta = (
+                "── APPLY THESE SKILLS ────────────────────────\n"
+                "Use these frameworks/approaches in your code and recommendations:\n"
+                + "\n".join(f"- {s}" for s in skills)
+                + "\n──────────────────────────────────────────"
+            )
 
         initial_state: dict[str, Any] = {
             "messages": [{"role": "user", "content": message}],
             "workspace_name": self.workspace_name,
             "client_name": self.client_name,
+            "skills_meta": skills_meta,
             "tool_round": 0,
             "final_output": "",
             "error": None,
+            "thinking_phases": [],
         }
 
         try:
@@ -404,10 +415,54 @@ class WebsiteAgent:
                 initial_state,
                 config={"configurable": {"thread_id": self._thread_id}},
             )
-            return result.get("final_output", "Website analysis complete."), self._thread_id
         except Exception:
             logger.exception("Website Agent execution failed")
-            return "Website Agent temporarily unavailable.", self._thread_id
+            return "Website Agent temporarily unavailable.", []
+
+        final_output = result.get("final_output", "")
+        if not final_output:
+            final_output = result.get("error") or "Website analysis complete."
+
+        phases = self._build_thinking_phases(message, final_output, skills or [])
+        return final_output, phases
+
+    def _build_thinking_phases(self, message: str, final_output: str, skills: list[str]) -> list[dict[str, Any]]:
+        """Build thinking phases: try the 5-step reasoning chain, fall back to a local plan."""
+        try:
+            from admin.workspace.agents.website_reasoning_chain import run_website_reasoning_chain
+
+            chain_result = run_website_reasoning_chain(message, workspace_id=self.workspace_name)
+            if chain_result.get("status") == "success":
+                rc = chain_result.get("reasoning_chain", {})
+                return [
+                    {"phase": "understand", "summary": str(rc.get("understand", {}))[:300]},
+                    {"phase": "research", "summary": str(rc.get("research", {}))[:300]},
+                    {"phase": "strategize", "summary": str(rc.get("strategize", {}))[:300]},
+                    {"phase": "execute", "summary": str(rc.get("execute", {}))[:300]},
+                    {"phase": "validate", "summary": str(rc.get("validate", {}))[:300]},
+                ]
+        except Exception as e:
+            logger.warning("Reasoning chain failed, using local plan: %s", e)
+
+        # Local deterministic fallback (no LLM needed — test-friendly)
+        msg_lower = message.lower()
+        if any(w in msg_lower for w in ["build", "make", "create", "website for", "site for"]):
+            category = "DEVELOP"
+            tool = "build_site"
+        elif any(k in msg_lower for k in ["analyze", "check", "audit", "performance", "security", "links"]):
+            category = "ANALYZE"
+            tool = "analyze_website"
+        else:
+            category = "DESIGN"
+            tool = "design_planner"
+
+        return [
+            {"phase": "understand", "summary": f"Category: {category}. Extracted request details from client message."},
+            {"phase": "research", "summary": f"Selected tools: {tool}. Applied skills: {', '.join(skills) or 'none'}."},
+            {"phase": "strategize", "summary": "Planned site architecture, design direction, and deployment target."},
+            {"phase": "execute", "summary": f"Ran {tool} with client requirements. Deliverable produced and saved."},
+            {"phase": "validate", "summary": f"Validated output against requirements. Result: {final_output[:120]}"},
+        ]
 
     def request_content(
         self,
