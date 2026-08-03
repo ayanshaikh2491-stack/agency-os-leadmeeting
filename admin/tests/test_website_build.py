@@ -265,7 +265,7 @@ def test_chat_returns_phases_tuple(monkeypatch):
     agent = WebsiteAgent(workspace_name="w", client_name="c")
 
     class _FakeGraph:
-        def invoke(self, state, config=None):
+        async def ainvoke(self, state, config=None):
             return {"final_output": "Site ready.", "error": None}
 
     agent._graph = _FakeGraph()

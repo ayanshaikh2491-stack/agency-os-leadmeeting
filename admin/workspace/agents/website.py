@@ -411,7 +411,7 @@ class WebsiteAgent:
         }
 
         try:
-            result = self._graph.invoke(
+            result = await self._graph.ainvoke(
                 initial_state,
                 config={"configurable": {"thread_id": self._thread_id}},
             )

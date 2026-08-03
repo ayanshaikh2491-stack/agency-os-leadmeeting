@@ -139,6 +139,41 @@ def list_workspaces() -> list[WorkspaceOut]:
     return [WorkspaceOut(**r) for r in _workspaces.values()]
 
 
+# ── Seeded workspaces (match Supabase ws_<slug> schemas) ─────────────────────
+
+def seed_workspace(
+    wid: str,
+    name: str,
+    client_name: str = "",
+    description: str = "",
+    agents: list[str] | None = None,
+    client_context: dict | None = None,
+) -> WorkspaceOut:
+    """Register a workspace under an explicit id (e.g. `ws_agency`).
+
+    Used at startup to bind workspaces to pre-provisioned Supabase schemas
+    (ws_<slug>), so the Website Agent can write to the right schema. The
+    workspace is skipped if it already exists so seeded records don't
+    clobber real client data.
+    """
+    if wid in _workspaces:
+        return WorkspaceOut(**_workspaces[wid])
+    now = datetime.now(timezone.utc)
+    record: dict[str, Any] = {
+        "id": wid,
+        "name": name,
+        "client_name": client_name or name,
+        "description": description,
+        "created_at": now,
+        "agents": list(agents) if agents else list(DEFAULT_AGENTS),
+        "client_context": client_context,
+    }
+    _workspaces[wid] = record
+    _sync_ws_to_db(record)
+    logger.info("Seeded workspace '%s' (%s)", wid, name)
+    return WorkspaceOut(**record)
+
+
 def delete_workspace(wid: str) -> bool:
     return _workspaces.pop(wid, None) is not None
 

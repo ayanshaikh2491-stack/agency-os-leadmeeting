@@ -36,8 +36,16 @@ def slugify(name: str) -> str:
 
 
 def schema_for(workspace: str) -> str:
-    """Postgres schema name for a workspace, e.g. 'ws_my_workspace'."""
-    return "ws_" + slugify(workspace)
+    """Postgres schema name for a workspace, e.g. 'ws_my_workspace'.
+
+    Idempotent: if the workspace id is already schema-style (``ws_<slug>``,
+    e.g. the seeded ``ws_agency`` / ``ws_default``), it is returned as-is
+    instead of double-prefixing to ``ws_ws_agency``.
+    """
+    s = slugify(workspace)
+    if s.startswith("ws_"):
+        return s
+    return "ws_" + s
 
 
 def provision_workspace(ws_name: str, url: str | None = None, key: str | None = None) -> bool:

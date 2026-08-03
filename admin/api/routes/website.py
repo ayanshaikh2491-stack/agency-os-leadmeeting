@@ -24,6 +24,7 @@ NOTE: SEO endpoints (/seo, /sitemap) are handled by SEO Agent routes (/api/seo/*
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -135,6 +136,8 @@ class BuildSiteRequest(BaseModel):
     business_email: str = ""
     output_dir: str = ""
     skills: list[str] = []
+    workspace_id: str = "ws_agency"
+    client_name: str = ""
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -162,6 +165,20 @@ async def chat(req: ChatRequest):
 
     agent = WebsiteAgent(workspace_name=req.workspace_name, client_name=req.client_name)
     output, phases = await agent.chat(message, skills=[s["name"] for s in matched])
+
+    # Persist the chat event into the workspace's Supabase build log (best-effort)
+    try:
+        from admin.agency.website_supabase import log_website_event
+        log_website_event(
+            workspace=req.workspace_name,
+            client=req.client_name or req.workspace_name,
+            event_type="chat",
+            message=message[:300],
+            actor="website_agent",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("website chat supabase log failed: %s", e)
+
     return {
         "response": output,
         "thread_id": agent._thread_id,
@@ -336,7 +353,7 @@ async def uptime(req: UptimeRequest):
 async def build_site_route(req: BuildSiteRequest):
     """Build a complete website project on disk from business info."""
     from admin.tools.website_tools import build_site
-    return build_site(
+    result = build_site(
         title=req.title,
         tagline=req.tagline,
         industry=req.industry,
@@ -349,6 +366,56 @@ async def build_site_route(req: BuildSiteRequest):
         output_dir=req.output_dir,
         skills=req.skills,
     )
+
+    # ── Persist to Supabase workspace schema (best-effort) ──────────────
+    # Writes the build row, the 6-doc trail (site_requirements + tech plan),
+    # and a build log event into ws_<workspace>.* tables.
+    client = req.client_name or req.title or req.workspace_id
+    try:
+        from admin.agency.website_supabase import (
+            log_website_event,
+            save_website_doc,
+            upsert_website_build,
+        )
+
+        upsert_website_build(
+            workspace=req.workspace_id,
+            client=client,
+            status="code_generated",
+            current_stage="code_generation",
+            framework=req.framework,
+        )
+        brief_json = {
+            "title": req.title,
+            "tagline": req.tagline,
+            "industry": req.industry,
+            "sections": req.sections,
+            "style": req.style,
+            "color_primary": req.color_primary,
+            "framework": req.framework,
+            "services": req.services,
+            "business_email": req.business_email,
+            "skills": req.skills,
+        }
+        save_website_doc(
+            req.workspace_id, client, "site_requirements",
+            title=f"{req.title} — Site Requirements",
+            content=json.dumps(brief_json, indent=2),
+        )
+        save_website_doc(
+            req.workspace_id, client, "tech_deploy_plan",
+            title=f"{req.title} — Tech + Deploy Plan",
+            content=f"Framework: {req.framework}\nStyle: {req.style}\nPages/Sections: {req.sections}",
+        )
+        log_website_event(
+            req.workspace_id, client, "build_step",
+            f"Generated {req.framework} site for '{req.title}' (stage: code_generation)",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("build-site supabase persist failed: %s", e)
+
+    result["persisted"] = {"workspace": req.workspace_id, "client": client}
+    return result
 
 
 @router.get("/skills")

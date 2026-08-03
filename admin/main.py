@@ -27,8 +27,12 @@ from admin.api.routes import workflows as workflows_routes
 from admin.api.routes import website as website_routes
 from admin.config import settings
 from admin.database import close_db, init_db
-from admin.agency.sba_store import load_all_from_db
-from admin.workspace.manager import list_workspaces
+from admin.agency.sba_store import load_all_from_db as load_sba_from_db
+from admin.workspace.manager import (
+    list_workspaces,
+    load_all_from_db as load_workspaces_from_db,
+    seed_workspace,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,10 +43,27 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
-    from admin.persistence import close_persistence, set_persistent_mode
+    from admin.persistence import close_persistence, init_persistence, set_persistent_mode
     set_persistent_mode(True)  # long-running loop owns the shared DB connection
+    await init_persistence()   # create workspace SQLite tables first
     await init_db()
-    await load_all_from_db()
+    await load_sba_from_db()
+    await load_workspaces_from_db()
+
+    # Bind pre-provisioned Supabase schemas (ws_<slug>) to workspaces so the
+    # Website Agent writes into the right schema on this deployment.
+    seed_workspace(
+        "ws_agency",
+        "Agency Workspace",
+        client_name="TAGS Agency",
+        description="Agency-level workspace, bound to Supabase schema ws_agency.",
+    )
+    seed_workspace(
+        "ws_default",
+        "Default Workspace",
+        client_name="Default Client",
+        description="Default workspace, bound to Supabase schema ws_default.",
+    )
     yield
     await close_persistence()
     await close_db()
