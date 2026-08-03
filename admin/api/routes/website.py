@@ -123,6 +123,20 @@ class UptimeRequest(BaseModel):
     interval: int = 2
 
 
+class BuildSiteRequest(BaseModel):
+    title: str = "My Website"
+    tagline: str = ""
+    industry: str = ""
+    sections: str = "hero,services,about,testimonials,contact,footer"
+    style: str = "modern"
+    color_primary: str = "#2563EB"
+    framework: str = "nextjs"
+    services: str = ""
+    business_email: str = ""
+    output_dir: str = ""
+    skills: list[str] = []
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -147,12 +161,13 @@ async def chat(req: ChatRequest):
         message = f"{skill_context}\n\n{message}"
 
     agent = WebsiteAgent(workspace_name=req.workspace_name, client_name=req.client_name)
-    output, thread_id = await agent.chat(message)
+    output, phases = await agent.chat(message, skills=[s["name"] for s in matched])
     return {
         "response": output,
-        "thread_id": thread_id,
+        "thread_id": agent._thread_id,
         "agent_type": "website",
         "matched_skills": [s["name"] for s in matched],
+        "thinking_phases": phases,
     }
 
 
@@ -315,6 +330,32 @@ async def uptime(req: UptimeRequest):
     """Monitor site uptime and response time."""
     from admin.tools.website_tools import check_uptime
     return check_uptime(url=req.url, checks=req.checks, interval=req.interval)
+
+
+@router.post("/build-site")
+async def build_site_route(req: BuildSiteRequest):
+    """Build a complete website project on disk from business info."""
+    from admin.tools.website_tools import build_site
+    return build_site(
+        title=req.title,
+        tagline=req.tagline,
+        industry=req.industry,
+        sections=req.sections,
+        style=req.style,
+        color_primary=req.color_primary,
+        framework=req.framework,
+        services=req.services,
+        business_email=req.business_email,
+        output_dir=req.output_dir,
+        skills=req.skills,
+    )
+
+
+@router.get("/skills")
+async def list_skills():
+    """List all skills available to the Website Agent."""
+    from admin.agency.website_skills import list_website_skills
+    return {"success": True, "data": {"skills": list_website_skills()}}
 
 
 @router.get("/tools")

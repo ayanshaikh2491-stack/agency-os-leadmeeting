@@ -273,3 +273,21 @@ def test_chat_returns_phases_tuple(monkeypatch):
     assert out == "Site ready."
     assert isinstance(phases, list)
     assert len(phases) == 5
+
+
+# ── Task 6: routes — /build-site, /skills, chat returns phases + skills ─────
+
+def test_routes_exist_and_skills_endpoint(monkeypatch):
+    import admin.api.routes.website as wroutes
+
+    # FastAPI route registration checks (prefix is included in route paths)
+    route_paths = [r.path for r in wroutes.router.routes]
+    assert "/api/website/build-site" in route_paths
+    assert "/api/website/skills" in route_paths
+
+    # /skills handler returns the registry
+    resp = asyncio.run(wroutes.list_skills())
+    assert resp["success"] is True
+    names = {s["name"] for s in resp["data"]["skills"]}
+    assert "frontend-design" in names
+    assert "nextjs-developer" in names
