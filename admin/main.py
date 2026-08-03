@@ -24,6 +24,7 @@ from admin.api.routes import ads as ads_routes
 from admin.api.routes import analytics as analytics_routes
 from admin.api.routes import social as social_routes
 from admin.api.routes import workflows as workflows_routes
+from admin.api.routes import website as website_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db
@@ -78,6 +79,7 @@ app.include_router(ads_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(social_routes.router)
 app.include_router(workflows_routes.router)
+app.include_router(website_routes.router)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
