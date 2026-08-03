@@ -134,14 +134,19 @@ def main() -> int:
 
     log("Server reachable.")
 
-    # 2. Upload files
+    # 2. Upload files (scp to temp, then sudo install -> handles root-owned dests)
     for f in FILES:
         remote = f"{REMOTE_ROOT}/{f}"
         parent = remote.rsplit("/", 1)[0]
-        ssh(f"mkdir -p {parent}", timeout=20)
-        r = scp(f, remote)
+        tmp_parent = "/tmp/sbadeploy/" + os.path.dirname(f)
+        ssh(f"mkdir -p {parent} {tmp_parent}", timeout=20)
+        r = scp(f, f"/tmp/sbadeploy/{f}")
         if r.returncode != 0:
             log(f"  upload FAILED: {f}\n  {(r.stderr or '').strip()[-300:]}")
+            return 3
+        r = ssh(f"sudo install -o ubuntu -g ubuntu -m 664 /tmp/sbadeploy/{f} {remote} && echo OK", timeout=30)
+        if "OK" not in (r.stdout or ""):
+            log(f"  install FAILED: {f}\n  {(r.stderr or r.stdout or '').strip()[-300:]}")
             return 3
         log(f"  uploaded {f}")
 
