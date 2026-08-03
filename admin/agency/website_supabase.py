@@ -5,14 +5,17 @@ Uses the same REST-API pattern as `supabase_bridge.py` (urllib only, no
 heavy dependencies). Reads SUPABASE_URL + SUPABASE_SERVICE_KEY from env
 or the backend .env.
 
-Every row is workspace-scoped via `workspace_name` + `client_name` so
-each workspace (and each client inside it) owns its own data — the
-Website Agent is a fresh agent per workspace.
+Every workspace owns its own Postgres schema `ws_<slug>` (provisioned by
+`public.provision_workspace` in _migrate_workspace_schemas.sql), and
+inside that schema the Website Agent owns three tables:
 
-Tables (created by the multi-workspace migration):
-  website_builds     — one row per (workspace, client): status, stage, urls
-  website_docs       — the 6 client documents, versioned per doc_type
-  website_build_log  — chat / build / improve / deploy / error events
+  ws_<workspace>.website_builds     — one row per client: status, stage, urls
+  ws_<workspace>.website_docs       — the 6 client documents, versioned per doc_type
+  ws_<workspace>.website_build_log  — chat / build / improve / deploy / error events
+
+Rows are scoped to a client via `client_name`; the schema provides the
+workspace isolation. The bridge selects its schema through the PostgREST
+`Accept-Profile` / `Content-Profile` headers.
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+from admin.agency.workspace_provision import schema_for
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +72,20 @@ def get_config() -> tuple[str, str] | None:
     return url.rstrip("/"), key
 
 
-def _api(method: str, url: str, key: str, path: str, body: Any = None, timeout: int = 30, on_conflict: str = ""):
-    """Call Supabase REST API. Returns parsed JSON or [] on empty."""
+def _api(method: str, url: str, key: str, path: str, body: Any = None, timeout: int = 30, on_conflict: str = "", profile: str = "public"):
+    """Call Supabase REST API. Returns parsed JSON or [] on empty.
+
+    `profile` selects the PostgREST schema (workspace schema like
+    `ws_agency`, or `public`). GET uses Accept-Profile, writes use
+    Content-Profile.
+    """
     headers = {
         "apikey": key,
         "Authorization": "Bearer " + key,
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "Accept-Profile": profile,
+        "Content-Profile": profile,
     }
     data = None
     if body is not None:
@@ -87,12 +99,9 @@ def _api(method: str, url: str, key: str, path: str, body: Any = None, timeout: 
         return json.loads(raw) if raw.strip() else []
 
 
-def _ws_q(workspace: str, client: str) -> str:
-    """Build workspace+client query params."""
-    return (
-        "workspace_name=eq." + urllib.parse.quote(workspace)
-        + "&client_name=eq." + urllib.parse.quote(client)
-    )
+def _client_q(client: str) -> str:
+    """Build client query params (workspace isolation comes from the schema)."""
+    return "client_name=eq." + urllib.parse.quote(client)
 
 
 # ── Website Docs (6 client documents) ───────────────────────────────────
@@ -120,7 +129,6 @@ def save_website_doc(
             key,
             "/rest/v1/website_docs",
             {
-                "workspace_name": workspace,
                 "client_name": client,
                 "doc_type": doc_type,
                 "title": title,
@@ -128,7 +136,8 @@ def save_website_doc(
                 "version": version or 1,
                 "updated_at": _now_iso(),
             },
-            on_conflict="workspace_name,client_name,doc_type",
+            on_conflict="client_name,doc_type",
+            profile=schema_for(workspace),
         )
         return rows[0] if rows else None
     except Exception as e:  # noqa: BLE001
@@ -143,7 +152,11 @@ def get_website_docs(workspace: str, client: str) -> list[dict[str, Any]]:
         return []
     url, key = cfg
     try:
-        return _api("GET", url, key, "/rest/v1/website_docs?select=*&" + _ws_q(workspace, client))
+        return _api(
+            "GET", url, key,
+            "/rest/v1/website_docs?select=*&" + _client_q(client),
+            profile=schema_for(workspace),
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("website_supabase: get_website_docs failed: %s", e)
         return []
@@ -160,7 +173,7 @@ def delete_website_docs(workspace: str, client: str) -> bool:
         return False
     url, key = cfg
     try:
-        _api("DELETE", url, key, "/rest/v1/website_docs?" + _ws_q(workspace, client))
+        _api("DELETE", url, key, "/rest/v1/website_docs?" + _client_q(client), profile=schema_for(workspace))
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("website_supabase: delete_website_docs failed: %s", e)
@@ -183,7 +196,7 @@ def upsert_website_build(
     if not cfg:
         return None
     url, key = cfg
-    row: dict[str, Any] = {"workspace_name": workspace, "client_name": client}
+    row: dict[str, Any] = {"client_name": client}
     if status is not None:
         row["status"] = status
     if current_stage is not None:
@@ -202,7 +215,8 @@ def upsert_website_build(
             key,
             "/rest/v1/website_builds",
             row,
-            on_conflict="workspace_name,client_name",
+            on_conflict="client_name",
+            profile=schema_for(workspace),
         )
         return rows[0] if rows else None
     except Exception as e:  # noqa: BLE001
@@ -216,7 +230,11 @@ def get_website_build(workspace: str, client: str) -> dict[str, Any] | None:
         return None
     url, key = cfg
     try:
-        rows = _api("GET", url, key, "/rest/v1/website_builds?select=*&" + _ws_q(workspace, client))
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/website_builds?select=*&" + _client_q(client),
+            profile=schema_for(workspace),
+        )
         return rows[0] if rows else None
     except Exception as e:  # noqa: BLE001
         logger.warning("website_supabase: get_website_build failed: %s", e)
@@ -244,12 +262,12 @@ def log_website_event(
             key,
             "/rest/v1/website_build_log",
             {
-                "workspace_name": workspace,
                 "client_name": client,
                 "event_type": event_type,
                 "message": message,
                 "actor": actor,
             },
+            profile=schema_for(workspace),
         )
         return rows[0] if rows else None
     except Exception as e:  # noqa: BLE001
@@ -268,8 +286,9 @@ def get_website_logs(workspace: str, client: str, limit: int = 50) -> list[dict[
             url,
             key,
             "/rest/v1/website_build_log?select=*&"
-            + _ws_q(workspace, client)
+            + _client_q(client)
             + "&order=created_at.desc&limit=" + str(limit),
+            profile=schema_for(workspace),
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("website_supabase: get_website_logs failed: %s", e)
