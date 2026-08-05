@@ -55,6 +55,7 @@ def weekly_report(
         "data_source": data_source,
         "summary": {
             "total_leads": real_leads.get("total_leads", 0) if real_leads else 0,
+            "total_meetings": real_leads.get("meetings", 0) if real_leads else 0,
             "total_revenue": real_ads.get("revenue", 0) if real_ads.get("live") else 0,
             "total_spend": real_ads.get("spend", 0) if real_ads.get("live") else 0,
             "overall_roas": real_ads.get("roas", 0) if real_ads.get("live") else 0,
@@ -336,7 +337,7 @@ def track_conversions(
     total_leads = leads.get("total_leads", 0) if leads else 0
     meetings = leads.get("meetings", 0) if leads else 0
     ad_convs = ads.get("conversions", 0) if ads.get("live") else 0
-    data_source = "live_internal" if (total_leads or ad_convs) else "demo"
+    data_source = "live_internal" if (total_leads or meetings or ad_convs) else "demo"
 
     return {
         "status": "tracked",
