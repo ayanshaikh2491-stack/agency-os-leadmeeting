@@ -79,6 +79,194 @@ _WEBSITE_PALETTES = {
 
 _DEFAULT_SERVICES = ["Fast Delivery", "Secure Builds", "Scalable Design"]
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# WEBSITE CATEGORIES — har type ke liye alag pages + sections
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Category -> page map. Key = route (index = home), value = nav label + sections.
+# Section names must exist in the HTML/Next.js section renderers below.
+WEBSITE_CATEGORIES: dict[str, dict[str, Any]] = {
+    "business": {
+        "label": "Business / Corporate",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "services", "about", "stats", "testimonials", "contact", "footer"]},
+            "services": {"nav": "Services", "sections": ["hero_small", "services", "process", "faq", "cta", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "stats", "cta", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "hours", "footer"]},
+        },
+    },
+    "portfolio": {
+        "label": "Portfolio / Creative",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "projects", "services", "testimonials", "contact", "footer"]},
+            "work": {"nav": "Work", "sections": ["hero_small", "projects", "gallery", "cta", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "stats", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "restaurant": {
+        "label": "Restaurant / Cafe",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "menu", "gallery", "testimonials", "booking", "hours", "footer"]},
+            "menu": {"nav": "Menu", "sections": ["hero_small", "menu", "hours", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "gallery", "testimonials", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "booking", "hours", "footer"]},
+        },
+    },
+    "ecommerce": {
+        "label": "E-commerce / Shop",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "products", "features", "testimonials", "cta", "footer"]},
+            "shop": {"nav": "Shop", "sections": ["hero_small", "products", "cta", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "saas": {
+        "label": "SaaS / Tech Product",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "features", "pricing", "testimonials", "cta", "footer"]},
+            "features": {"nav": "Features", "sections": ["hero_small", "features", "process", "faq", "footer"]},
+            "pricing": {"nav": "Pricing", "sections": ["hero_small", "pricing", "faq", "cta", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "agency": {
+        "label": "Agency / Studio",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "services", "projects", "process", "testimonials", "contact", "footer"]},
+            "services": {"nav": "Services", "sections": ["hero_small", "services", "process", "faq", "cta", "footer"]},
+            "work": {"nav": "Work", "sections": ["hero_small", "projects", "gallery", "cta", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "realestate": {
+        "label": "Real Estate",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "listings", "features", "testimonials", "contact", "footer"]},
+            "listings": {"nav": "Listings", "sections": ["hero_small", "listings", "cta", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "stats", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "hours", "footer"]},
+        },
+    },
+    "blog": {
+        "label": "Blog / News",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "posts", "features", "newsletter", "footer"]},
+            "posts": {"nav": "Posts", "sections": ["hero_small", "posts", "newsletter", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "stats", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "education": {
+        "label": "Education / Coaching",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "features", "courses", "testimonials", "contact", "footer"]},
+            "courses": {"nav": "Courses", "sections": ["hero_small", "courses", "pricing", "faq", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "stats", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+    "health": {
+        "label": "Health / Clinic / Fitness",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "services", "features", "testimonials", "booking", "contact", "footer"]},
+            "services": {"nav": "Services", "sections": ["hero_small", "services", "process", "faq", "footer"]},
+            "team": {"nav": "Team", "sections": ["hero_small", "team", "about", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "booking", "hours", "footer"]},
+        },
+    },
+    "event": {
+        "label": "Event / Wedding",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "gallery", "features", "testimonials", "booking", "contact", "footer"]},
+            "gallery": {"nav": "Gallery", "sections": ["hero_small", "gallery", "cta", "footer"]},
+            "details": {"nav": "Details", "sections": ["hero_small", "about", "hours", "faq", "footer"]},
+            "rsvp": {"nav": "RSVP", "sections": ["hero_small", "booking", "contact", "footer"]},
+        },
+    },
+    "hotel": {
+        "label": "Hotel / Travel",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "features", "rooms", "gallery", "testimonials", "booking", "footer"]},
+            "rooms": {"nav": "Rooms", "sections": ["hero_small", "rooms", "pricing", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "gallery", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "booking", "hours", "footer"]},
+        },
+    },
+    "construction": {
+        "label": "Construction / Trades",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "services", "projects", "stats", "testimonials", "contact", "footer"]},
+            "services": {"nav": "Services", "sections": ["hero_small", "services", "process", "faq", "footer"]},
+            "projects": {"nav": "Projects", "sections": ["hero_small", "projects", "gallery", "cta", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "hours", "footer"]},
+        },
+    },
+    "nonprofit": {
+        "label": "Nonprofit / Charity",
+        "pages": {
+            "index": {"nav": "Home", "sections": ["hero", "about", "projects", "stats", "donate", "contact", "footer"]},
+            "about": {"nav": "About", "sections": ["hero_small", "about", "team", "stats", "footer"]},
+            "projects": {"nav": "Projects", "sections": ["hero_small", "projects", "donate", "footer"]},
+            "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
+        },
+    },
+}
+
+# Category -> sample content used by sections (products, menu, projects, etc.)
+_CATEGORY_CONTENT: dict[str, dict[str, Any]] = {
+    "business": {"hero_copy": "We build modern, fast, and secure websites that help your business grow.", "about_copy": "is a team of passionate builders creating impactful digital experiences.", "team": [("Aisha", "CEO / Founder"), ("Rahul", "Head of Strategy"), ("Neha", "Design Lead")], "stats": [("250+", "Clients served"), ("8+", "Years experience"), ("99%", "Client satisfaction")], "process": [("Discover", "We learn your goals and audience"), ("Design", "We craft the look and feel"), ("Build", "We ship fast and iterate")], "faq": [("What do you charge?", "Every project is scoped individually. Tell us your goals and we will send a quote within 48 hours."), ("How long does a project take?", "Most sites go live in 2-4 weeks, depending on scope.")]},
+    "portfolio": {"hero_copy": "Design and code that tells your story.", "about_copy": "is a creative studio crafting brands, websites, and visuals that people remember.", "projects": [("Brand Identity", "Logo & visual system for a fintech startup"), ("E-commerce Site", "Conversion-focused storefront built in 3 weeks"), ("Mobile App UI", "Product design for a health app")], "team": [("Arjun", "Designer"), ("Meera", "Developer"), ("Kabir", "Photographer")], "stats": [("120+", "Projects shipped"), ("40+", "Happy clients"), ("12", "Design awards")]},
+    "restaurant": {"hero_copy": "Fresh ingredients, bold flavors, made with love.", "about_copy": "is a family-run kitchen serving honest food made from locally sourced ingredients.", "menu_items": [("Margherita Pizza", "Fresh mozzarella, basil, tomato", "₹349"), ("Grilled Paneer Bowl", "Charred paneer, quinoa, herbs", "₹429"), ("Classic Burger", "Smash patty, cheddar, house sauce", "₹299"), ("Masala Chai", "Spiced tea, served hot", "₹99"), ("Tiramisu", "Espresso-soaked ladyfingers", "₹249")], "stats": [("4.8★", "Average rating"), ("50k+", "Happy customers"), ("15", "Years of service")], "hours": "Mon-Sun 11:00 AM - 11:00 PM", "location": "12 Park Street, Mumbai"},
+    "ecommerce": {"hero_copy": "Shop the best products at unbeatable prices.", "about_copy": "is an online store curating quality products with fast, reliable delivery.", "products": [("Wireless Headphones", "Noise-cancelling, 30h battery", "₹4,999"), ("Smart Watch", "Fitness tracking, AMOLED", "₹3,499"), ("Backpack 30L", "Waterproof, laptop sleeve", "₹2,299"), ("Sneakers", "Lightweight everyday wear", "₹3,999"), ("Desk Lamp", "LED, dimmable, USB-C", "₹1,499")], "stats": [("10k+", "Orders delivered"), ("4.9★", "Rating"), ("24h", "Delivery")]},
+    "saas": {"hero_copy": "The all-in-one platform your team will love.", "about_copy": "builds software that helps teams work smarter and ship faster.", "features_custom": [("Analytics", "Real-time dashboards and reports"), ("Automation", "Save hours with no-code workflows"), ("Security", "Bank-grade encryption, SOC 2")], "stats": [("50k+", "Active users"), ("99.99%", "Uptime"), ("4.8★", "G2 rating")], "faq": [("Is there a free trial?", "Yes, 14 days free with no credit card required."), ("Can I cancel anytime?", "Absolutely, plans are month-to-month.")]},
+    "agency": {"hero_copy": "We turn bold ideas into results that move the needle.", "about_copy": "is a full-service agency across brand, web, and growth.", "projects": [("Launch Campaign", "Product launch for a D2C brand"), ("Brand Refresh", "Rebrand for a logistics company"), ("SEO Growth", "3x organic traffic in 6 months")], "team": [("Rohan", "Founder / Creative Director"), ("Sana", "Growth Lead"), ("Vikram", "Tech Lead")], "stats": [("200+", "Campaigns run"), ("$5M+", "Client revenue driven"), ("30+", "Team members")]},
+    "realestate": {"hero_copy": "Find the perfect property for your next chapter.", "about_copy": "is a real estate firm helping families and investors buy, sell, and rent with confidence.", "listings": [("3 BHK Skyline Apartment", "Andheri West, Mumbai - 1,450 sq.ft", "₹2.4 Cr"), ("Modern Studio", "Koramangala, Bengaluru - 420 sq.ft", "₹68 L"), ("Villa with Garden", "Pune - 4 BHK, private lawn", "₹3.9 Cr")], "team": [("Priya", "Founder / Agent"), ("Dev", "Sales Partner"), ("Anjali", "Property Advisor")], "stats": [("500+", "Properties sold"), ("15+", "Years in market"), ("4.9★", "Client rating")]},
+    "blog": {"hero_copy": "Ideas, stories, and insights from our team.", "about_copy": "is a publication covering tech, business, and design.", "posts": [("How we scaled to 1M users", "A deep dive into our infrastructure journey", "5 min read"), ("Design trends for this year", "What is working in product design", "8 min read"), ("Building remote culture", "Lessons from a fully distributed team", "6 min read")], "stats": [("1M+", "Monthly readers"), ("500+", "Articles published"), ("40k", "Subscribers")]},
+    "education": {"hero_copy": "Learn skills that change your career.", "about_copy": "is an academy offering practical, mentor-led courses.", "courses": [("Web Development Bootcamp", "HTML, CSS, JavaScript, React", "12 weeks"), ("Data Analytics", "SQL, Python, dashboards", "8 weeks"), ("UI/UX Design", "Figma to portfolio", "10 weeks")], "team": [("Dr. Sharma", "Curriculum Head"), ("Kavya", "Lead Instructor"), ("Imran", "Mentor")], "stats": [("10k+", "Students graduated"), ("92%", "Placement rate"), ("4.8★", "Course rating")]},
+    "health": {"hero_copy": "Your health, our priority. Care you can trust.", "about_copy": "is a wellness center offering expert care with a personal touch.", "services_custom": [("General Checkup", "Comprehensive health screening"), ("Physiotherapy", "Recovery and rehab programs"), ("Fitness Coaching", "Personalized training plans")], "team": [("Dr. Mehta", "General Physician"), ("Dr. Rao", "Physiotherapist"), ("Coach Tanvi", "Fitness Lead")], "stats": [("30k+", "Patients treated"), ("4.9★", "Patient rating"), ("15+", "Specialists")], "hours": "Mon-Sat 9:00 AM - 8:00 PM", "location": "22 MG Road, Pune"},
+    "event": {"hero_copy": "Celebrate your special day with us.", "about_copy": "is an events studio crafting weddings and celebrations that feel unforgettable.", "gallery_items": [("Wedding Stage", "Floral mandap design"), ("Mehndi Night", "Vibrant decor and music"), ("Reception Hall", "Elegant table settings")], "stats": [("300+", "Events hosted"), ("4.9★", "Couple rating"), ("10+", "Years experience")], "hours": "By appointment", "location": "Convention Center, Delhi"},
+    "hotel": {"hero_copy": "Stay where comfort meets style.", "about_copy": "is a boutique hotel offering curated stays with warm hospitality.", "rooms": [("Deluxe Room", "King bed, city view, 320 sq.ft", "₹6,499/night"), ("Suite", "Living area, bathtub, 650 sq.ft", "₹11,999/night"), ("Family Room", "Two queens, 500 sq.ft", "₹8,499/night")], "stats": [("4.8★", "Guest rating"), ("1.2k", "Reviews"), ("45", "Rooms")], "hours": "Check-in 2 PM, Check-out 12 PM", "location": "Beach Road, Goa"},
+    "construction": {"hero_copy": "Building your vision, brick by brick.", "about_copy": "is a construction firm delivering quality homes and commercial spaces on time.", "projects": [("Skyline Tower", "24-story residential complex"), ("Green Office Park", "LEED-certified offices"), ("Lakeside Villa", "Custom luxury home")], "team": [("Raj", "Project Director"), ("Suresh", "Site Engineer"), ("Lakshmi", "Interior Head")], "stats": [("180+", "Projects delivered"), ("25+", "Years in business"), ("98%", "On-time delivery")]},
+    "nonprofit": {"hero_copy": "Together, we can change lives.", "about_copy": "is a non-profit working to provide education, food, and dignity to those who need it most.", "projects": [("School Meals Program", "Feeding 2,000 children daily"), ("Clean Water Initiative", "Wells for 40 villages"), ("Digital Literacy", "Computer labs in 25 schools")], "team": [("Asha", "Executive Director"), ("Farhan", "Programs Lead"), ("Geeta", "Volunteer Coordinator")], "stats": [("50k+", "Lives impacted"), ("120", "Volunteers"), ("15", "Programs running")]},
+}
+
+# Extra sections that only some categories use, with default content.
+_SECTION_FALLBACK_CONTENT = {
+    "menu": [("House Special", "Chef's signature dish", "₹299"), ("Garden Salad", "Fresh seasonal vegetables", "₹199")],
+    "products": [("Product One", "Short description", "₹999"), ("Product Two", "Short description", "₹1,499")],
+    "projects": [("Project Alpha", "Short description"), ("Project Beta", "Short description")],
+    "listings": [("2 BHK Apartment", "Central location - 900 sq.ft", "₹95 L"), ("Studio Office", "Prime area - 500 sq.ft", "₹55 L")],
+    "posts": [("Post Title One", "Short excerpt", "5 min read"), ("Post Title Two", "Short excerpt", "7 min read")],
+    "courses": [("Course One", "Beginner friendly", "8 weeks"), ("Course Two", "Intermediate", "10 weeks")],
+    "rooms": [("Standard Room", "Queen bed, city view", "₹4,999/night"), ("Premium Room", "King bed, balcony", "₹7,999/night")],
+    "team": [("Team Member", "Role / Title"), ("Team Member 2", "Role / Title")],
+    "gallery": [("Gallery Item 1", "Description"), ("Gallery Item 2", "Description")],
+    "faq": [("How can I get started?", "Reach out via the contact form and we will guide you.")],
+    "stats": [("100+", "Happy customers"), ("10+", "Years experience")],
+    "process": [("Step 1", "We understand your needs"), ("Step 2", "We deliver high quality")],
+    "features": [("Quality", "Built to the highest standard"), ("Support", "We are here when you need us"), ("Value", "Fair pricing, no surprises")],
+    "hours": "Mon-Fri 9:00 AM - 6:00 PM",
+    "location": "Your City, Your Country",
+}
+
+
+def _category_data(category: str) -> dict[str, Any]:
+    """Return content dict for a category, with safe fallbacks for missing keys."""
+    cat = (category or "business").strip().lower()
+    base = dict(_CATEGORY_CONTENT.get(cat, _CATEGORY_CONTENT["business"]))
+    # Fill any section that a category's pages use but has no content for.
+    pages = WEBSITE_CATEGORIES.get(cat, WEBSITE_CATEGORIES["business"])["pages"]
+    used = {s for page in pages.values() for s in page["sections"]}
+    for sec in used:
+        key = {"menu": "menu_items", "courses": "courses", "rooms": "rooms", "features": "features_custom"}.get(sec, sec)
+        if key not in base and sec in _SECTION_FALLBACK_CONTENT:
+            base.setdefault(key, _SECTION_FALLBACK_CONTENT[sec])
+    base.setdefault("hero_copy", _CATEGORY_CONTENT["business"]["hero_copy"])
+    base.setdefault("about_copy", _CATEGORY_CONTENT["business"]["about_copy"])
+    return base
+
 
 def _slugify(name: str) -> str:
     """Convert a name into a safe directory slug."""
@@ -104,21 +292,38 @@ def _html_section(sec: str, ctx: dict) -> str:
     tagline = esc(ctx["tagline"])
     email = esc(ctx["business_email"])
     services = ctx["services"]
-    svc_cards = "".join(
-        f'<div class="card"><h3>{esc(s)}</h3><p>Expert {esc(s.lower())} tailored to your goals.</p></div>'
-        for s in services
-    )
+    data = ctx.get("data", {})
+    c = ctx["colors"]
+
+    def cards(items, *, sub_index=1, price_index=None, extra_class=""):
+        out = []
+        for it in items:
+            head = esc(it[0])
+            sub = esc(it[sub_index]) if len(it) > sub_index else ""
+            price = esc(it[price_index]) if price_index is not None and len(it) > price_index else ""
+            price_html = f'<span class="price">{price}</span>' if price else ""
+            out.append(
+                f'<div class="card{extra_class}"><h3>{head}</h3>'
+                f'<p>{sub}</p>{price_html}</div>'
+            )
+        return "".join(out)
+
+    svc_cards = cards(services)
     if sec == "hero":
         subtitle = f'<p class="sub">{tagline}</p>' if tagline else ""
+        hero_copy = esc(data.get("hero_copy", "We build modern, fast, and secure websites that help your business grow."))
         return (
             f'<section class="hero"><h1>{title}</h1>{subtitle}'
-            '<p>We build modern, fast, and secure websites that help your business grow.</p>'
+            f"<p>{hero_copy}</p>"
             '<a href="#contact" class="btn">Get Started</a></section>'
         )
+    if sec == "hero_small":
+        subtitle = f'<p class="sub">{tagline}</p>' if tagline else ""
+        return f'<section class="hero hero-small"><h1>{title}</h1>{subtitle}</section>'
     if sec == "services":
         return f'<section class="services" id="services"><h2>Our Services</h2><div class="grid">{svc_cards}</div></section>'
     if sec == "about":
-        return f'<section class="about" id="about"><h2>About Us</h2><p>{title} is a team of passionate builders creating impactful digital experiences.</p></section>'
+        return f'<section class="about" id="about"><h2>About Us</h2><p>{title} {esc(data.get("about_copy", "is a team of passionate builders creating impactful digital experiences."))}</p></section>'
     if sec == "testimonials":
         return (
             '<section class="testimonials" id="testimonials"><h2>What Clients Say</h2>'
@@ -140,32 +345,120 @@ def _html_section(sec: str, ctx: dict) -> str:
             '<a href="#contact" class="btn">Contact Us</a></section>'
         )
     if sec == "features":
-        return (
-            '<section class="features" id="features"><h2>Features</h2><div class="grid">'
-            '<div class="card"><h3>Fast</h3><p>Lightning fast performance</p></div>'
-            '<div class="card"><h3>Secure</h3><p>Enterprise-grade security</p></div>'
-            '<div class="card"><h3>Scalable</h3><p>Grows with your business</p></div>'
-            '</div></section>'
-        )
+        items = data.get("features_custom") or data.get("features") or _SECTION_FALLBACK_CONTENT["features"]
+        return f'<section class="features" id="features"><h2>Features</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "pricing":
         return (
             '<section class="pricing" id="pricing"><h2>Pricing</h2><div class="grid">'
-            '<div class="card"><h3>Starter</h3><p>$29/mo</p></div>'
-            '<div class="card"><h3>Pro</h3><p>$79/mo</p></div>'
-            '<div class="card"><h3>Enterprise</h3><p>$199/mo</p></div>'
+            '<div class="card"><h3>Starter</h3><p>For individuals</p><span class="price">$29/mo</span></div>'
+            '<div class="card featured"><h3>Pro</h3><p>For growing teams</p><span class="price">$79/mo</span></div>'
+            '<div class="card"><h3>Enterprise</h3><p>Custom solutions</p><span class="price">$199/mo</span></div>'
             '</div></section>'
+        )
+    # ── Category-specific sections ──
+    if sec == "menu":
+        items = data.get("menu_items") or _SECTION_FALLBACK_CONTENT["menu"]
+        return f'<section class="menu" id="menu"><h2>Our Menu</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+    if sec == "products":
+        items = data.get("products") or _SECTION_FALLBACK_CONTENT["products"]
+        return (
+            f'<section class="products" id="products"><h2>Shop</h2><div class="grid">{cards(items, price_index=2)}</div>'
+            '<p class="hint">Online checkout coming soon. Call or email to order.</p></section>'
+        )
+    if sec == "projects":
+        items = data.get("projects") or _SECTION_FALLBACK_CONTENT["projects"]
+        return f'<section class="projects" id="projects"><h2>Our Work</h2><div class="grid">{cards(items)}</div></section>'
+    if sec == "listings":
+        items = data.get("listings") or _SECTION_FALLBACK_CONTENT["listings"]
+        return f'<section class="listings" id="listings"><h2>Featured Listings</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+    if sec == "posts":
+        items = data.get("posts") or _SECTION_FALLBACK_CONTENT["posts"]
+        return f'<section class="posts" id="posts"><h2>Latest Posts</h2><div class="grid">{cards(items)}</div></section>'
+    if sec == "courses":
+        items = data.get("courses") or _SECTION_FALLBACK_CONTENT["courses"]
+        return f'<section class="courses" id="courses"><h2>Our Courses</h2><div class="grid">{cards(items)}</div></section>'
+    if sec == "rooms":
+        items = data.get("rooms") or _SECTION_FALLBACK_CONTENT["rooms"]
+        return f'<section class="rooms" id="rooms"><h2>Rooms & Stays</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+    if sec == "gallery":
+        items = data.get("gallery_items") or data.get("gallery") or _SECTION_FALLBACK_CONTENT["gallery"]
+        tiles = "".join(
+            f'<div class="tile" style="background:{c["primary"]}22"><h3>{esc(it[0])}</h3><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f'<section class="gallery" id="gallery"><h2>Gallery</h2><div class="grid tiles">{tiles}</div></section>'
+    if sec == "team":
+        items = data.get("team") or _SECTION_FALLBACK_CONTENT["team"]
+        avatars = "".join(
+            f'<div class="card team-card"><div class="avatar">{esc(it[0][:2].upper())}</div><h3>{esc(it[0])}</h3><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f'<section class="team" id="team"><h2>Meet the Team</h2><div class="grid">{avatars}</div></section>'
+    if sec == "stats":
+        items = data.get("stats") or _SECTION_FALLBACK_CONTENT["stats"]
+        stats = "".join(
+            f'<div class="stat"><span class="num">{esc(it[0])}</span><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f'<section class="stats" id="stats"><div class="stats-row">{stats}</div></section>'
+    if sec == "process":
+        items = data.get("process") or _SECTION_FALLBACK_CONTENT["process"]
+        return f'<section class="process" id="process"><h2>How We Work</h2><div class="grid">{cards(items)}</div></section>'
+    if sec == "faq":
+        items = data.get("faq") or _SECTION_FALLBACK_CONTENT["faq"]
+        faqs = "".join(
+            f'<details class="faq-item"><summary>{esc(it[0])}</summary><p>{esc(it[1]) if len(it) > 1 else ""}</p></details>'
+            for it in items
+        )
+        return f'<section class="faq" id="faq"><h2>FAQ</h2>{faqs}</section>'
+    if sec == "booking":
+        return (
+            '<section class="booking" id="booking"><h2>Book Now</h2>'
+            '<form class="booking-form"><input type="text" placeholder="Your Name" required>'
+            '<input type="tel" placeholder="Phone" required>'
+            '<input type="date" required><input type="time" required>'
+            '<button type="submit">Request Booking</button></form></section>'
+        )
+    if sec == "hours":
+        hours = esc(data.get("hours") or _SECTION_FALLBACK_CONTENT["hours"])
+        location = esc(data.get("location") or _SECTION_FALLBACK_CONTENT["location"])
+        return (
+            f'<section class="hours" id="hours"><h2>Hours & Location</h2>'
+            f'<p><strong>Hours:</strong> {hours}</p><p><strong>Location:</strong> {location}</p></section>'
+        )
+    if sec == "newsletter":
+        return (
+            '<section class="newsletter" id="newsletter"><h2>Stay Updated</h2>'
+            '<form class="newsletter-form"><input type="email" placeholder="Your email" required>'
+            '<button type="submit">Subscribe</button></form></section>'
+        )
+    if sec == "donate":
+        return (
+            '<section class="donate" id="donate"><h2>Support Our Cause</h2>'
+            '<p>Every contribution makes a real difference.</p>'
+            '<a href="#contact" class="btn">Donate Now</a></section>'
         )
     return f'<section class="{sec}" id="{sec}"><h2>{sec.title()}</h2><p>Content for the {sec} section.</p></section>'
 
 
-def _html_page(ctx: dict, body: str) -> str:
+def _html_nav(pages: list[tuple[str, str]], active: str = "index", title: str = "") -> str:
+    links = []
+    for route, label in pages:
+        href = "index.html" if route == "index" else f"{route}.html"
+        active_cls = ' class="active"' if route == active else ""
+        links.append(f'<a href="{href}"{active_cls}>{_escape_html(label)}</a>')
+    brand = f'<span class="brand">{_escape_html(title)}</span>' if title else ""
+    return f"<nav>{brand}{''.join(links)}</nav>"
+
+
+def _html_page(ctx: dict, body: str, nav: str = "") -> str:
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
         "  <meta charset=\"UTF-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
         f"  <title>{_escape_html(ctx['title'])}</title>\n"
         "  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n"
-        f"{body}\n</body>\n</html>"
+        f"{nav}\n{body}\n</body>\n</html>"
     )
 
 
@@ -174,15 +467,34 @@ def _html_css(ctx: dict) -> str:
     return f"""/* Generated by Website Agent */
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{ font-family: 'Inter', system-ui, sans-serif; color: {c['text']}; background: {c['bg']}; }}
-.hero {{ min-height: 80vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {c['secondary']}; color: white; }}
+nav {{ display: flex; align-items: center; gap: 1.5rem; padding: 1rem 2rem; background: {c['secondary']}; color: white; flex-wrap: wrap; }}
+nav .brand {{ font-weight: 700; font-size: 1.1rem; margin-right: auto; }}
+nav a {{ color: rgba(255,255,255,0.85); text-decoration: none; font-weight: 500; }}
+nav a:hover, nav a.active {{ color: {c['accent']}; }}
+.hero {{ min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {c['secondary']}; color: white; }}
+.hero-small {{ min-height: 40vh; padding: 3rem 2rem; }}
 .hero h1 {{ font-size: 3.5rem; margin-bottom: 1rem; }}
 .hero .sub {{ font-size: 1.4rem; margin-bottom: 1rem; opacity: 0.95; }}
 .hero p {{ font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; }}
-.services, .about, .testimonials, .pricing, .features, .contact {{ padding: 5rem 2rem; text-align: center; }}
-.services h2, .about h2, .testimonials h2, .pricing h2, .features h2, .contact h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
+.services, .about, .testimonials, .pricing, .features, .contact, .menu, .products, .projects, .listings, .posts, .courses, .rooms, .gallery, .team, .process, .faq, .booking, .hours, .newsletter, .donate {{ padding: 5rem 2rem; text-align: center; }}
+.services h2, .about h2, .testimonials h2, .pricing h2, .features h2, .contact h2, .menu h2, .products h2, .projects h2, .listings h2, .posts h2, .courses h2, .rooms h2, .gallery h2, .team h2, .process h2, .faq h2, .booking h2, .hours h2, .newsletter h2, .donate h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
 .card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
+.card.featured {{ border: 2px solid {c['primary']}; }}
 .card h3 {{ color: {c['primary']}; margin-bottom: 0.5rem; }}
+.price {{ display: inline-block; margin-top: 0.5rem; font-weight: 700; color: {c['accent']}; }}
+.hint {{ margin-top: 1.5rem; color: #666; }}
+.tiles {{ grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }}
+.tile {{ border-radius: 12px; padding: 3rem 1.5rem; color: {c['text']}; }}
+.tile h3 {{ color: {c['primary']}; }}
+.team-card .avatar {{ width: 64px; height: 64px; border-radius: 50%; background: {c['primary']}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; margin: 0 auto 1rem; font-size: 1.2rem; }}
+.stats-row {{ display: flex; justify-content: center; gap: 3rem; flex-wrap: wrap; max-width: 1100px; margin: 0 auto; }}
+.stat {{ text-align: center; }}
+.stat .num {{ display: block; font-size: 2.6rem; font-weight: 800; color: {c['primary']}; }}
+.stat p {{ color: #555; }}
+.faq-item {{ max-width: 700px; margin: 0.5rem auto; text-align: left; background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }}
+.faq-item summary {{ font-weight: 600; cursor: pointer; }}
+.faq-item p {{ margin-top: 0.5rem; color: #555; }}
 .cta {{ background: {c['primary']}; color: white; padding: 5rem 2rem; text-align: center; }}
 .cta h2 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
 .cta p {{ font-size: 1.1rem; margin-bottom: 2rem; opacity: 0.9; }}
@@ -197,12 +509,57 @@ blockquote {{ font-size: 1.2rem; font-style: italic; max-width: 600px; margin: 0
 """
 
 
+def _nextjs_cards(items: list, ctx: dict, *, price_index=None) -> str:
+    """Return a JSX grid of cards built from a list of tuples."""
+    c = ctx["colors"]
+    rows = []
+    for it in items:
+        head = it[0]
+        sub = it[1] if len(it) > 1 else ""
+        price = it[price_index] if price_index is not None and len(it) > price_index else ""
+        price_el = f'<span className="inline-block mt-2 font-bold" style={{{{color: "{c["accent"]}"}}}}>{price}</span>' if price else ""
+        rows.append(
+            f'<div className="bg-white rounded-xl p-8 shadow-lg">'
+            f'<h3 className="text-lg font-bold mb-2" style={{{{color: "{c["primary"]}"}}}}>{head}</h3>'
+            f'<p className="text-gray-600">{sub}</p>{price_el}</div>'
+        )
+    return "\n        ".join(rows)
+
+
 def _nextjs_component(sec: str, ctx: dict) -> str:
     c = ctx["colors"]
     title = ctx["title"]
     tagline = ctx["tagline"]
     email = ctx["business_email"]
     services = ctx["services"]
+    data = ctx.get("data", {})
+    hero_copy = data.get("hero_copy", "We build modern, fast, and secure websites that help your business grow.")
+    about_copy = data.get("about_copy", "is a team of passionate builders creating impactful digital experiences.")
+
+    if sec == "hero":
+        return f"""export default function Hero() {{
+  const title = {json.dumps(title, ensure_ascii=False)};
+  const tagline = {json.dumps(tagline, ensure_ascii=False)};
+  return (
+    <section className="min-h-[70vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
+      <h1 className="text-5xl font-bold mb-4">{{title}}</h1>
+      {{tagline && <p className="text-xl mb-4 opacity-95">{{tagline}}</p>}}
+      <p className="text-xl mb-8 opacity-90">{hero_copy}</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
+    </section>
+  );
+}}"""
+    if sec == "hero_small":
+        return f"""export default function HeroSmall() {{
+  const title = {json.dumps(title, ensure_ascii=False)};
+  const tagline = {json.dumps(tagline, ensure_ascii=False)};
+  return (
+    <section className="min-h-[40vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
+      <h1 className="text-4xl font-bold mb-4">{{title}}</h1>
+      {{tagline && <p className="text-xl opacity-95">{{tagline}}</p>}}
+    </section>
+  );
+}}"""
     if sec == "services":
         return f"""export default function Services() {{
   const services = {json.dumps(services, ensure_ascii=False)};
@@ -220,26 +577,13 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     </section>
   );
 }}"""
-    if sec == "hero":
-        return f"""export default function Hero() {{
-  const title = {json.dumps(title, ensure_ascii=False)};
-  const tagline = {json.dumps(tagline, ensure_ascii=False)};
-  return (
-    <section className="min-h-[80vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
-      <h1 className="text-5xl font-bold mb-4">{{title}}</h1>
-      {{tagline && <p className="text-xl mb-4 opacity-95">{{tagline}}</p>}}
-      <p className="text-xl mb-8 opacity-90">We build modern, fast, and secure websites that help your business grow.</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
-    </section>
-  );
-}}"""
     if sec == "about":
         return f"""export default function About() {{
   const title = {json.dumps(title, ensure_ascii=False)};
   return (
     <section className="py-20 px-8 text-center" id="about">
       <h2 className="text-4xl font-bold mb-12">About Us</h2>
-      <p className="text-gray-600 max-w-2xl mx-auto">{{title}} is a team of passionate builders creating impactful digital experiences.</p>
+      <p className="text-gray-600 max-w-2xl mx-auto">{{title}} {about_copy}</p>
     </section>
   );
 }}"""
@@ -257,7 +601,7 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "contact":
         email_block = ""
         if email:
-            email_block = ('<p className="text-lg mb-4">Email us at <a href="mailto:{email}" className="underline">{email}</a></p>')
+            email_block = (f'<p className="text-lg mb-4">Email us at <a href="mailto:{email}" className="underline">{email}</a></p>')
         return f"""export default function Contact() {{
   const email = {json.dumps(email, ensure_ascii=False)};
   return (
@@ -283,26 +627,18 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
   );
 }}"""
     if sec == "features":
-        return """export default function Features() {
-  const features = [
-    { title: "Fast", desc: "Lightning fast performance" },
-    { title: "Secure", desc: "Enterprise-grade security" },
-    { title: "Scalable", desc: "Grows with your business" },
-  ];
+        items = data.get("features_custom") or data.get("features") or _SECTION_FALLBACK_CONTENT["features"]
+        cards = _nextjs_cards(items, ctx)
+        return f"""export default function Features() {{
   return (
     <section className="py-20 px-8 text-center" id="features">
       <h2 className="text-4xl font-bold mb-12">Features</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-        {features.map((f, i) => (
-          <div key={i} className="bg-white rounded-xl p-8 shadow-lg">
-            <h3 className="text-lg font-bold text-blue-600 mb-2">{f.title}</h3>
-            <p className="text-gray-600">{f.desc}</p>
-          </div>
-        ))}
+        {cards}
       </div>
     </section>
   );
-}"""
+}}"""
     if sec == "cta":
         return """export default function CTA() {
   return (
@@ -319,13 +655,232 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     <section className="py-20 px-8 text-center" id="pricing">
       <h2 className="text-4xl font-bold mb-12">Pricing</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Starter</h3><p>$29/mo</p></div>
-        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Pro</h3><p>$79/mo</p></div>
-        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Enterprise</h3><p>$199/mo</p></div>
+        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Starter</h3><p>For individuals</p><span className="inline-block mt-2 font-bold text-amber-500">$29/mo</span></div>
+        <div className="bg-white rounded-xl p-8 shadow-lg border-2 border-blue-600"><h3 className="text-lg font-bold mb-2">Pro</h3><p>For growing teams</p><span className="inline-block mt-2 font-bold text-amber-500">$79/mo</span></div>
+        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Enterprise</h3><p>Custom solutions</p><span className="inline-block mt-2 font-bold text-amber-500">$199/mo</span></div>
       </div>
     </section>
   );
 }"""
+    # ── Category-specific sections ──
+    grid = 'className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto"'
+    if sec == "menu":
+        items = data.get("menu_items") or _SECTION_FALLBACK_CONTENT["menu"]
+        return f"""export default function Menu() {{
+  return (
+    <section className="py-20 px-8 text-center" id="menu">
+      <h2 className="text-4xl font-bold mb-12">Our Menu</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx, price_index=2)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "products":
+        items = data.get("products") or _SECTION_FALLBACK_CONTENT["products"]
+        return f"""export default function Products() {{
+  return (
+    <section className="py-20 px-8 text-center" id="products">
+      <h2 className="text-4xl font-bold mb-12">Shop</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx, price_index=2)}
+      </div>
+      <p className="mt-6 text-gray-500">Online checkout coming soon. Call or email to order.</p>
+    </section>
+  );
+}}"""
+    if sec == "projects":
+        items = data.get("projects") or _SECTION_FALLBACK_CONTENT["projects"]
+        return f"""export default function Projects() {{
+  return (
+    <section className="py-20 px-8 text-center" id="projects">
+      <h2 className="text-4xl font-bold mb-12">Our Work</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "listings":
+        items = data.get("listings") or _SECTION_FALLBACK_CONTENT["listings"]
+        return f"""export default function Listings() {{
+  return (
+    <section className="py-20 px-8 text-center" id="listings">
+      <h2 className="text-4xl font-bold mb-12">Featured Listings</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx, price_index=2)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "posts":
+        items = data.get("posts") or _SECTION_FALLBACK_CONTENT["posts"]
+        return f"""export default function Posts() {{
+  return (
+    <section className="py-20 px-8 text-center" id="posts">
+      <h2 className="text-4xl font-bold mb-12">Latest Posts</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "courses":
+        items = data.get("courses") or _SECTION_FALLBACK_CONTENT["courses"]
+        return f"""export default function Courses() {{
+  return (
+    <section className="py-20 px-8 text-center" id="courses">
+      <h2 className="text-4xl font-bold mb-12">Our Courses</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "rooms":
+        items = data.get("rooms") or _SECTION_FALLBACK_CONTENT["rooms"]
+        return f"""export default function Rooms() {{
+  return (
+    <section className="py-20 px-8 text-center" id="rooms">
+      <h2 className="text-4xl font-bold mb-12">Rooms & Stays</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx, price_index=2)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "gallery":
+        items = data.get("gallery_items") or data.get("gallery") or _SECTION_FALLBACK_CONTENT["gallery"]
+        tiles = "".join(
+            f'<div className="rounded-xl p-12 text-center" style={{{{backgroundColor: "{c["primary"]}22"}}}}>'
+            f'<h3 className="text-lg font-bold mb-2" style={{{{color: "{c["primary"]}"}}}}>{it[0]}</h3>'
+            f'<p className="text-gray-600">{it[1] if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f"""export default function Gallery() {{
+  return (
+    <section className="py-20 px-8 text-center" id="gallery">
+      <h2 className="text-4xl font-bold mb-12">Gallery</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        {tiles}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "team":
+        items = data.get("team") or _SECTION_FALLBACK_CONTENT["team"]
+        avatars = "".join(
+            f'<div className="bg-white rounded-xl p-8 shadow-lg text-center">'
+            f'<div className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center font-bold text-white text-lg" style={{{{backgroundColor: "{c["primary"]}"}}}}>{it[0][:2].upper()}</div>'
+            f'<h3 className="text-lg font-bold mb-2">{it[0]}</h3><p className="text-gray-600">{it[1] if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f"""export default function Team() {{
+  return (
+    <section className="py-20 px-8 text-center" id="team">
+      <h2 className="text-4xl font-bold mb-12">Meet the Team</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        {avatars}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "stats":
+        items = data.get("stats") or _SECTION_FALLBACK_CONTENT["stats"]
+        stats = "".join(
+            f'<div className="text-center"><span className="block text-4xl font-extrabold" style={{{{color: "{c["primary"]}"}}}}>{it[0]}</span><p className="text-gray-500">{it[1] if len(it) > 1 else ""}</p></div>'
+            for it in items
+        )
+        return f"""export default function Stats() {{
+  return (
+    <section className="py-16 px-8 text-center" id="stats">
+      <div className="flex justify-center gap-12 flex-wrap max-w-5xl mx-auto">
+        {stats}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "process":
+        items = data.get("process") or _SECTION_FALLBACK_CONTENT["process"]
+        return f"""export default function Process() {{
+  return (
+    <section className="py-20 px-8 text-center" id="process">
+      <h2 className="text-4xl font-bold mb-12">How We Work</h2>
+      <div {grid}>
+        {_nextjs_cards(items, ctx)}
+      </div>
+    </section>
+  );
+}}"""
+    if sec == "faq":
+        items = data.get("faq") or _SECTION_FALLBACK_CONTENT["faq"]
+        faqs = "".join(
+            f'<details className="max-w-2xl mx-auto mb-3 bg-white rounded-lg p-4 shadow-sm text-left">'
+            f'<summary className="font-semibold cursor-pointer">{it[0]}</summary>'
+            f'<p className="mt-2 text-gray-600">{it[1] if len(it) > 1 else ""}</p></details>'
+            for it in items
+        )
+        return f"""export default function FAQ() {{
+  return (
+    <section className="py-20 px-8 text-center" id="faq">
+      <h2 className="text-4xl font-bold mb-12">FAQ</h2>
+      {faqs}
+    </section>
+  );
+}}"""
+    if sec == "booking":
+        return """export default function Booking() {
+  return (
+    <section className="py-20 px-8 text-center" id="booking">
+      <h2 className="text-4xl font-bold mb-12">Book Now</h2>
+      <form className="flex flex-col gap-4 max-w-md mx-auto" onSubmit={e => e.preventDefault()}>
+        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Your Name" required />
+        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Phone" required />
+        <div className="flex gap-4">
+          <input type="date" className="p-3 border border-gray-300 rounded-lg flex-1" required />
+          <input type="time" className="p-3 border border-gray-300 rounded-lg flex-1" required />
+        </div>
+        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Request Booking</button>
+      </form>
+    </section>
+  );
+}"""
+    if sec == "hours":
+        hours = data.get("hours") or _SECTION_FALLBACK_CONTENT["hours"]
+        location = data.get("location") or _SECTION_FALLBACK_CONTENT["location"]
+        return f"""export default function Hours() {{
+  const hours = {json.dumps(hours, ensure_ascii=False)};
+  const location = {json.dumps(location, ensure_ascii=False)};
+  return (
+    <section className="py-20 px-8 text-center" id="hours">
+      <h2 className="text-4xl font-bold mb-12">Hours & Location</h2>
+      <p className="text-gray-600 mb-2"><strong>Hours:</strong> {{hours}}</p>
+      <p className="text-gray-600"><strong>Location:</strong> {{location}}</p>
+    </section>
+  );
+}}"""
+    if sec == "newsletter":
+        return """export default function Newsletter() {
+  return (
+    <section className="py-20 px-8 text-center" id="newsletter">
+      <h2 className="text-4xl font-bold mb-12">Stay Updated</h2>
+      <form className="flex gap-4 max-w-md mx-auto" onSubmit={e => e.preventDefault()}>
+        <input className="p-3 border border-gray-300 rounded-lg flex-1" placeholder="Your email" required />
+        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Subscribe</button>
+      </form>
+    </section>
+  );
+}"""
+    if sec == "donate":
+        return f"""export default function Donate() {{
+  return (
+    <section className="py-20 px-8 text-center bg-blue-600 text-white" id="donate">
+      <h2 className="text-4xl font-bold mb-4">Support Our Cause</h2>
+      <p className="text-lg mb-8 opacity-90">Every contribution makes a real difference.</p>
+      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Donate Now</a>
+    </section>
+  );
+}}"""
     name = sec.title().replace(" ", "")
     return f"""export default function {name}() {{
   return (
@@ -337,21 +892,42 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
 }}"""
 
 
-def _nextjs_page(section_list: list[str], ctx: dict) -> str:
+def _nextjs_navbar(pages: list[tuple[str, str]], ctx: dict) -> str:
+    title = ctx["title"]
+    links = "".join(
+        f'<Link href="/{"" if route == "index" else route}">{_escape_html(label)}</Link>'
+        for route, label in pages
+    )
+    return f"""import Link from "next/link";
+
+export default function Navbar() {{
+  return (
+    <nav className="bg-slate-800 text-white px-8 py-4 flex items-center gap-6 flex-wrap">
+      <span className="font-bold text-lg mr-auto">{_escape_html(title)}</span>
+      {links}
+    </nav>
+  );
+}}"""
+
+
+def _nextjs_footer(ctx: dict) -> str:
+    return _nextjs_component("footer", ctx)
+
+
+def _nextjs_page(page_route: str, section_list: list[str], ctx: dict, pages: list[tuple[str, str]]) -> str:
     imports = "\n".join(
-        f"import {s.title().replace(' ', '')} from './components/{s.title().replace(' ', '')}';"
+        f"import {s.title().replace(' ', '')} from '../components/{s.title().replace(' ', '')}';"
         for s in section_list
     )
     calls = "\n      ".join(f"<{s.title().replace(' ', '')} />" for s in section_list)
-    title = json.dumps(ctx["title"], ensure_ascii=False)
-    return f"""// app/page.tsx — Generated by Website Agent
+    name = "HomePage" if page_route == "index" else f"{page_route.title().replace('-', '')}Page"
+    subdir = "" if page_route == "index" else f"{page_route}/"
+    return f"""// app/{subdir}page.tsx — Generated by Website Agent
 {imports}
 
-export default function Home() {{
-  const title = {title};
+export default function {name}() {{
   return (
     <main>
-      <h1 className="text-4xl font-bold text-center py-12">{{title}}</h1>
       {calls}
     </main>
   );
@@ -359,10 +935,12 @@ export default function Home() {{
 """
 
 
-def _nextjs_layout(ctx: dict) -> str:
+def _nextjs_layout(ctx: dict, pages: list[tuple[str, str]]) -> str:
     title = _escape_html(ctx["title"])
     return f"""// app/layout.tsx — Generated by Website Agent
 import type {{ Metadata }} from "next";
+import Navbar from "../components/Navbar";
+import Footer from "../components/Footer";
 import "./globals.css";
 
 export const metadata: Metadata = {{
@@ -373,7 +951,11 @@ export const metadata: Metadata = {{
 export default function RootLayout({{ children }}: {{ children: React.ReactNode }}) {{
   return (
     <html lang="en">
-      <body>{{children}}</body>
+      <body>
+        <Navbar />
+        {{children}}
+        <Footer />
+      </body>
     </html>
   );
 }}
@@ -441,20 +1023,29 @@ export default config;
 
 
 def _build_readme(ctx: dict, framework: str) -> str:
+    category = ctx.get("category", "business")
+    pages = WEBSITE_CATEGORIES.get(category, WEBSITE_CATEGORIES["business"])["pages"]
+    page_list = ", ".join(f"`{p['nav']}` ({r})" for r, p in pages.items())
     if framework == "html":
         return f"""# {ctx['title']}
 
-Generated by the Website Agent.
+Generated by the Website Agent (category: {category}).
+
+## Pages
+{page_list}
 
 ## Run locally
 Open `index.html` in a browser (or run `python -m http.server`).
 
 ## Customize
-Edit `style.css` for colors and fonts. Sections live in `index.html`.
+Edit `style.css` for colors and fonts. Sections live in each `*.html` page.
 """
     return f"""# {ctx['title']}
 
-Generated by the Website Agent.
+Generated by the Website Agent (category: {category}).
+
+## Pages
+{page_list}
 
 ## Run locally
 ```bash
@@ -469,10 +1060,13 @@ npx vercel deploy --prod
 ```
 
 ## Structure
-- `app/page.tsx` — home page (imports section components)
-- `app/layout.tsx` — root layout + metadata
+- `app/page.tsx` — home page
+- `app/<route>/page.tsx` — other pages (about, services, contact, ...)
+- `app/layout.tsx` — root layout + metadata (Navbar + Footer)
 - `app/globals.css` — Tailwind + design tokens
-- `components/*.tsx` — Hero, Services, About, Testimonials, Contact, Footer
+- `components/*.tsx` — section components (Hero, Services, Menu, Products, ...)
+- `components/Navbar.tsx` — shared navigation
+- `components/Footer.tsx` — shared footer
 """
 
 
@@ -490,19 +1084,26 @@ def _build_website_project(
     services: list[str] | None = None,
     business_email: str = "",
     sections: list[str] | None = None,
+    category: str = "business",
     style: str = "modern",
     color_primary: str = "#2563EB",
     framework: str = "nextjs",
     skills: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build a complete website project dict (rel_path -> content). Deterministic, no network, no LLM."""
+    """Build a complete website project dict (rel_path -> content). Deterministic, no network, no LLM.
+
+    - `category` picks a preset page map (business, portfolio, restaurant, ecommerce,
+      saas, agency, realestate, blog, education, health, event, hotel, construction,
+      nonprofit). Each category gets its own multi-page site.
+    - `sections` (legacy) forces a single-page build with exactly those sections.
+    """
     skills = [s for s in (skills or []) if s]
     title = (title or "").strip() or "My Website"
     tagline = (tagline or "").strip()
     services = [s.strip() for s in (services or []) if s and s.strip()] or list(_DEFAULT_SERVICES)
-    section_list = [s.strip().lower() for s in (sections or ["hero", "services", "about", "testimonials", "contact", "footer"]) if s and s.strip()]
-    if not section_list:
-        section_list = ["hero", "services", "about", "testimonials", "contact", "footer"]
+    category = (category or "business").strip().lower()
+    if category not in WEBSITE_CATEGORIES:
+        category = "business"
 
     colors = dict(_WEBSITE_PALETTES.get(style, _WEBSITE_PALETTES["modern"]))
     colors["primary"] = color_primary or colors["primary"]
@@ -518,33 +1119,62 @@ def _build_website_project(
         "business_email": business_email or "",
         "colors": colors,
         "style": style,
+        "category": category,
+        "data": _category_data(category),
     }
 
+    # Page map: route -> {"nav": label, "sections": [...]}
+    if isinstance(sections, str):
+        sections = [s.strip() for s in sections.split(",") if s and s.strip()]
+    if sections:
+        page_map = {"index": {"nav": "Home", "sections": [s.strip().lower() for s in sections if s and s.strip()]}}
+        if not page_map["index"]["sections"]:
+            page_map["index"]["sections"] = ["hero", "services", "about", "testimonials", "contact", "footer"]
+    else:
+        page_map = dict(WEBSITE_CATEGORIES[category]["pages"])
+
+    pages = [(route, spec["nav"]) for route, spec in page_map.items()]
+    all_sections: list[str] = []
+    for spec in page_map.values():
+        for s in spec["sections"]:
+            if s not in all_sections:
+                all_sections.append(s)
+
     if framework == "html":
-        body = "".join(_html_section(s, ctx) for s in section_list)
-        page_code = _html_page(ctx, body)
-        files = {"index.html": page_code, "style.css": _html_css(ctx)}
+        files: dict[str, str] = {}
+        for route, spec in page_map.items():
+            body = "".join(_html_section(s, ctx) for s in spec["sections"])
+            fname = "index.html" if route == "index" else f"{route}.html"
+            files[fname] = _html_page(ctx, body, _html_nav(pages, route, title))
+        files["style.css"] = _html_css(ctx)
+        page_code = files.get("index.html", "")
         components = {}
     else:
         components = {}
-        for s in section_list:
+        for s in all_sections:
             name = s.title().replace(" ", "")
             components[f"components/{name}.tsx"] = _nextjs_component(s, ctx)
-        page_code = _nextjs_page(section_list, ctx)
+        components["components/Navbar.tsx"] = _nextjs_navbar(pages, ctx)
+        components["components/Footer.tsx"] = _nextjs_footer(ctx)
         files = {
             "package.json": _nextjs_package_json(title),
-            "app/layout.tsx": _nextjs_layout(ctx),
+            "app/layout.tsx": _nextjs_layout(ctx, pages),
             "app/globals.css": _nextjs_globals_css(ctx),
-            "app/page.tsx": page_code,
             "tailwind.config.ts": _nextjs_tailwind_config(ctx),
             "README.md": _build_readme(ctx, framework),
         }
+        for route, spec in page_map.items():
+            subdir = "" if route == "index" else f"{route}/"
+            files[f"app/{subdir}page.tsx"] = _nextjs_page(route, spec["sections"], ctx, pages)
+        page_code = files.get("app/page.tsx", "")
         files.update(components)
 
     return {
         "framework": framework,
         "style": style,
-        "sections": section_list,
+        "category": category,
+        "pages": [{"route": r, "nav": s["nav"], "sections": s["sections"]} for r, s in page_map.items()],
+        "sections": all_sections,
         "colors": colors,
         "title": title,
         "tagline": tagline,
@@ -1238,7 +1868,8 @@ def build_site(
     title: str = "My Website",
     tagline: str = "",
     industry: str = "",
-    sections: str = "hero,services,about,testimonials,contact,footer",
+    sections: str = "",
+    category: str = "business",
     style: str = "modern",
     color_primary: str = "#2563EB",
     framework: str = "nextjs",
@@ -1250,6 +1881,10 @@ def build_site(
     """Build a complete website project on disk from business info.
 
     Writes real files (Next.js project or HTML) and returns the file list.
+    Default is a multi-page site picked by `category` (business, portfolio,
+    restaurant, ecommerce, saas, agency, realestate, blog, education, health,
+    event, hotel, construction, nonprofit). Pass `sections` to force a
+    single-page build with exactly those sections.
     """
     if isinstance(skills, str):
         skills = [s.strip() for s in skills.split(",") if s.strip()]
@@ -1259,7 +1894,8 @@ def build_site(
         industry=industry,
         services=[s.strip() for s in services.split(",") if s.strip()],
         business_email=business_email,
-        sections=[s.strip() for s in sections.split(",") if s.strip()],
+        sections=[s.strip() for s in sections.split(",") if s.strip()] if sections else None,
+        category=category,
         style=style,
         color_primary=color_primary,
         framework=framework,
@@ -1679,7 +2315,8 @@ def publish_site(
     title: str = "My Website",
     tagline: str = "",
     industry: str = "",
-    sections: str = "hero,services,about,testimonials,contact,footer",
+    sections: str = "",
+    category: str = "business",
     style: str = "modern",
     color_primary: str = "#2563EB",
     framework: str = "nextjs",
@@ -1694,13 +2331,15 @@ def publish_site(
     """One-shot pipeline: build real site code -> deploy to Vercel -> live URL.
 
     Wraps build_site + deploy_vercel so the Website Agent can take a business
-    brief and return a working public URL in a single call.
+    brief and return a working public URL in a single call. `category` picks
+    the multi-page site template (see build_site).
     """
     build = build_site(
         title=title,
         tagline=tagline,
         industry=industry,
         sections=sections,
+        category=category,
         style=style,
         color_primary=color_primary,
         framework=framework,
@@ -2160,14 +2799,15 @@ WEBSITE_TOOLS = [
         "type": "function",
         "function": {
             "name": "build_site",
-            "description": "Build a complete website project on disk (Next.js or HTML) from business info: title, tagline, services, email, sections, colors. Writes real files and returns the file list.",
+            "description": "Build a complete website project on disk (Next.js or HTML) from business info: title, tagline, services, email, category, colors. Category picks a multi-page site (business, portfolio, restaurant, ecommerce, saas, agency, realestate, blog, education, health, event, hotel, construction, nonprofit). Writes real files and returns the file list.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Website/business name", "default": "My Website"},
                     "tagline": {"type": "string", "description": "One-line value proposition", "default": ""},
                     "industry": {"type": "string", "description": "Industry (tech, food, agency, etc.)", "default": ""},
-                    "sections": {"type": "string", "description": "Comma-separated sections: hero,services,about,testimonials,contact,footer", "default": "hero,services,about,testimonials,contact,footer"},
+                    "category": {"type": "string", "enum": ["business", "portfolio", "restaurant", "ecommerce", "saas", "agency", "realestate", "blog", "education", "health", "event", "hotel", "construction", "nonprofit"], "description": "Website type: picks pages + sections (e.g. restaurant -> Menu page, ecommerce -> Shop page). Leave default for a general business site.", "default": "business"},
+                    "sections": {"type": "string", "description": "Optional: comma-separated sections to force a single-page build (hero,services,about,testimonials,contact,footer). Leave empty to use the category page map.", "default": ""},
                     "style": {"type": "string", "enum": ["modern", "minimal", "bold", "warm", "tech"], "default": "modern"},
                     "color_primary": {"type": "string", "description": "Primary color hex code", "default": "#2563EB"},
                     "framework": {"type": "string", "enum": ["nextjs", "html"], "default": "nextjs"},
@@ -2247,14 +2887,15 @@ WEBSITE_TOOLS = [
         "type": "function",
         "function": {
             "name": "publish_site",
-            "description": "One-shot: build a real website from a business brief, install deps, deploy to Vercel, and return the live URL.",
+            "description": "One-shot: build a real website from a business brief, install deps, deploy to Vercel, and return the live URL. Category picks the multi-page template (restaurant -> menu page, ecommerce -> shop, etc.).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Business/website name", "default": "My Website"},
                     "tagline": {"type": "string", "description": "One-line value proposition", "default": ""},
                     "industry": {"type": "string", "description": "Industry (tech, food, agency, etc.)", "default": ""},
-                    "sections": {"type": "string", "description": "Comma-separated sections: hero,services,about,testimonials,contact,footer", "default": "hero,services,about,testimonials,contact,footer"},
+                    "category": {"type": "string", "enum": ["business", "portfolio", "restaurant", "ecommerce", "saas", "agency", "realestate", "blog", "education", "health", "event", "hotel", "construction", "nonprofit"], "description": "Website type: picks pages + sections (e.g. restaurant -> Menu page, ecommerce -> Shop page).", "default": "business"},
+                    "sections": {"type": "string", "description": "Optional: comma-separated sections to force a single-page build. Leave empty to use the category page map.", "default": ""},
                     "style": {"type": "string", "enum": ["modern", "minimal", "bold", "warm", "tech"], "default": "modern"},
                     "color_primary": {"type": "string", "description": "Primary color hex code", "default": "#2563EB"},
                     "framework": {"type": "string", "enum": ["nextjs", "html"], "default": "nextjs"},
@@ -2341,7 +2982,8 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             title=a.get("title", "My Website"),
             tagline=a.get("tagline", ""),
             industry=a.get("industry", ""),
-            sections=a.get("sections", "hero,services,about,testimonials,contact,footer"),
+            sections=a.get("sections", ""),
+            category=a.get("category", "business"),
             style=a.get("style", "modern"),
             color_primary=a.get("color_primary", "#2563EB"),
             framework=a.get("framework", "nextjs"),
@@ -2371,7 +3013,8 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             title=a.get("title", "My Website"),
             tagline=a.get("tagline", ""),
             industry=a.get("industry", ""),
-            sections=a.get("sections", "hero,services,about,testimonials,contact,footer"),
+            sections=a.get("sections", ""),
+            category=a.get("category", "business"),
             style=a.get("style", "modern"),
             color_primary=a.get("color_primary", "#2563EB"),
             framework=a.get("framework", "nextjs"),
