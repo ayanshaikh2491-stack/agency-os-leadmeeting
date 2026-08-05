@@ -393,3 +393,81 @@ async def api_brief_content(body: BriefContentRequest):
         }
     except Exception as e:
         raise HTTPException(500, f"Brief failed: {e}")
+
+
+# ── Real Account Connections ────────────────────────────────────────────────
+
+
+class AdsConnectRequest(BaseModel):
+    """Connect a real ads account for a workspace.
+
+    Meta:
+      platform="meta", access_token + ad_account_id (act_XXXXXXXXX)
+    Google:
+      platform="google", developer_token + client_id + client_secret +
+      refresh_token + customer_id
+    """
+    workspace_id: str
+    platform: str = "meta"
+    # Meta
+    access_token: str = ""
+    ad_account_id: str = ""
+    business_id: str = ""
+    # Google
+    developer_token: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    refresh_token: str = ""
+    customer_id: str = ""
+    login_customer_id: str = ""
+
+
+@router.post("/connect")
+async def ads_connect(body: AdsConnectRequest):
+    """Save real ad account credentials for a workspace.
+
+    Once saved, performance/report tools switch from demo to live API data
+    automatically (Meta Marketing API or Google Ads API).
+    """
+    from admin.ads_api_client import save_meta_ads_token, save_google_ads_credentials
+
+    if body.platform.lower() in ("meta", "facebook", "meta_ads"):
+        if not body.access_token or not body.ad_account_id:
+            raise HTTPException(422, "Meta connection needs access_token + ad_account_id (act_XXX)")
+        result = save_meta_ads_token(
+            workspace_id=body.workspace_id,
+            access_token=body.access_token,
+            ad_account_id=body.ad_account_id,
+            business_id=body.business_id,
+        )
+        return {"success": True, "platform": "meta", "workspace_id": body.workspace_id, "result": result}
+
+    elif body.platform.lower() in ("google", "google_ads", "adwords"):
+        required = [body.developer_token, body.client_id, body.client_secret,
+                    body.refresh_token, body.customer_id]
+        if not all(required):
+            raise HTTPException(422, "Google connection needs developer_token + client_id + client_secret + refresh_token + customer_id")
+        result = save_google_ads_credentials(
+            workspace_id=body.workspace_id,
+            developer_token=body.developer_token,
+            client_id=body.client_id,
+            client_secret=body.client_secret,
+            refresh_token=body.refresh_token,
+            customer_id=body.customer_id,
+            login_customer_id=body.login_customer_id,
+        )
+        return {"success": True, "platform": "google", "workspace_id": body.workspace_id, "result": result}
+
+    raise HTTPException(422, f"Unknown platform: {body.platform}")
+
+
+@router.get("/connection/{workspace_id}")
+async def ads_connection_status(workspace_id: str):
+    """Check live vs demo connection status for a workspace."""
+    from admin.ads_api_client import get_all_ads_clients
+    clients = get_all_ads_clients(workspace_id)
+    return {
+        "workspace_id": workspace_id,
+        "meta": clients["meta"].health_check(),
+        "google": clients["google"].health_check(),
+    }

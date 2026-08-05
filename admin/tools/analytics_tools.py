@@ -29,9 +29,21 @@ def weekly_report(
     channels: list[str] | None = None,
     period: str = "last 7 days",
 ) -> dict[str, Any]:
-    """Generate weekly performance report across all channels."""
+    """Generate weekly performance report across all channels.
+
+    Uses real system data (SBA leads, SEO audits, live ads metrics) when
+    available. Falls back to deterministic demo data with data_source=demo.
+    """
     if channels is None:
         channels = ["seo", "ads", "social", "website"]
+
+    from admin.tools.analytics_data import get_real_metrics
+    real = get_real_metrics(workspace)
+    real_leads = real["leads"]
+    real_seo = real["seo"]
+    real_ads = real["ads"]
+    real_web = real["website"]
+    data_source = "live_internal" if real["any_live"] else "demo"
 
     report = {
         "status": "report_generated",
@@ -40,65 +52,76 @@ def weekly_report(
         "workspace": workspace,
         "client": client,
         "period": period,
+        "data_source": data_source,
         "summary": {
-            "total_traffic": random.randint(8000, 25000),
-            "total_leads": random.randint(50, 200),
-            "total_revenue": random.randint(50000, 300000),
-            "total_spend": random.randint(20000, 80000),
-            "overall_roas": round(random.uniform(2.5, 6.0), 2),
+            "total_leads": real_leads.get("total_leads", 0) if real_leads else 0,
+            "total_revenue": real_ads.get("revenue", 0) if real_ads.get("live") else 0,
+            "total_spend": real_ads.get("spend", 0) if real_ads.get("live") else 0,
+            "overall_roas": real_ads.get("roas", 0) if real_ads.get("live") else 0,
         },
         "channels": {},
         "highlights": [],
         "action_items": [],
     }
 
-    if "seo" in channels:
-        seo_traffic = random.randint(3000, 12000)
+    if "seo" in channels and real_seo:
         report["channels"]["seo"] = {
-            "traffic": seo_traffic,
-            "change_pct": round(random.uniform(-10, 25), 1),
-            "top_keywords": random.randint(5, 20),
-            "backlinks_new": random.randint(2, 15),
-            "bounce_rate": f"{round(random.uniform(30, 60), 1)}%",
+            "audits_run": real_seo.get("audits", 0),
+            "tracked_keywords": real_seo.get("tracked_keywords", 0),
+            "avg_issues": real_seo.get("avg_issues", 0),
         }
-        report["highlights"].append(f"SEO traffic: {seo_traffic} visitors (+{report['channels']['seo']['change_pct']}%)")
+        report["highlights"].append(
+            f"SEO: {real_seo.get('audits', 0)} audits, {real_seo.get('tracked_keywords', 0)} keywords tracked"
+        )
+    elif "seo" in channels:
+        report["channels"]["seo"] = {"audits_run": 0, "tracked_keywords": 0, "note": "No SEO audits yet — run /api/seo/audit"}
 
     if "ads" in channels:
-        ads_spend = random.randint(15000, 50000)
-        ads_revenue = int(ads_spend * random.uniform(2.5, 5.0))
-        report["channels"]["ads"] = {
-            "spend": ads_spend,
-            "revenue": ads_revenue,
-            "roas": round(ads_revenue / ads_spend, 2) if ads_spend else 0,
-            "conversions": random.randint(30, 150),
-            "ctr": f"{round(random.uniform(1.0, 3.5), 2)}%",
-            "cpa": f"₹{round(ads_spend / max(random.randint(30, 150), 1), 0)}",
-        }
-        report["highlights"].append(f"Ads ROAS: {report['channels']['ads']['roas']}x on ₹{ads_spend:,} spend")
+        if real_ads.get("live"):
+            report["channels"]["ads"] = {
+                "spend": real_ads.get("spend", 0),
+                "revenue": real_ads.get("revenue", 0),
+                "roas": real_ads.get("roas", 0),
+                "conversions": real_ads.get("conversions", 0),
+                "clicks": real_ads.get("clicks", 0),
+                "impressions": real_ads.get("impressions", 0),
+                "live": True,
+            }
+            report["highlights"].append(
+                f"Ads ROAS: {real_ads.get('roas', 0)}x on ₹{real_ads.get('spend', 0):,.0f} spend (live API)"
+            )
+        else:
+            report["channels"]["ads"] = {
+                "note": "No ad account connected — use POST /api/ads/connect",
+                "live": False,
+            }
 
-    if "social" in channels:
+    if "social" in channels and real_leads:
         report["channels"]["social"] = {
-            "followers_gained": random.randint(50, 500),
-            "engagement_rate": f"{round(random.uniform(1.5, 5.0), 2)}%",
-            "top_post_reach": random.randint(1000, 20000),
-            "posts_published": random.randint(5, 15),
+            "meetings_booked": real_leads.get("meetings", 0),
+            "hot_leads": real_leads.get("hot_leads", 0),
         }
-        report["highlights"].append(f"Social: +{report['channels']['social']['followers_gained']} followers")
+        report["highlights"].append(
+            f"SBA: {real_leads.get('meetings', 0)} meetings, {real_leads.get('hot_leads', 0)} hot leads"
+        )
+    elif "social" in channels:
+        report["channels"]["social"] = {"note": "No SBA lead activity yet"}
 
-    if "website" in channels:
+    if "website" in channels and real_web.get("builds"):
         report["channels"]["website"] = {
-            "page_views": random.randint(5000, 20000),
-            "unique_visitors": random.randint(3000, 12000),
-            "avg_session_duration": f"{round(random.uniform(1.5, 4.0), 1)} min",
-            "conversion_rate": f"{round(random.uniform(1.0, 5.0), 2)}%",
+            "builds": real_web.get("builds", 0),
+            "status": real_web.get("status", ""),
         }
+        report["highlights"].append(f"Website: {real_web.get('builds', 0)} build(s), status {real_web.get('status', '')}")
+    elif "website" in channels:
+        report["channels"]["website"] = {"builds": 0, "note": "No website builds yet"}
 
-    report["action_items"] = [
-        "Review underperforming ad sets and pause low CTR ads",
-        "Publish 3 new blog posts for SEO traffic growth",
-        "Increase social posting frequency on Instagram",
-        "Fix landing page load speed (currently > 3s)",
-    ]
+    if real_leads:
+        report["action_items"].append("Follow up with hot leads (score >= 70)")
+    if not real_ads.get("live"):
+        report["action_items"].append("Connect a real ad account via POST /api/ads/connect for live ad metrics")
+    if not real_seo:
+        report["action_items"].append("Run an SEO audit (/api/seo/audit) to start tracking organic performance")
 
     return report
 
@@ -233,35 +256,24 @@ def track_traffic(
     period: str = "last 7 days",
     source: str = "ga4",
 ) -> dict[str, Any]:
-    """Track website traffic metrics."""
-    base = random.randint(5000, 20000)
+    """Track website traffic metrics.
+
+    No GA4 key connected yet, so this returns a clear not_connected status
+    instead of fake random numbers.
+    """
     return {
-        "status": "tracked",
+        "status": "not_connected",
         "created_at": _now(),
         "channel": channel,
         "period": period,
         "source": source,
-        "metrics": {
-            "total_visitors": base,
-            "unique_visitors": int(base * 0.7),
-            "page_views": int(base * 2.5),
-            "bounce_rate": f"{round(random.uniform(30, 55), 1)}%",
-            "avg_session_duration": f"{round(random.uniform(1.5, 4.0), 1)} min",
-            "pages_per_session": round(random.uniform(2.0, 5.0), 1),
-        },
-        "sources": {
-            "organic": f"{round(random.uniform(30, 50))}%",
-            "paid": f"{round(random.uniform(15, 30))}%",
-            "social": f"{round(random.uniform(5, 15))}%",
-            "direct": f"{round(random.uniform(10, 25))}%",
-            "referral": f"{round(random.uniform(3, 10))}%",
-        },
-        "top_pages": [
-            {"page": "/", "views": random.randint(1000, 5000)},
-            {"page": "/products", "views": random.randint(500, 3000)},
-            {"page": "/blog", "views": random.randint(300, 2000)},
-        ],
+        "data_source": "demo",
+        "metrics": {},
+        "sources": {},
+        "top_pages": [],
+        "message": "GA4 / analytics credential not connected yet. Connect via Settings to start tracking real traffic.",
     }
+
 
 
 def track_rankings(
@@ -269,29 +281,46 @@ def track_rankings(
     search_engine: str = "google",
     location: str = "India",
 ) -> dict[str, Any]:
-    """Track keyword rankings."""
+    """Track keyword rankings using real SEO store keywords."""
+    from admin.tools.analytics_data import get_seo_data
+    seo = get_seo_data("default")
+    tracked = int(seo.get("tracked_keywords", 0)) if seo else 0
+
     if keywords is None:
-        keywords = ["digital marketing agency", "seo services", "social media management"]
+        keywords = []
+    if not keywords and tracked == 0:
+        return {
+            "status": "not_connected",
+            "created_at": _now(),
+            "search_engine": search_engine,
+            "location": location,
+            "data_source": "demo",
+            "total_keywords": 0,
+            "page_1_count": 0,
+            "results": [],
+            "message": "No keywords tracked yet. Run an SEO audit and track keywords to see live rankings.",
+        }
 
     results = []
-    for kw in keywords:
+    for kw in keywords or []:
         results.append({
             "keyword": kw,
-            "position": random.randint(1, 50),
-            "change": random.randint(-5, 10),
-            "search_volume": random.randint(100, 10000),
+            "position": None,
+            "change": None,
+            "search_volume": None,
             "url": f"https://tagsagency.com/{kw.replace(' ', '-')}",
         })
-
     return {
         "status": "tracked",
         "created_at": _now(),
         "search_engine": search_engine,
         "location": location,
+        "data_source": "live_internal" if tracked else "demo",
         "total_keywords": len(results),
-        "page_1_count": len([r for r in results if r["position"] <= 10]),
+        "page_1_count": 0,
         "results": results,
     }
+
 
 
 def track_conversions(
@@ -299,28 +328,36 @@ def track_conversions(
     period: str = "last 7 days",
     conversion_type: str = "all",
 ) -> dict[str, Any]:
-    """Track conversion metrics."""
-    total = random.randint(50, 300)
+    """Track conversion metrics from real lead + ad data."""
+    from admin.tools.analytics_data import get_leads_data, get_ads_data
+    leads = get_leads_data("default")
+    ads = get_ads_data("default")
+
+    total_leads = leads.get("total_leads", 0) if leads else 0
+    meetings = leads.get("meetings", 0) if leads else 0
+    ad_convs = ads.get("conversions", 0) if ads.get("live") else 0
+    data_source = "live_internal" if (total_leads or ad_convs) else "demo"
+
     return {
         "status": "tracked",
         "created_at": _now(),
         "channel": channel,
         "period": period,
         "conversion_type": conversion_type,
+        "data_source": data_source,
         "metrics": {
-            "total_conversions": total,
-            "conversion_rate": f"{round(random.uniform(1.5, 5.0), 2)}%",
-            "leads": int(total * 0.6),
-            "sales": int(total * 0.3),
-            "signups": int(total * 0.1),
+            "total_conversions": total_leads + ad_convs,
+            "leads": total_leads,
+            "meetings": meetings,
+            "ad_conversions": ad_convs,
+            "conversion_rate": "N/A (no traffic data yet)",
         },
         "by_channel": {
-            "seo": {"conversions": int(total * 0.35), "rate": f"{round(random.uniform(2, 4), 1)}%"},
-            "ads": {"conversions": int(total * 0.45), "rate": f"{round(random.uniform(3, 6), 1)}%"},
-            "social": {"conversions": int(total * 0.15), "rate": f"{round(random.uniform(1, 3), 1)}%"},
-            "direct": {"conversions": int(total * 0.05), "rate": f"{round(random.uniform(5, 10), 1)}%"},
+            "sba": {"conversions": total_leads},
+            "ads": {"conversions": ad_convs},
         },
     }
+
 
 
 def track_revenue(
@@ -328,30 +365,45 @@ def track_revenue(
     channel: str = "all",
     include_forecast: bool = True,
 ) -> dict[str, Any]:
-    """Track revenue metrics."""
-    revenue = random.randint(100000, 500000)
-    spend = random.randint(30000, 100000)
+    """Track revenue metrics from live ad accounts (Meta/Google) if connected."""
+    from admin.tools.analytics_data import get_ads_data
+    ads = get_ads_data("default")
+
+    if not ads.get("live"):
+        return {
+            "status": "not_connected",
+            "created_at": _now(),
+            "period": period,
+            "channel": channel,
+            "data_source": "demo",
+            "metrics": {},
+            "forecast": None,
+            "message": "No ad account connected. Connect Meta or Google Ads via Settings to see real revenue, spend and ROAS.",
+        }
+
+    spend = float(ads.get("spend", 0))
+    revenue = float(ads.get("revenue", 0))
+    convs = int(ads.get("conversions", 0))
     return {
         "status": "tracked",
         "created_at": _now(),
         "period": period,
         "channel": channel,
+        "data_source": "live_internal",
         "metrics": {
-            "total_revenue": f"₹{revenue:,}",
-            "total_spend": f"₹{spend:,}",
-            "net_profit": f"₹{revenue - spend:,}",
-            "roas": f"{round(revenue / spend, 2)}x" if spend else "N/A",
-            "cost_per_acquisition": f"₹{round(spend / max(random.randint(50, 200), 1), 0)}",
-            "customer_lifetime_value": f"₹{random.randint(5000, 25000):,}",
+            "total_revenue": f"₹{round(revenue):,}",
+            "total_spend": f"₹{round(spend):,}",
+            "net_profit": f"₹{round(revenue - spend):,}",
+            "roas": f"{ads.get('roas', 0)}x",
+            "cost_per_acquisition": f"₹{round(spend / convs, 2)}" if convs else "N/A",
+            "conversions": convs,
         },
         "forecast": {
-            "next_month_projected": f"₹{int(revenue * random.uniform(0.9, 1.3)):,}",
-            "confidence": f"{random.randint(70, 95)}%",
+            "next_month_projected": f"₹{round(revenue * 1.1):,}",
+            "confidence": "based on last 30d real ad spend",
         } if include_forecast else None,
     }
 
-
-# ── Analysis Tools ─────────────────────────────────────────────────────────────
 
 
 def cross_channel_analysis(
@@ -363,40 +415,37 @@ def cross_channel_analysis(
     if channels is None:
         channels = ["seo", "ads", "social", "website"]
 
-    total_spend = random.randint(50000, 150000)
-    total_revenue = int(total_spend * random.uniform(2.5, 5.0))
+    from admin.tools.analytics_data import get_real_metrics
+    real = get_real_metrics(workspace)
+    real_ads = real["ads"]
+    data_source = "live_internal" if real["any_live"] else "demo"
+
+    if real_ads.get("live"):
+        total_spend = real_ads.get("spend", 0)
+        total_revenue = real_ads.get("revenue", 0)
+    else:
+        total_spend = 0
+        total_revenue = 0
 
     return {
         "status": "analysis_complete",
         "created_at": _now(),
         "workspace": workspace,
         "period": period,
+        "data_source": data_source,
         "channels_analyzed": channels,
         "cross_channel_metrics": {
             "total_investment": f"₹{total_spend:,}",
             "total_revenue": f"₹{total_revenue:,}",
-            "blended_roas": f"{round(total_revenue / total_spend, 2)}x",
-            "blended_cpa": f"₹{round(total_spend / random.randint(100, 500), 0)}",
-            "total_conversions": random.randint(100, 500),
+            "blended_roas": f"{round(total_revenue / total_spend, 2) if total_spend else 0}x",
+            "total_leads": real["leads"].get("total_leads", 0) if real["leads"] else 0,
+            "meetings": real["leads"].get("meetings", 0) if real["leads"] else 0,
+            "seo_audits": real["seo"].get("audits", 0) if real["seo"] else 0,
+            "live_ads_connected": bool(real_ads.get("live")),
         },
-        "channel_contribution": {
-            "seo": {"revenue_pct": "30%", "spend_pct": "15%", "efficiency": "High (low cost, high LTV)"},
-            "ads": {"revenue_pct": "50%", "spend_pct": "60%", "efficiency": "Medium (scalable)"},
-            "social": {"revenue_pct": "15%", "spend_pct": "20%", "efficiency": "Low (brand building)"},
-            "website": {"revenue_pct": "5%", "spend_pct": "5%", "efficiency": "High (conversion hub)"},
-        },
-        "insights": [
-            "Ads driving 50% revenue but 60% spend — optimize for better efficiency",
-            "SEO has best ROI — invest more in content",
-            "Social underperforming on direct revenue — shift to brand awareness metrics",
-            "Website conversion rate is key lever — improve landing pages",
-        ],
-        "recommendations": [
-            "Increase SEO budget by 20% (highest ROI channel)",
-            "Optimize ad targeting to reduce CPA by 15%",
-            "Use social for retargeting warm audiences only",
-            "A/B test top 3 landing pages for conversion optimization",
-        ],
+        "channel_contribution": {},
+        "insights": [],
+        "recommendations": [],
     }
 
 
@@ -715,24 +764,37 @@ def data_aggregator(
     if channels is None:
         channels = ["seo", "ads", "social", "website"]
 
+    from admin.tools.analytics_data import get_real_metrics
+    real = get_real_metrics(workspace)
+    real_ads = real["ads"]
+    real_leads = real["leads"]
+    real_seo = real["seo"]
+    data_source = "live_internal" if real["any_live"] else "demo"
+
     return {
         "status": "aggregated",
         "created_at": _now(),
         "workspace": workspace,
         "period": period,
+        "data_source": data_source,
         "channels": channels,
         "unified_data": {
-            "total_visitors": random.randint(10000, 50000),
-            "total_leads": random.randint(100, 500),
-            "total_conversions": random.randint(50, 250),
-            "total_revenue": f"₹{random.randint(200000, 800000):,}",
-            "total_spend": f"₹{random.randint(50000, 200000):,}",
-            "blended_roas": f"{round(random.uniform(2.5, 5.0), 2)}x",
+            "total_visitors": 0,
+            "total_leads": real_leads.get("total_leads", 0) if real_leads else 0,
+            "total_meetings": real_leads.get("meetings", 0) if real_leads else 0,
+            "total_revenue": real_ads.get("revenue", 0) if real_ads.get("live") else 0,
+            "total_spend": real_ads.get("spend", 0) if real_ads.get("live") else 0,
+            "total_conversions": real_ads.get("conversions", 0) if real_ads.get("live") else 0,
+            "ads_live": bool(real_ads.get("live")),
+            "seo_audits": real_seo.get("audits", 0) if real_seo else 0,
+            "tracked_keywords": real_seo.get("tracked_keywords", 0) if real_seo else 0,
         },
         "data_sources": [
-            {"channel": ch, "status": "connected", "last_updated": _now()} for ch in channels
+            {"channel": ch, "status": "connected" if real["any_live"] else "demo", "last_updated": _now()}
+            for ch in channels
         ],
     }
+
 
 
 def email_report(

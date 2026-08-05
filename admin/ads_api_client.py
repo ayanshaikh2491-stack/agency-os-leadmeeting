@@ -66,8 +66,9 @@ class MetaAdsClient:
             data = get_token(self.workspace_id, "meta_ads")
             if data and data.get("status") == "active":
                 self.access_token = data.get("access_token", "")
-                self.ad_account_id = data.get("ad_account_id", "")
-                self.business_id = data.get("business_id", "")
+                # save_token stores ad account as page_id; direct saves may use ad_account_id
+                self.ad_account_id = data.get("ad_account_id") or data.get("page_id", "")
+                self.business_id = data.get("business_id") or data.get("platform_user_id", "")
                 if self.access_token and self.ad_account_id:
                     self.is_live = True
                     logger.info("Meta Ads LIVE mode: account=%s", self.ad_account_id)
