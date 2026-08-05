@@ -27,6 +27,7 @@ import os
 import re
 import ssl
 import json
+import shutil
 import socket
 import logging
 import subprocess
@@ -1285,42 +1286,115 @@ def build_site(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 12. DEPLOY TO VERCEL
+# 12. DEPLOY TO VERCEL (build -> host -> domain, full pipeline)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+_VERCEL_API = "https://api.vercel.com"
+
+
+def _get_vercel_token() -> str | None:
+    """Resolve a Vercel auth token: env VERCEL_TOKEN, then CLI auth files.
+
+    Works on any host (EC2 included) without an interactive login.
+    """
+    tok = os.environ.get("VERCEL_TOKEN", "").strip()
+    if tok:
+        return tok
+    candidates = [
+        os.path.join(os.environ.get("APPDATA", ""), "com.vercel.cli", "Data", "auth.json"),
+        os.path.join(os.environ.get("APPDATA", ""), "com.vercel.cli", "auth.json"),
+        os.path.join(os.environ.get("XDG_CONFIG_HOME", ""), "com.vercel.cli", "Data", "auth.json"),
+        os.path.expanduser("~/.vercel/auth.json"),
+        os.path.expanduser("~/.local/share/com.vercel.cli/auth.json"),
+        os.path.expanduser("~/.config/com.vercel.cli/auth.json"),
+    ]
+    for path in candidates:
+        try:
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            t = data.get("token") or (data.get("tokens", [{}])[0].get("token") if data.get("tokens") else "")
+            if t:
+                return t.strip()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("vercel auth read failed %s: %s", path, e)
+    return None
+
+
+def _vercel_headers(token: str | None = None) -> dict[str, str]:
+    tok = token or _get_vercel_token()
+    if not tok:
+        return {}
+    return {"Authorization": f"Bearer {tok}"}
+
+
+def _extract_vercel_url(output: str) -> str:
+    """Pull the real deployment URL from vercel CLI output.
+
+    Prefers lines that are themselves URLs (starts with https:// and host
+    contains vercel.app / vercel.com), then falls back to any https token
+    that looks like a deployment URL. Ignores version banners like
+    "Vercel CLI 54.13.0 (Node.js 25.8.1)".
+    """
+    url_like = re.compile(r"https://[^\s,;]+")
+    candidates: list[str] = []
+    for line in output.split("\n"):
+        line = line.strip()
+        found = url_like.findall(line)
+        if not found:
+            continue
+        for u in found:
+            u = u.rstrip(".,;)")
+            low = u.lower()
+            if "vercel.app" in low or "vercel.com" in low:
+                candidates.append(u)
+    # Prefer the public *.vercel.app URL over dashboard/inspect links.
+    for u in candidates:
+        low = u.lower()
+        if ".vercel.app" in low:
+            return u
+    for u in candidates:
+        if "vercel.com/" in u.lower():
+            return u
+    return candidates[0] if candidates else ""
+
 
 def deploy_vercel(
     project_path: str = ".",
     project_name: str = "",
     prod: bool = True,
     env_vars: str = "",
+    token: str = "",
 ) -> dict[str, Any]:
-    """Deploy a project to Vercel (frontend+backend). Uses vercel CLI."""
-    import os
+    """Deploy a project to Vercel (frontend+backend). Uses vercel CLI.
 
-    # Check if vercel CLI is installed
-    try:
-        result = subprocess.run(
-            ["vercel", "--version"],
-            capture_output=True, text=True, timeout=10,
-            cwd=project_path if os.path.isdir(project_path) else ".",
-        )
-        if result.returncode != 0:
+    Works two ways:
+    - No token: uses the existing local `vercel login` session (CLI auth).
+    - Token given (or VERCEL_TOKEN env / CLI auth file): passes `--token`,
+      so the same call works on EC2 and other servers without interactive login.
+    """
+    resolved_token = _explicit_vercel_token(token)
+    cli_bin = _vercel_cli_bin()
+    cli_available = bool(cli_bin)
+
+    # If we have an explicit token, prefer the REST-API style (--token flag).
+    # Otherwise rely on the CLI's own logged-in session.
+    cmd = [cli_bin or "vercel", "--yes"]
+    if resolved_token:
+        cmd.extend(["--token", resolved_token])
+    elif not cli_available:
+        # Last resort: stale auth file may still work on servers.
+        resolved_token = _get_vercel_token()
+        if resolved_token:
+            cmd.extend(["--token", resolved_token])
+        else:
             return {
-                "error": "Vercel CLI not found. Install: npm i -g vercel",
+                "error": "No Vercel auth. Set VERCEL_TOKEN env var, run `vercel login`, "
+                "or install the vercel CLI.",
                 "status": "failed",
-                "install_command": "npm i -g vercel",
+                "hint": "export VERCEL_TOKEN=<token>  # https://vercel.com/account/tokens",
             }
-    except FileNotFoundError:
-        return {
-            "error": "Vercel CLI not found. Install: npm i -g vercel",
-            "status": "failed",
-            "install_command": "npm i -g vercel",
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "Vercel CLI check timed out", "status": "failed"}
-
-    # Build deploy command
-    cmd = ["vercel", "--yes"]
     if prod:
         cmd.append("--prod")
     if project_name:
@@ -1343,23 +1417,13 @@ def deploy_vercel(
         deploy_start = time.time()
         result = subprocess.run(
             cmd,
-            capture_output=True, text=True, timeout=300,
+            capture_output=True, text=True, timeout=600,
             cwd=project_path if os.path.isdir(project_path) else ".",
         )
         deploy_time = round(time.time() - deploy_start, 1)
 
         output = result.stdout + result.stderr
-
-        # Extract URL from output
-        url = ""
-        for line in output.split("\n"):
-            line = line.strip()
-            if "https://" in line and "vercel" in line:
-                url = line
-                break
-            if line.startswith("https://"):
-                url = line
-                break
+        url = _extract_vercel_url(output)
 
         return {
             "status": "deployed" if result.returncode == 0 else "failed",
@@ -1370,11 +1434,320 @@ def deploy_vercel(
             "deploy_time_seconds": deploy_time,
             "output": output[:3000],
             "deployed_at": _now(),
+            "token_used": bool(resolved_token),
         }
     except subprocess.TimeoutExpired:
-        return {"error": "Deploy timed out (300s limit)", "status": "failed"}
-    except Exception as e:
+        return {"error": "Deploy timed out (600s limit)", "status": "failed"}
+    except Exception as e:  # noqa: BLE001
         return {"error": str(e), "status": "failed"}
+
+
+_VERCEL_CLI_PATH: str | None = None
+
+
+def _vercel_cli_bin() -> str | None:
+    """Resolve the vercel CLI executable (handles Windows .cmd shims)."""
+    global _VERCEL_CLI_PATH
+    if _VERCEL_CLI_PATH is None:
+        try:
+            _VERCEL_CLI_PATH = shutil.which("vercel")
+        except Exception:  # noqa: BLE001
+            _VERCEL_CLI_PATH = ""
+    return _VERCEL_CLI_PATH or None
+
+
+def _explicit_vercel_token(token: str = "") -> str:
+    """Only an explicitly supplied token counts (arg or VERCEL_TOKEN env).
+
+    The CLI auth file is NOT read here, because on Windows the live session
+    lives in the CLI's secret store while auth.json may hold a stale token.
+    """
+    t = token or os.environ.get("VERCEL_TOKEN", "").strip()
+    return t.strip()
+
+
+def _run_vercel_cli(args: list[str], cwd: str = ".", timeout: int = 120) -> tuple[int, str, str]:
+    """Run the vercel CLI using its own logged-in session (no --token needed)."""
+    exe = _vercel_cli_bin()
+    if not exe:
+        return 127, "", "vercel CLI not found. Install: npm i -g vercel"
+    try:
+        result = subprocess.run(
+            [exe, *args],
+            capture_output=True, text=True, timeout=timeout,
+            cwd=cwd if os.path.isdir(cwd) else ".",
+        )
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"vercel CLI timed out after {timeout}s"
+
+
+def connect_domain(project: str, domain: str, token: str = "") -> dict[str, Any]:
+    """Attach a custom domain to a Vercel project and return the DNS records.
+
+    Two modes:
+    - Token available (VERCEL_TOKEN env / arg / CLI auth file): uses the REST
+      API, so it works on EC2 and other servers without a CLI login.
+    - No token: falls back to the local `vercel` CLI session
+      (`vercel domains add`), which uses the existing login.
+    Returns exact DNS records the client must add (A for apex, CNAME for sub).
+    """
+    domain = (domain or "").strip().lower().replace("http://", "").replace("https://", "")
+    domain = domain.split("/")[0]
+    if not project:
+        return {"error": "project name is required (deploy first, then use its project name)", "status": "failed"}
+    if not domain:
+        return {"error": "domain is required (e.g. example.com or www.example.com)", "status": "failed"}
+
+    is_apex = domain.count(".") == 1  # example.com -> apex; www.example.com -> subdomain
+    dns_records = [
+        {
+            "type": "A" if is_apex else "CNAME",
+            "name": "@" if is_apex else "www" if domain.startswith("www.") else domain.split(".", 1)[0],
+            "value": "76.76.21.21" if is_apex else "cname.vercel-dns.com",
+            "ttl": "600",
+            "purpose": "Point domain to your Vercel deployment (hosting)",
+        },
+        {
+            "type": "TXT",
+            "name": "@",
+            "value": "verification=vercel",
+            "ttl": "600",
+            "purpose": "Vercel domain verification (add this TXT record)",
+        },
+    ]
+
+    explicit_token = _explicit_vercel_token(token)
+    cli_available = bool(_vercel_cli_bin())
+    if explicit_token:
+        headers = _vercel_headers(explicit_token)
+        headers["Content-Type"] = "application/json"
+        try:
+            resp = requests.post(
+                f"{_VERCEL_API}/v9/projects/{project}/domains",
+                headers=headers,
+                json={"name": domain},
+                timeout=30,
+            )
+            payload = resp.json() if resp.content else {}
+            ok = resp.status_code in (200, 201)
+            if not ok and payload.get("error", {}).get("code") == "domain_already_in_use":
+                ok = True  # already attached is fine
+            return {
+                "status": "connected" if ok else "failed",
+                "domain": domain,
+                "project": project,
+                "mode": "api",
+                "api_status_code": resp.status_code,
+                "vercel_response": payload,
+                "dns_records": dns_records,
+                "next_steps": [
+                    "Add the DNS records above at your domain registrar or DNS provider (GoDaddy, Namecheap, Cloudflare, etc.)",
+                    "Then call /api/website/domain/status to check when the domain verifies.",
+                    "Vercel auto-provisions SSL once DNS propagates (usually 5 min - 48h).",
+                ],
+                "connected_at": _now(),
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Domain connect API failed: {e}", "status": "failed"}
+
+    # No explicit token: use local CLI session (vercel domains add).
+    if not cli_available:
+        # Last resort: auth file token via REST API (works on servers w/o CLI).
+        file_token = _get_vercel_token()
+        if file_token:
+            try:
+                headers = _vercel_headers(file_token)
+                headers["Content-Type"] = "application/json"
+                resp = requests.post(
+                    f"{_VERCEL_API}/v9/projects/{project}/domains",
+                    headers=headers,
+                    json={"name": domain},
+                    timeout=30,
+                )
+                payload = resp.json() if resp.content else {}
+                ok = resp.status_code in (200, 201)
+                if not ok and payload.get("error", {}).get("code") == "domain_already_in_use":
+                    ok = True
+                return {
+                    "status": "connected" if ok else "failed",
+                    "domain": domain,
+                    "project": project,
+                    "mode": "api-file-token",
+                    "api_status_code": resp.status_code,
+                    "vercel_response": payload,
+                    "dns_records": dns_records,
+                    "next_steps": [
+                        "Add the DNS records above at your domain registrar or DNS provider.",
+                        "Then call /api/website/domain/status to check when the domain verifies.",
+                    ],
+                    "connected_at": _now(),
+                }
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"Domain connect failed: {e}", "status": "failed"}
+    code, out, err = _run_vercel_cli(["domains", "add", domain], timeout=180)
+    output = out + err
+    ok = code == 0
+    if not ok and "already" in output.lower():
+        ok = True  # domain already registered on this account
+    return {
+        "status": "connected" if ok else "failed",
+        "domain": domain,
+        "project": project,
+        "mode": "cli",
+        "cli_status_code": code,
+        "vercel_response": output[:2000],
+        "dns_records": dns_records,
+        "next_steps": [
+            "Add the DNS records above at your domain registrar or DNS provider (GoDaddy, Namecheap, Cloudflare, etc.)",
+            "Then call /api/website/domain/status to check when the domain verifies.",
+            "Vercel auto-provisions SSL once DNS propagates (usually 5 min - 48h).",
+        ],
+        "connected_at": _now(),
+    }
+
+
+def domain_status(project: str, domain: str, token: str = "") -> dict[str, Any]:
+    """Check whether a custom domain has been verified on a Vercel project."""
+    domain = (domain or "").strip().lower().replace("http://", "").replace("https://", "").split("/")[0]
+    explicit_token = _explicit_vercel_token(token)
+    cli_available = bool(_vercel_cli_bin())
+    if explicit_token:
+        headers = _vercel_headers(explicit_token)
+        try:
+            resp = requests.get(
+                f"{_VERCEL_API}/v6/domains/{domain}/config?project={project}",
+                headers=headers,
+                timeout=30,
+            )
+            payload = resp.json() if resp.content else {}
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Domain status API failed: {e}", "status": "failed"}
+        misconfigured = bool(payload.get("misconfigured", False))
+        return {
+            "status": "verified" if resp.status_code == 200 and not misconfigured else "pending",
+            "domain": domain,
+            "project": project,
+            "mode": "api",
+            "misconfigured": misconfigured,
+            "api_status_code": resp.status_code,
+            "config": payload,
+            "checked_at": _now(),
+        }
+
+    # No explicit token: use local CLI session (vercel domains inspect).
+    if not cli_available:
+        file_token = _get_vercel_token()
+        if file_token:
+            try:
+                headers = _vercel_headers(file_token)
+                resp = requests.get(
+                    f"{_VERCEL_API}/v6/domains/{domain}/config?project={project}",
+                    headers=headers,
+                    timeout=30,
+                )
+                payload = resp.json() if resp.content else {}
+                misconfigured = bool(payload.get("misconfigured", False))
+                return {
+                    "status": "verified" if resp.status_code == 200 and not misconfigured else "pending",
+                    "domain": domain,
+                    "project": project,
+                    "mode": "api-file-token",
+                    "misconfigured": misconfigured,
+                    "api_status_code": resp.status_code,
+                    "config": payload,
+                    "checked_at": _now(),
+                }
+            except Exception as e:  # noqa: BLE001
+                return {"error": f"Domain status failed: {e}", "status": "failed"}
+    code, out, err = _run_vercel_cli(["domains", "inspect", domain], timeout=60)
+    output = out + err
+    verified = code == 0 and "vercel-dns" in output.lower()
+    return {
+        "status": "verified" if verified else "pending",
+        "domain": domain,
+        "project": project,
+        "mode": "cli",
+        "cli_status_code": code,
+        "misconfigured": not verified,
+        "config": output[:2000],
+        "checked_at": _now(),
+    }
+
+
+def publish_site(
+    title: str = "My Website",
+    tagline: str = "",
+    industry: str = "",
+    sections: str = "hero,services,about,testimonials,contact,footer",
+    style: str = "modern",
+    color_primary: str = "#2563EB",
+    framework: str = "nextjs",
+    services: str = "",
+    business_email: str = "",
+    project_name: str = "",
+    output_dir: str = "",
+    skills: list[str] | None = None,
+    prod: bool = True,
+    token: str = "",
+) -> dict[str, Any]:
+    """One-shot pipeline: build real site code -> deploy to Vercel -> live URL.
+
+    Wraps build_site + deploy_vercel so the Website Agent can take a business
+    brief and return a working public URL in a single call.
+    """
+    build = build_site(
+        title=title,
+        tagline=tagline,
+        industry=industry,
+        sections=sections,
+        style=style,
+        color_primary=color_primary,
+        framework=framework,
+        services=services,
+        business_email=business_email,
+        output_dir=output_dir,
+        skills=skills,
+    )
+    if build.get("status") != "built":
+        return {"status": "failed", "error": build.get("error") or "build failed", "build": build}
+
+    resolved_token = _explicit_vercel_token(token)
+
+    # Next.js needs dependencies installed before Vercel can build it.
+    if framework == "nextjs":
+        install = subprocess.run(
+            ["npm", "install", "--no-audit", "--no-fund"],
+            capture_output=True, text=True, timeout=600,
+            cwd=build["output_dir"],
+        )
+        if install.returncode != 0:
+            return {
+                **build,
+                "status": "build_ok_install_failed",
+                "install_output": (install.stdout + install.stderr)[:2000],
+            }
+
+    deploy = deploy_vercel(
+        project_path=build["output_dir"],
+        project_name=project_name or _slugify(build["title"]),
+        prod=prod,
+        token=resolved_token,
+    )
+    if deploy.get("status") != "deployed":
+        return {
+            **build,
+            "status": "deploy_failed",
+            "deploy": deploy,
+        }
+
+    return {
+        **build,
+        "status": "published",
+        "deploy": deploy,
+        "live_url": deploy.get("url", ""),
+        "published_at": _now(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1870,6 +2243,62 @@ WEBSITE_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "publish_site",
+            "description": "One-shot: build a real website from a business brief, install deps, deploy to Vercel, and return the live URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Business/website name", "default": "My Website"},
+                    "tagline": {"type": "string", "description": "One-line value proposition", "default": ""},
+                    "industry": {"type": "string", "description": "Industry (tech, food, agency, etc.)", "default": ""},
+                    "sections": {"type": "string", "description": "Comma-separated sections: hero,services,about,testimonials,contact,footer", "default": "hero,services,about,testimonials,contact,footer"},
+                    "style": {"type": "string", "enum": ["modern", "minimal", "bold", "warm", "tech"], "default": "modern"},
+                    "color_primary": {"type": "string", "description": "Primary color hex code", "default": "#2563EB"},
+                    "framework": {"type": "string", "enum": ["nextjs", "html"], "default": "nextjs"},
+                    "services": {"type": "string", "description": "Comma-separated service names", "default": ""},
+                    "business_email": {"type": "string", "description": "Contact email", "default": ""},
+                    "project_name": {"type": "string", "description": "Vercel project name (default: slug of title)", "default": ""},
+                    "output_dir": {"type": "string", "description": "Where to write the project", "default": ""},
+                    "skills": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "prod": {"type": "boolean", "description": "Deploy to production", "default": True},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "connect_domain",
+            "description": "Attach a custom domain to a deployed Vercel project and return the exact DNS records to add (A/CNAME + TXT).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Vercel project name (from a deploy)"},
+                    "domain": {"type": "string", "description": "Custom domain, e.g. example.com or www.example.com"},
+                },
+                "required": ["project", "domain"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "domain_status",
+            "description": "Check whether a custom domain attached to a Vercel project is verified and not misconfigured.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Vercel project name"},
+                    "domain": {"type": "string", "description": "Custom domain to check"},
+                },
+                "required": ["project", "domain"],
+            },
+        },
+    },
 ]
 
 
@@ -1937,6 +2366,29 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             url=a["url"],
             checks=a.get("checks", 3),
             interval=a.get("interval", 2),
+        ),
+        "publish_site": lambda a: publish_site(
+            title=a.get("title", "My Website"),
+            tagline=a.get("tagline", ""),
+            industry=a.get("industry", ""),
+            sections=a.get("sections", "hero,services,about,testimonials,contact,footer"),
+            style=a.get("style", "modern"),
+            color_primary=a.get("color_primary", "#2563EB"),
+            framework=a.get("framework", "nextjs"),
+            services=a.get("services", ""),
+            business_email=a.get("business_email", ""),
+            project_name=a.get("project_name", ""),
+            output_dir=a.get("output_dir", ""),
+            skills=a.get("skills", []),
+            prod=a.get("prod", True),
+        ),
+        "connect_domain": lambda a: connect_domain(
+            project=a["project"],
+            domain=a["domain"],
+        ),
+        "domain_status": lambda a: domain_status(
+            project=a["project"],
+            domain=a["domain"],
         ),
     }
     fn = dispatch.get(name)

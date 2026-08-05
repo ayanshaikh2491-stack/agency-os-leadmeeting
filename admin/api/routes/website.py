@@ -140,6 +140,34 @@ class BuildSiteRequest(BaseModel):
     client_name: str = ""
 
 
+class PublishSiteRequest(BaseModel):
+    title: str = "My Website"
+    tagline: str = ""
+    industry: str = ""
+    sections: str = "hero,services,about,testimonials,contact,footer"
+    style: str = "modern"
+    color_primary: str = "#2563EB"
+    framework: str = "nextjs"
+    services: str = ""
+    business_email: str = ""
+    project_name: str = ""
+    output_dir: str = ""
+    skills: list[str] = []
+    prod: bool = True
+    workspace_id: str = "ws_agency"
+    client_name: str = ""
+
+
+class DomainConnectRequest(BaseModel):
+    project: str
+    domain: str
+
+
+class DomainStatusRequest(BaseModel):
+    project: str
+    domain: str
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -423,6 +451,63 @@ async def list_skills():
     """List all skills available to the Website Agent."""
     from admin.agency.website_skills import list_website_skills
     return {"success": True, "data": {"skills": list_website_skills()}}
+
+
+@router.post("/publish")
+async def publish_site_route(req: PublishSiteRequest):
+    """One-shot pipeline: build real website -> deploy to Vercel -> live URL."""
+    from admin.tools.website_tools import publish_site
+
+    result = publish_site(
+        title=req.title,
+        tagline=req.tagline,
+        industry=req.industry,
+        sections=req.sections,
+        style=req.style,
+        color_primary=req.color_primary,
+        framework=req.framework,
+        services=req.services,
+        business_email=req.business_email,
+        project_name=req.project_name,
+        output_dir=req.output_dir,
+        skills=req.skills,
+        prod=req.prod,
+    )
+
+    # Persist the publish attempt into the workspace build log (best-effort)
+    client = req.client_name or req.title or req.workspace_id
+    try:
+        from admin.agency.website_supabase import log_website_event, upsert_website_build
+
+        upsert_website_build(
+            workspace=req.workspace_id,
+            client=client,
+            status=result.get("status", "failed"),
+            current_stage="deploy",
+            framework=req.framework,
+        )
+        log_website_event(
+            req.workspace_id, client, "deploy_step",
+            f"Publish '{req.title}': {result.get('status')} -> {result.get('live_url', '')}",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("publish supabase persist failed: %s", e)
+
+    return result
+
+
+@router.post("/domain/connect")
+async def connect_domain_route(req: DomainConnectRequest):
+    """Attach a custom domain to a Vercel project and return DNS records to add."""
+    from admin.tools.website_tools import connect_domain
+    return connect_domain(project=req.project, domain=req.domain)
+
+
+@router.get("/domain/status")
+async def domain_status_route(project: str, domain: str):
+    """Check whether a custom domain is verified on the Vercel project."""
+    from admin.tools.website_tools import domain_status
+    return domain_status(project=project, domain=domain)
 
 
 @router.get("/tools")

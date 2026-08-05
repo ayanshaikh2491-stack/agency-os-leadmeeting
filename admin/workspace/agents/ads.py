@@ -215,10 +215,10 @@ class AdsAgent:
     """Ads Agent for a specific workspace."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_ads_graph(get_checkpointer(self.workspace_name, "ads"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self._thread_id = f"ads_{workspace_name}"
+        self.graph = build_ads_graph(get_checkpointer(self.workspace_name, "ads"))
 
     async def chat(self, message: str) -> tuple[str, str]:
         workspace_context = f"Workspace: {self.workspace_name}, Client: {self.client_name}"
