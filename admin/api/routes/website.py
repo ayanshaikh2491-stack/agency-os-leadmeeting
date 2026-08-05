@@ -128,7 +128,8 @@ class BuildSiteRequest(BaseModel):
     title: str = "My Website"
     tagline: str = ""
     industry: str = ""
-    sections: str = "hero,services,about,testimonials,contact,footer"
+    category: str = "business"
+    sections: str = ""
     style: str = "modern"
     color_primary: str = "#2563EB"
     framework: str = "nextjs"
@@ -144,7 +145,8 @@ class PublishSiteRequest(BaseModel):
     title: str = "My Website"
     tagline: str = ""
     industry: str = ""
-    sections: str = "hero,services,about,testimonials,contact,footer"
+    category: str = "business"
+    sections: str = ""
     style: str = "modern"
     color_primary: str = "#2563EB"
     framework: str = "nextjs"
@@ -385,6 +387,7 @@ async def build_site_route(req: BuildSiteRequest):
         title=req.title,
         tagline=req.tagline,
         industry=req.industry,
+        category=req.category,
         sections=req.sections,
         style=req.style,
         color_primary=req.color_primary,
@@ -462,6 +465,7 @@ async def publish_site_route(req: PublishSiteRequest):
         title=req.title,
         tagline=req.tagline,
         industry=req.industry,
+        category=req.category,
         sections=req.sections,
         style=req.style,
         color_primary=req.color_primary,
