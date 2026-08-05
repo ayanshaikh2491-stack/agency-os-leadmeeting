@@ -22,7 +22,8 @@ Social Media Agent abhi sirf posts/reels banata aur post karta hai. Naya vision:
 
 | Feature | Choice |
 |---|---|
-| Channels | FB Groups, FB Marketplace, Reddit, LinkedIn, X, Pinterest, Telegram, WhatsApp Status, Google Business, Quora |
+| Channels (Phase 1) | FB Groups, FB Marketplace, Reddit, LinkedIn, X, Pinterest, Telegram, Google Business |
+| Channels (Phase 3, deferred) | WhatsApp Status (browser), Quora (browser) |
 | Posting method | **Hybrid**: API (Reddit/LinkedIn/X/Pinterest/Telegram/GBP) + Browser (FB Groups/Marketplace, ChromeTool session) |
 | Workflow | Manual command + Autopilot scheduler (dono) |
 | Leads | Track engagement → SBA lead + auto-reply follow-up |
