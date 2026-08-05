@@ -36,6 +36,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -241,7 +242,8 @@ async def chat(req: ChatRequest):
 async def calendar(req: CalendarRequest):
     """Generate content calendar."""
     from admin.tools.social_tools import content_calendar
-    return content_calendar(req.platform, req.duration, req.niche, req.brand_tone)
+    weeks = int(re.sub(r"\D", "", req.duration) or 4) if req.duration else 4
+    return content_calendar(req.platform, weeks, req.niche)
 
 
 @router.post("/hashtags")
@@ -255,14 +257,14 @@ async def hashtags(req: HashtagRequest):
 async def schedule(req: ScheduleRequest):
     """Best posting times."""
     from admin.tools.social_tools import posting_schedule
-    return posting_schedule(req.platform, req.timezone_offset, req.audience)
+    return posting_schedule(req.platform)
 
 
 @router.post("/competitors")
 async def competitors(req: CompetitorRequest):
     """Competitor analysis."""
     from admin.tools.social_tools import competitor_analysis
-    return competitor_analysis(req.competitors, req.platform, req.niche)
+    return competitor_analysis(req.competitors, req.platform)
 
 
 @router.post("/trends")
@@ -276,112 +278,129 @@ async def trends(req: TrendRequest):
 async def engagement(req: EngagementRequest):
     """Engagement strategy."""
     from admin.tools.social_tools import engagement_strategy
-    return engagement_strategy(req.platform, req.goals, req.audience_size)
+    return engagement_strategy(req.platform)
 
 
 @router.post("/platform")
 async def platform(req: PlatformRequest):
     """Platform strategy."""
     from admin.tools.social_tools import platform_strategy
-    return platform_strategy(req.industry, req.goals, req.budget)
+    return platform_strategy(req.industry or req.goals)
 
 
 @router.post("/gaps")
 async def gaps(req: GapRequest):
     """Content gap analysis."""
     from admin.tools.social_tools import content_gap_analysis
-    return content_gap_analysis(req.your_content, req.competitor_content, req.niche)
+    return content_gap_analysis(req.your_content, req.niche)
 
 
 @router.post("/audience")
 async def audience(req: AudienceRequest):
     """Audience analysis."""
     from admin.tools.social_tools import audience_analysis
-    return audience_analysis(req.industry, req.platform, req.location)
+    return audience_analysis(req.platform, req.industry)
 
 
 @router.post("/growth")
 async def growth(req: GrowthRequest):
     """Growth tactics."""
     from admin.tools.social_tools import growth_tactics
-    return growth_tactics(req.current_followers, req.platform, req.niche, req.budget)
+    return growth_tactics(req.platform, req.niche)
 
 
 @router.post("/caption")
 async def caption(req: CaptionRequest):
     """Generate post caption."""
     from admin.tools.social_tools import generate_caption
-    return generate_caption(req.topic, req.platform, req.tone, req.audience, req.include_cta)
+    return generate_caption(req.topic, req.platform, req.tone)
 
 
 @router.post("/repurpose")
 async def repurpose(req: RepurposeRequest):
     """Repurpose content for multiple platforms."""
     from admin.tools.social_tools import repurpose_content
-    return repurpose_content(req.original_content, req.source_platform, req.target_platforms, req.topic)
+    return repurpose_content(req.original_content, req.target_platforms)
 
 
 @router.post("/dm-outreach")
 async def dm_outreach(req: DMOutreachRequest):
     """DM outreach templates and strategy."""
     from admin.tools.social_tools import dm_outreach
-    return dm_outreach(req.purpose, req.platform, req.target_audience, req.tone)
+    return dm_outreach(req.purpose, req.target_audience)
 
 
 @router.post("/influencers")
 async def influencers(req: InfluencerRequest):
     """Influencer research."""
     from admin.tools.social_tools import influencer_research
-    return influencer_research(req.niche, req.platform, req.budget, req.count)
+    return influencer_research(req.niche, req.platform)
 
 
 @router.post("/analytics")
 async def analytics(req: AnalyticsRequest):
     """Analytics report."""
     from admin.tools.social_tools import analytics_report
-    return analytics_report(req.platform, req.metrics, req.period)
+    return analytics_report(req.platform, req.period)
 
 
 @router.post("/create-post")
 async def create_post(req: CreatePostRequest):
     """Create a complete post."""
     from admin.tools.social_tools import create_post
-    return create_post(req.workspace_id, req.platform, req.topic, req.content_type, req.tone, req.caption, req.hashtags, req.media_url, req.cta)
+    return create_post(req.topic, req.platform)
 
 
 @router.post("/schedule-post")
 async def schedule_post(req: SchedulePostRequest):
     """Schedule a post for future publishing."""
     from admin.tools.social_tools import schedule_post
-    return schedule_post(req.workspace_id, req.platform, req.caption, req.scheduled_at, req.media_url, req.hashtags)
+    return schedule_post(
+        {
+            "workspace_id": req.workspace_id,
+            "platform": req.platform,
+            "caption": req.caption,
+            "media_url": req.media_url,
+            "hashtags": req.hashtags,
+        },
+        req.scheduled_at,
+    )
 
 
 @router.post("/post-now")
 async def post_now(req: PostNowRequest):
     """Publish a post immediately."""
     from admin.tools.social_tools import post_now
-    return post_now(req.workspace_id, req.platform, req.caption, req.media_url, req.hashtags)
+    return post_now(
+        {
+            "workspace_id": req.workspace_id,
+            "platform": req.platform,
+            "caption": req.caption,
+            "media_url": req.media_url,
+            "hashtags": req.hashtags,
+        }
+    )
 
 
 @router.post("/accounts")
 async def accounts(req: SocialAccountsRequest):
     """Manage social accounts."""
     from admin.tools.social_tools import social_accounts
-    return social_accounts(req.workspace_id, req.action, req.provider)
+    return social_accounts()
 
 
 @router.post("/queue")
 async def queue(req: ContentQueueRequest):
     """View scheduled posts queue."""
     from admin.tools.social_tools import content_queue
-    return content_queue(req.workspace_id, req.platform, req.status)
+    return content_queue()
 
 
 @router.post("/post-analytics")
 async def post_analytics(req: PostAnalyticsRequest):
     """Track post performance."""
     from admin.tools.social_tools import post_analytics
-    return post_analytics(req.workspace_id, req.platform, req.post_id, req.period)
+    return post_analytics(req.post_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
