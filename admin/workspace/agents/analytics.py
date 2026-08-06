@@ -240,9 +240,9 @@ class AnalyticsAgent:
     """Analytics Agent for a specific workspace."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_analytics_graph(get_checkpointer(self.workspace_name, "analytics"))
         self.workspace_name = workspace_name
         self.client_name = client_name
+        self.graph = build_analytics_graph(get_checkpointer(self.workspace_name, "analytics"))
         self._thread_id = f"analytics_{workspace_name}"
 
     async def chat(self, message: str) -> tuple[str, str]:

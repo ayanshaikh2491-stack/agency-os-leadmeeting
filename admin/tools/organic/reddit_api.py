@@ -67,7 +67,12 @@ def post(workspace_id: str, payload: dict) -> PostResult:
     if not access_token:
         return PostResult(status="error", channel="reddit", error="Reddit auth failed. Check credentials.")
 
-    subreddit = payload["subreddit"].lstrip("r/")
+    subreddit = payload["subreddit"]
+    # Normalize "r/foo", "/r/foo", or "reddit.com/r/foo" to bare "foo" without
+    # mangling names that happen to start with r or / (lstrip would strip the char set).
+    subreddit = subreddit.replace("reddit.com/", "").replace("/r/", "/").strip("/")
+    if subreddit.startswith("r/"):
+        subreddit = subreddit[2:]
     data = {"sr": subreddit, "title": payload["title"], "kind": "self", "text": payload["body"]}
     if payload.get("flair"):
         data["flair_id"] = payload["flair"]
@@ -81,6 +86,12 @@ def post(workspace_id: str, payload: dict) -> PostResult:
         )
         if resp.ok:
             j = resp.json()
+            # Reddit returns HTTP 200 with json.errors on RATELIMIT/ALREADY_SUB
+            # (and validation failures). Treat non-empty errors as a failure.
+            errors = j.get("json", {}).get("errors") or []
+            if errors:
+                err_msgs = "; ".join(": ".join(str(part) for part in err) for err in errors[:3])
+                return PostResult(status="error", channel="reddit", error=f"Reddit submit rejected: {err_msgs}")
             post_id = ""
             if j.get("json", {}).get("data", {}).get("id"):
                 post_id = j["json"]["data"]["id"]

@@ -37,6 +37,12 @@ def post(workspace_id: str, payload: dict) -> PostResult:
 
     token = token_data.get("access_token", "")
     author_urn = payload.get("person_urn") or token_data.get("platform_user_id", "")
+    # Normalize: accept a bare person id, a partial urn (person:xxx), or a full
+    # urn (urn:li:person:xxx) without doubling the prefix in the body below.
+    if author_urn.startswith("urn:li:person:"):
+        author_urn = author_urn[len("urn:li:person:"):]
+    elif author_urn.startswith("person:"):
+        author_urn = author_urn[len("person:"):]
     if not token:
         return PostResult(status="config_missing", channel="linkedin", error="Empty LinkedIn token.")
     if not author_urn:

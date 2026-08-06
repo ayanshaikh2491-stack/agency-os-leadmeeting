@@ -830,13 +830,20 @@ def email_report(
 
     if "summary" in report:
         s = report["summary"]
+
+        def _fmt(value) -> str:
+            """Thousands-separator format for numbers, 'N/A' otherwise."""
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return f"{value:,}"
+            return "N/A"
+
         body_lines.extend([
             "Summary:",
-            f"  Traffic: {s.get('total_traffic', 'N/A'):,}",
-            f"  Leads: {s.get('total_leads', 'N/A')}",
-            f"  Revenue: ₹{s.get('total_revenue', 0):,}",
-            f"  Spend: ₹{s.get('total_spend', 0):,}",
-            f"  ROAS: {s.get('overall_roas', 'N/A')}x",
+            f"  Traffic: {_fmt(s.get('total_traffic'))}",
+            f"  Leads: {_fmt(s.get('total_leads'))}",
+            f"  Revenue: ₹{_fmt(s.get('total_revenue'))}",
+            f"  Spend: ₹{_fmt(s.get('total_spend'))}",
+            f"  ROAS: {_fmt(s.get('overall_roas'))}x",
             "",
         ])
 

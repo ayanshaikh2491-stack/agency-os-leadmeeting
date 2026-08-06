@@ -1,4 +1,12 @@
-"""Google Business Profile local post creation."""
+"""Google Business Profile local post creation.
+
+Payload fields consumed: ``summary`` (required), ``location_name``
+(required unless set in channel config), ``link``, ``topic_type``
+(default ``STANDARD``). The plan brief also listed offer/event fields, but
+the v4 localPosts API consumes only these four, so that is the supported
+surface. ``location_name`` is the resource name, e.g.
+``accounts/123/locations/456`` (set it in the payload or channel config).
+"""
 from __future__ import annotations
 
 import logging
@@ -17,8 +25,8 @@ CHANNEL_META = {
     "type": CHANNEL_TYPE_API,
     "auth": "token",
     "capabilities": ["post"],
-    "required_fields": ["summary"],
-    "description": "Create a local business post (offer/event/update).",
+    "required_fields": ["summary", "location_name"],
+    "description": "Create a local business post (offer/event/update). location_name required (payload or channel config).",
 }
 
 
