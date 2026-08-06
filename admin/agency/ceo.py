@@ -1431,7 +1431,7 @@ async def _tool_cross_workspace_knowledge(args: dict) -> str:
             "domain": domain or "general",
             "learning": learning,
             "source_workspace": source_ws or "agency",
-            "timestamp": _now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         store.append(entry)
         _save()
