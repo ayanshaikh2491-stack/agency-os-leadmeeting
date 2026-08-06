@@ -24,6 +24,7 @@ SSH_TIMEOUT = 30
 BUNDLE = "/tmp/sbadeploy-bundle.tar"
 
 # Full sba module closure + branch files (kept in sync with deploy file list)
+# Organic engine closure added for the Social Organic Posting Engine deploy.
 FILES = [
     "admin/agency/langgraph_sba.py",
     "admin/agency/sba.py",
@@ -32,16 +33,45 @@ FILES = [
     "admin/agency/sba_pipeline.py",
     "admin/agency/sba_skills.py",
     "admin/agency/sba_store.py",
+    "admin/agency/social_skills.py",
     "admin/api/routes/sba.py",
+    "admin/api/routes/social.py",
     "admin/config/settings.py",
     "admin/tests/test_autopilot_integration.py",
+    "admin/tests/test_organic_base.py",
+    "admin/tests/test_organic_config.py",
+    "admin/tests/test_organic_facebook.py",
+    "admin/tests/test_organic_gbp.py",
+    "admin/tests/test_organic_hub.py",
+    "admin/tests/test_organic_linkedin.py",
+    "admin/tests/test_organic_pinterest.py",
+    "admin/tests/test_organic_reddit.py",
+    "admin/tests/test_organic_registry.py",
+    "admin/tests/test_organic_routes.py",
+    "admin/tests/test_organic_telegram.py",
+    "admin/tests/test_organic_twitter.py",
+    "admin/tests/test_organic_wiring.py",
     "admin/tests/test_sba_autopilot.py",
     "admin/tests/test_sba_email_draft.py",
     "admin/tests/test_sba_lead_sources.py",
     "admin/tests/test_sba_pipeline_helpers.py",
     "admin/tests/test_sba_time.py",
     "admin/tests/test_sba_translate_notes.py",
+    "admin/tests/test_social_skills.py",
+    "admin/token_manager.py",
     "admin/tools/chrome_tool.py",
+    "admin/tools/organic/__init__.py",
+    "admin/tools/organic/base.py",
+    "admin/tools/organic/config.py",
+    "admin/tools/organic/facebook_browser.py",
+    "admin/tools/organic/gbp_api.py",
+    "admin/tools/organic/hub.py",
+    "admin/tools/organic/linkedin_api.py",
+    "admin/tools/organic/pinterest_api.py",
+    "admin/tools/organic/reddit_api.py",
+    "admin/tools/organic/registry.py",
+    "admin/tools/organic/telegram_api.py",
+    "admin/tools/organic/twitter_api.py",
     "admin/tools/sba_email_client.py",
     "admin/tools/sba_email_draft.py",
     "admin/tools/sba_email_templates.py",
@@ -49,8 +79,45 @@ FILES = [
     "admin/tools/sba_meeting.py",
     "admin/tools/sba_time.py",
     "admin/tools/sba_translate.py",
+    "admin/tools/social_tools.py",
+    "admin/workspace/agents/social.py",
     "deploy/sba-autopilot.service",
     "docs/sba_autopilot_deploy.md",
+]
+
+# Files to syntax-check on the server after extraction (source closure only).
+COMPILE_FILES = [
+    "admin/agency/langgraph_sba.py",
+    "admin/agency/sba.py",
+    "admin/agency/sba_autopilot.py",
+    "admin/agency/sba_pipeline.py",
+    "admin/agency/social_skills.py",
+    "admin/api/routes/sba.py",
+    "admin/api/routes/social.py",
+    "admin/config/settings.py",
+    "admin/token_manager.py",
+    "admin/tools/chrome_tool.py",
+    "admin/tools/organic/__init__.py",
+    "admin/tools/organic/base.py",
+    "admin/tools/organic/config.py",
+    "admin/tools/organic/facebook_browser.py",
+    "admin/tools/organic/gbp_api.py",
+    "admin/tools/organic/hub.py",
+    "admin/tools/organic/linkedin_api.py",
+    "admin/tools/organic/pinterest_api.py",
+    "admin/tools/organic/reddit_api.py",
+    "admin/tools/organic/registry.py",
+    "admin/tools/organic/telegram_api.py",
+    "admin/tools/organic/twitter_api.py",
+    "admin/tools/sba_email_draft.py",
+    "admin/tools/sba_email_client.py",
+    "admin/tools/sba_email_templates.py",
+    "admin/tools/sba_lead_sources.py",
+    "admin/tools/sba_meeting.py",
+    "admin/tools/sba_time.py",
+    "admin/tools/sba_translate.py",
+    "admin/tools/social_tools.py",
+    "admin/workspace/agents/social.py",
 ]
 
 
@@ -159,16 +226,9 @@ def main() -> int:
 
     # 4. py_compile via venv python
     r = ssh(
-        "cd %s && venv/bin/python -m py_compile "
-        "admin/agency/sba_autopilot.py admin/agency/sba_pipeline.py "
-        "admin/agency/sba.py admin/agency/langgraph_sba.py "
-        "admin/api/routes/sba.py admin/config/settings.py "
-        "admin/tools/chrome_tool.py admin/tools/sba_email_draft.py "
-        "admin/tools/sba_email_client.py admin/tools/sba_email_templates.py "
-        "admin/tools/sba_lead_sources.py admin/tools/sba_meeting.py "
-        "admin/tools/sba_time.py admin/tools/sba_translate.py && echo COMPILE_OK"
-        % REMOTE_ROOT,
-        timeout=90,
+        "cd %s && venv/bin/python -m py_compile %s && echo COMPILE_OK"
+        % (REMOTE_ROOT, " ".join(COMPILE_FILES)),
+        timeout=120,
     )
     if "COMPILE_OK" not in (r.stdout or ""):
         log("Server py_compile FAILED.")
@@ -228,7 +288,15 @@ def main() -> int:
     r = ssh("curl -s -m 20 http://127.0.0.1:8000/api/sba/autopilot/status", timeout=40)
     log("autopilot/status:", (r.stdout or "").strip()[-300:] or "(no body)")
 
-    log("\nDEPLOY OK - SBA 24/7 autopilot live (worker disabled).")
+    # 9. verify health + organic engine endpoints
+    r = ssh("curl -s -m 20 http://127.0.0.1:8000/api/health", timeout=40)
+    log("api/health:", (r.stdout or "").strip()[-400:] or "(no body)")
+
+    r = ssh("curl -s -m 20 'http://127.0.0.1:8000/api/social/organic/channels?workspace_id=default'",
+            timeout=40)
+    log("organic/channels:", (r.stdout or "").strip()[-600:] or "(no body)")
+
+    log("\nDEPLOY OK - SBA 24/7 autopilot live (worker disabled) + organic engine deployed.")
     return 0
 
 

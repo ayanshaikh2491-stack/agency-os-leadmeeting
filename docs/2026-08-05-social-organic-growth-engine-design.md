@@ -202,3 +202,14 @@ Weekly report: posts, engagement, leads, meetings, channel breakdown
 - Client-facing social dashboard (internal admin only)
 - WhatsApp API (requires Business API approval — WhatsApp Status via browser later)
 - Quora (requires browser automation — Phase 3 consideration)
+
+## 10. Deploy Notes (2026-08-06)
+
+Phase 1 (Posting Engine) deployed to EC2 via `deploy/deploy_sba.py`.
+
+- **Deploy method:** one-shot bundle (tar) → scp → extract → server-side `py_compile` → restart `sba.service` → endpoint verification. Same pattern as the SBA autopilot deploy; SBA files kept in the bundle so the deploy does not regress SBA.
+- **Deployed closure:** `admin/tools/organic/` (base, config, registry, hub, reddit, telegram, twitter, linkedin, pinterest, gbp, facebook_browser), `admin/tools/social_tools.py`, `admin/api/routes/social.py`, `admin/agency/social_skills.py`, `admin/workspace/agents/social.py`, `admin/token_manager.py` (repo version shipped to keep `get_active_token` API in sync), plus `admin/tests/test_organic_*.py` and `admin/tests/test_social_skills.py`.
+- **Verified live on 18.213.66.136:8000:** `/api/health` OK, `GET /api/social/organic/channels?workspace_id=default` → 7 channels (`reddit, linkedin, twitter, pinterest, telegram, gbp, facebook`), `POST /api/social/organic/post` returns `config_missing` (no tokens configured yet).
+- **Full test suite:** 255 passed, 2 pre-existing failures in `admin/tests/test_analytics_audit.py` (unrelated to organic engine: `email_report` strftime format bug and `AnalyticsAgent.__init__` attribute-order bug). Live-server scripts (`test_api_endpoints.py`, `test_e2e_v2.py`, `test_e2e_workflow.py`) are standalone scripts requiring a server on `:9002`; they collect 0 pytest tests.
+- **Phase 2/3:** lead capture + autopilot scheduler are intentionally separate plans.
+
