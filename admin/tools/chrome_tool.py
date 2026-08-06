@@ -532,6 +532,15 @@ class ChromeTool:
     async def type_text(self, text, **kwargs) -> dict[str, Any]:
         return await self.fill(text)
 
+    async def upload(self, path: str, selector: str = "input[type=file]", **kwargs) -> dict[str, Any]:
+        """Upload a local file into a file input (marketplace photos, group images)."""
+        p = await self._ensure_page()
+        if not p:
+            return {"error": "Chrome daemon unavailable"}
+        if not os.path.exists(path):
+            return {"error": f"File not found: {path}"}
+        return await self._safe(p.locator(selector).set_input_files(path))
+
     async def press(self, key: str) -> dict[str, Any]:
         p = await self._ensure_page()
         if p: await p.keyboard.press(key)
