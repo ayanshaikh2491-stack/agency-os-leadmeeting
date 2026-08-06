@@ -755,10 +755,10 @@ class SBAAgent:
         client_name: str = "Client",
         workspace_id: str | None = None,
     ):
-        self.graph = build_sba_workspace_graph(get_checkpointer(self.workspace_name, "sba"))
         self.workspace_name = workspace_name
         self.client_name = client_name
         self.workspace_id = workspace_id or workspace_name
+        self.graph = build_sba_workspace_graph(get_checkpointer(self.workspace_name, "sba"))
         self._thread_id = f"sba_ws_{workspace_name}"
 
         # Register Chrome for this workspace

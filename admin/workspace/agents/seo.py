@@ -307,9 +307,9 @@ class SEOAgent:
     """SEO Agent for a specific workspace — with real tools."""
 
     def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
-        self.graph = build_seo_graph(get_checkpointer(self.workspace_name, "seo"))
         self.workspace_name = workspace_name
         self.client_name = client_name
+        self.graph = build_seo_graph(get_checkpointer(self.workspace_name, "seo"))
         self._thread_id = f"seo_{workspace_name}"
 
     async def chat(

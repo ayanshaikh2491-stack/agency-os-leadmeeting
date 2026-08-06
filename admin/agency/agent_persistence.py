@@ -218,7 +218,13 @@ def get_data(workspace: str, agent: str, key: str) -> Any:
 
 # ── LangGraph checkpoints (agent memory across restarts) ─────────────────
 
-class SupabaseSaver:
+try:
+    from langgraph.checkpoint.base import BaseCheckpointSaver as _BaseCheckpointSaver
+except ImportError:  # pragma: no cover - langgraph not installed
+    _BaseCheckpointSaver = object  # type: ignore[misc,assignment]
+
+
+class SupabaseSaver(_BaseCheckpointSaver):
     """LangGraph ``BaseCheckpointSaver``-compatible checkpointer backed by
     the workspace schema's ``agent_checkpoints`` tables.
 
@@ -228,6 +234,7 @@ class SupabaseSaver:
     """
 
     def __init__(self, workspace_name: str = "Default", agent_name: str = "agent"):
+        super().__init__()
         self.workspace = workspace_name
         self.agent = agent_name
 
