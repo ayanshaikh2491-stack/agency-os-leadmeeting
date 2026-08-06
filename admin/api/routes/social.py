@@ -551,6 +551,24 @@ async def organic_config_route(req: OrganicConfigRequest):
     return organic_save_config(req.channel, req.workspace_id, req.config)
 
 
+@router.get("/organic/setup")
+async def organic_setup_route(workspace_id: str = "default"):
+    """Per-channel connect status + required fields + instructions (client-facing)."""
+    from admin.tools.organic.connect import channel_setup_status
+    return channel_setup_status(workspace_id)
+
+
+@router.post("/organic/connect")
+async def organic_connect_route(req: OrganicConfigRequest):
+    """Save client credentials for a channel (token / bot / browser login).
+
+    Fields vary per channel — see GET /api/social/organic/setup for the
+    field list. Facebook email+password triggers a live browser login.
+    """
+    from admin.tools.organic.connect import save_channel_credentials
+    return save_channel_credentials(req.workspace_id, req.channel, req.config)
+
+
 @router.get("/tools")
 async def list_tools():
     """List available tools."""
