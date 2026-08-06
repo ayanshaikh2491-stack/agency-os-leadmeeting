@@ -39,7 +39,11 @@ def post(workspace_id: str, payload: dict) -> PostResult:
     if not token:
         return PostResult(status="config_missing", channel="twitter", error="Empty X/Twitter token.")
 
-    body = {"text": payload["text"]}
+    text = payload.get("text", "")
+    if not text:
+        return PostResult(status="error", channel="twitter", error="Missing required field: text.")
+
+    body = {"text": text}
     if payload.get("reply_to"):
         body["reply"] = {"in_reply_to_tweet_id": str(payload["reply_to"])}
 

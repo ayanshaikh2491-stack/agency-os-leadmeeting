@@ -38,25 +38,30 @@ def post(workspace_id: str, payload: dict) -> PostResult:
     if not chat_id:
         return PostResult(status="config_missing", channel="telegram", error="No chat_id in config.")
 
+    text = payload.get("text", "")
+
     try:
         base = f"https://api.telegram.org/bot{bot_token}"
         if payload.get("photo_url"):
             resp = requests.post(
                 f"{base}/sendPhoto",
-                data={"chat_id": chat_id, "caption": payload["text"]},
+                data={"chat_id": chat_id, "caption": text},
                 files={"photo": requests.get(payload["photo_url"], timeout=30).content},
                 timeout=60,
             )
         else:
             resp = requests.post(
                 f"{base}/sendMessage",
-                data={"chat_id": chat_id, "text": payload["text"], "disable_web_page_preview": False},
+                data={"chat_id": chat_id, "text": text, "disable_web_page_preview": False},
                 timeout=30,
             )
         if resp.ok:
             j = resp.json()
             message_id = str(j.get("result", {}).get("message_id", ""))
-            return PostResult(channel="telegram", post_id=message_id, post_url=f"https://t.me/c/{chat_id.replace('-100', '')}/{message_id}" if message_id else "")
+            # Public t.me/c/ URLs only work for supergroups (-100...). Strip the
+            # -100 prefix explicitly so only the marker is removed, never a digit.
+            public_chat = chat_id[4:] if chat_id.startswith("-100") and chat_id[4:].isdigit() else chat_id
+            return PostResult(channel="telegram", post_id=message_id, post_url=f"https://t.me/c/{public_chat}/{message_id}" if message_id else "")
         return PostResult(status="error", channel="telegram", error=resp.text[:300])
     except Exception as e:
         return PostResult(status="error", channel="telegram", error=str(e)[:300])

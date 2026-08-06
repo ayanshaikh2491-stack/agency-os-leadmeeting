@@ -43,17 +43,20 @@ def post(workspace_id: str, payload: dict) -> PostResult:
         author_urn = author_urn[len("urn:li:person:"):]
     elif author_urn.startswith("person:"):
         author_urn = author_urn[len("person:"):]
+    text = payload.get("text", "")
     if not token:
         return PostResult(status="config_missing", channel="linkedin", error="Empty LinkedIn token.")
     if not author_urn:
         return PostResult(status="config_missing", channel="linkedin", error="No author URN. Connect with LinkedIn and store platform_user_id.")
+    if not text:
+        return PostResult(status="error", channel="linkedin", error="Missing required field: text.")
 
     body = {
         "author": f"urn:li:person:{author_urn}",
         "lifecycleState": "PUBLISHED",
         "specificContent": {
             "com.linkedin.ugc.ShareContent": {
-                "shareCommentary": {"text": payload["text"]},
+                "shareCommentary": {"text": text},
                 "shareMediaCategory": "NONE",
             }
         },
