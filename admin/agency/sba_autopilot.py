@@ -73,7 +73,9 @@ _JUNK_EMAIL_DOMAINS = {
 _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
                         "noreply@", "no-reply@", "hello@", "help@", "sales@",
                         "billing@", "careers@", "jobs@", "hr@", "pr@",
-                        "media@", "newsletter@", "unsubscribe@")
+                        "media@", "newsletter@", "unsubscribe@", "editor@",
+                        "tips@", "newsroom@", "submissions@", "stories@",
+                        "advertise@", "partners@", "founders@", "team@")
 # HTML/JS-escape leftovers mean the scraped value is a mangled page fragment
 # (e.g. "u003e" is the unicode escape for ">"), not a real mailbox.
 _MALFORMED_TOKENS = ("u003e", "u003c", "%3e", "%3c", "&gt;", "&lt;", "\\u003e", "\\u003c")
@@ -104,6 +106,24 @@ _LEAD_TARGETS = [
     ("handyman", "Fort Worth", "TX"),
     ("painter", "San Antonio", "TX"),
     ("salon", "Houston", "TX"),
+    ("plumber", "Phoenix", "AZ"),
+    ("electrician", "Atlanta", "GA"),
+    ("hvac", "Charlotte", "NC"),
+    ("roofer", "Tampa", "FL"),
+    ("landscaper", "Orlando", "FL"),
+    ("auto repair", "Denver", "CO"),
+    ("cleaning service", "Las Vegas", "NV"),
+    ("handyman", "Nashville", "TN"),
+    ("painter", "Oklahoma City", "OK"),
+    ("salon", "Memphis", "TN"),
+    ("plumber", "San Diego", "CA"),
+    ("electrician", "Columbus", "OH"),
+    ("hvac", "Kansas City", "MO"),
+    ("roofer", "New Orleans", "LA"),
+    ("landscaper", "Louisville", "KY"),
+    ("auto repair", "Albuquerque", "NM"),
+    ("cleaning service", "Tulsa", "OK"),
+    ("handyman", "El Paso", "TX"),
 ]
 
 
@@ -179,7 +199,7 @@ class SBAAutopilot:
                 "lead rotation: %s in %s, %s (pass %d/%d)",
                 category, city, state, self._target_idx, len(targets),
             )
-            leads = await find_leads_all(category, city, state, max_per_source=3)
+            leads = await find_leads_all(category, city, state, max_per_source=5)
 
             # Dedupe against leads already stored (name + phone).
             existing = load_leads(url, key)
