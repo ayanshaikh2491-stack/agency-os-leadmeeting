@@ -227,6 +227,18 @@ class TokenExchangeRequest(BaseModel):
     app_secret: str = ""
 
 
+class OrganicPostRequest(BaseModel):
+    channel: str
+    workspace_id: str = "default"
+    payload: dict = {}
+
+
+class OrganicConfigRequest(BaseModel):
+    channel: str
+    workspace_id: str = "default"
+    config: dict = {}
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -516,6 +528,27 @@ async def request_content(req: RequestContentRequest):
         priority=req.priority,
         quantity=req.quantity,
     )
+
+
+@router.get("/organic/channels")
+async def organic_channels_route(workspace_id: str = "default"):
+    """List available organic channels + configs."""
+    from admin.tools.social_tools import organic_channels
+    return organic_channels(workspace_id)
+
+
+@router.post("/organic/post")
+async def organic_post_route(req: OrganicPostRequest):
+    """Post to an organic channel."""
+    from admin.tools.social_tools import organic_post
+    return organic_post(req.channel, req.workspace_id, req.payload)
+
+
+@router.post("/organic/config")
+async def organic_config_route(req: OrganicConfigRequest):
+    """Save channel config for a workspace."""
+    from admin.tools.social_tools import organic_save_config
+    return organic_save_config(req.channel, req.workspace_id, req.config)
 
 
 @router.get("/tools")
