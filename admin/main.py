@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -64,9 +65,30 @@ async def lifespan(app: FastAPI):
         client_name="Default Client",
         description="Default workspace, bound to Supabase schema ws_default.",
     )
+
+    # Organic scheduler: dispatch due scheduled posts every 60s.
+    scheduler_task = asyncio.create_task(_organic_scheduler_loop())
     yield
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
     await close_persistence()
     await close_db()
+
+
+async def _organic_scheduler_loop() -> None:
+    """Background loop that dispatches due organic posts every 60s."""
+    while True:
+        try:
+            from admin.tools.organic.scheduler import dispatch_due
+            stats = await asyncio.to_thread(dispatch_due)
+            if stats.get("due"):
+                logging.getLogger("organic.scheduler").info("dispatched: %s", stats)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("organic.scheduler").exception("scheduler pass failed: %s", exc)
+        await asyncio.sleep(60)
 
 
 app = FastAPI(

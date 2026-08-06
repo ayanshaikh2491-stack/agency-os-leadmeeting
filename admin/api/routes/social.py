@@ -239,6 +239,13 @@ class OrganicConfigRequest(BaseModel):
     config: dict = {}
 
 
+class OrganicScheduleRequest(BaseModel):
+    channel: str
+    workspace_id: str = "default"
+    payload: dict = {}
+    run_at: str = ""
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/chat")
@@ -567,6 +574,42 @@ async def organic_connect_route(req: OrganicConfigRequest):
     """
     from admin.tools.organic.connect import save_channel_credentials
     return save_channel_credentials(req.workspace_id, req.channel, req.config)
+
+
+@router.get("/organic/history")
+async def organic_history_route(workspace_id: str = "default", channel: str = "", limit: int = 100):
+    """Real post history for a workspace (manual + scheduled posts)."""
+    from admin.tools.organic.history import history_stats, list_posts
+    posts = list_posts(workspace_id, channel=channel or None, limit=limit)
+    return {"workspace_id": workspace_id, "posts": posts, "stats": history_stats(workspace_id)}
+
+
+@router.post("/organic/schedule")
+async def organic_schedule_route(req: OrganicScheduleRequest):
+    """Queue an organic post for dispatch at run_at (ISO 8601)."""
+    from admin.tools.organic.scheduler import schedule_post
+    return schedule_post(req.workspace_id, req.channel, req.payload, req.run_at)
+
+
+@router.get("/organic/schedule")
+async def organic_schedule_list_route(workspace_id: str = "default"):
+    """List scheduled posts (pending + done) for a workspace."""
+    from admin.tools.organic.scheduler import list_scheduled
+    return {"workspace_id": workspace_id, "scheduled": list_scheduled(workspace_id)}
+
+
+@router.delete("/organic/schedule/{schedule_id}")
+async def organic_schedule_cancel_route(schedule_id: str, workspace_id: str = "default"):
+    """Cancel a pending scheduled post."""
+    from admin.tools.organic.scheduler import cancel_scheduled
+    return cancel_scheduled(workspace_id, schedule_id)
+
+
+@router.post("/organic/schedule/dispatch")
+async def organic_schedule_dispatch_route():
+    """Dispatch all due scheduled posts now (also run by the backend 60s loop)."""
+    from admin.tools.organic.scheduler import dispatch_due
+    return {"status": "ok", "result": dispatch_due()}
 
 
 @router.get("/tools")

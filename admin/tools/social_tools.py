@@ -637,28 +637,37 @@ def create_post(topic: str = "", platform: str = "instagram") -> dict[str, Any]:
 
 
 def schedule_post(post_data: dict[str, Any] | None = None, datetime_str: str = "") -> dict[str, Any]:
-    """Schedule a post. If post_data contains 'channel', queue through organic engine (Phase 3 scheduler)."""
+    """Schedule a post. If post_data contains 'channel', queue through the real
+    organic scheduler (dispatched by the backend 60s loop at run_at)."""
     post_data = post_data or {}
     if post_data.get("channel"):
-        return {
-            "status": "queued",
-            "scheduled_for": datetime_str,
-            "channel": post_data["channel"],
-            "workspace_id": post_data.get("workspace_id", "default"),
-            "note": "Phase 3 scheduler will dispatch this at the scheduled time",
-        }
+        from admin.tools.organic.scheduler import schedule_post as organic_schedule
+        return organic_schedule(
+            workspace_id=post_data.get("workspace_id", "default"),
+            channel=post_data["channel"],
+            payload=post_data.get("payload") or post_data.get("post_data") or {},
+            run_at=datetime_str or post_data.get("run_at", ""),
+        )
     return {
         "status": "scheduled",
         "scheduled_for": datetime_str,
         "post_data": post_data,
-        "note": "Production mein SocialClaw API call hoga",
+        "note": "Channel-specific scheduling routes through the organic engine.",
     }
 
 
 def organic_post(channel: str, workspace_id: str, payload: dict) -> dict[str, Any]:
     """Post to an organic channel (reddit, telegram, twitter, linkedin, pinterest, gbp, facebook)."""
     hub_post = _organic_hub()
-    return hub_post(channel, workspace_id, payload)
+    result = hub_post(channel, workspace_id, payload)
+    try:
+        from admin.tools.organic.history import record_post
+        history_id = record_post(workspace_id, channel, result, payload)
+        if isinstance(result, dict):
+            result["history_id"] = history_id
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("history record failed for %s/%s: %s", workspace_id, channel, exc)
+    return result
 
 
 def organic_channels(workspace_id: str = "default") -> dict[str, Any]:
