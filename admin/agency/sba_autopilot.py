@@ -17,6 +17,7 @@ import os
 import random
 import re
 import sys
+import time
 from typing import Any
 
 # Make sure project root is importable
@@ -49,6 +50,9 @@ logger = logging.getLogger("sba.autopilot")
 INTERVAL_MINUTES = int(os.environ.get("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 DAILY_EMAIL_CAP = int(os.environ.get("SBA_DAILY_EMAIL_CAP", "30"))
 OWNER_TZ = os.environ.get("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
+# Don't re-hammer a recipient for 24h after an SMTP failure (Gmail 550
+# daily-limit resets next day; retrying every 15 min just burns the limit).
+EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(24 * 3600)))
 
 # ── Email sanity ─────────────────────────────────────────────────────────
 # Only send cold emails to real-looking business addresses. The browser
@@ -70,11 +74,62 @@ _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
                         "noreply@", "no-reply@", "hello@", "help@", "sales@",
                         "billing@", "careers@", "jobs@", "hr@", "pr@",
                         "media@", "newsletter@", "unsubscribe@")
+# HTML/JS-escape leftovers mean the scraped value is a mangled page fragment
+# (e.g. "u003e" is the unicode escape for ">"), not a real mailbox.
+_MALFORMED_TOKENS = ("u003e", "u003c", "%3e", "%3c", "&gt;", "&lt;", "\\u003e", "\\u003c")
+
+
+# ── Lead discovery rotation ──────────────────────────────────────────────
+# Each autopilot pass searches a different niche+city so new businesses keep
+# arriving instead of re-scraping the same "plumber Houston" results forever.
+# Override with SBA_LEAD_ROTATION=[["hvac","Dallas","TX"],...] (JSON).
+_LEAD_TARGETS = [
+    ("plumber", "Houston", "TX"),
+    ("electrician", "San Antonio", "TX"),
+    ("hvac", "Austin", "TX"),
+    ("roofer", "Dallas", "TX"),
+    ("landscaper", "Fort Worth", "TX"),
+    ("auto repair", "Houston", "TX"),
+    ("cleaning service", "San Antonio", "TX"),
+    ("handyman", "Austin", "TX"),
+    ("painter", "Dallas", "TX"),
+    ("dentist", "Fort Worth", "TX"),
+    ("plumber", "Austin", "TX"),
+    ("electrician", "Houston", "TX"),
+    ("hvac", "Dallas", "TX"),
+    ("roofer", "San Antonio", "TX"),
+    ("landscaper", "Houston", "TX"),
+    ("auto repair", "Austin", "TX"),
+    ("cleaning service", "Dallas", "TX"),
+    ("handyman", "Fort Worth", "TX"),
+    ("painter", "San Antonio", "TX"),
+    ("salon", "Houston", "TX"),
+]
+
+
+
+def _rotation_targets() -> list[tuple[str, str, str]]:
+    raw = os.environ.get("SBA_LEAD_ROTATION", "")
+    if raw:
+        try:
+            import json as _json
+
+            items = _json.loads(raw)
+            if items and all(isinstance(i, (list, tuple)) and len(i) == 3 for i in items):
+                return [tuple(i) for i in items]
+        except Exception:  # noqa: BLE001
+            logger.warning("SBA_LEAD_ROTATION invalid, using default rotation")
+    return list(_LEAD_TARGETS)
 
 
 def _is_valid_lead_email(email: str) -> bool:
     """True only for a plausible business cold-email target."""
-    e = (email or "").strip().lower()
+    raw = (email or "").strip()
+    if not raw:
+        return False
+    if any(tok in raw.lower() for tok in _MALFORMED_TOKENS):
+        return False
+    e = raw.lower()
     if not e or not _EMAIL_RE.match(e):
         return False
     if e == "test@example.com" or "example.com" in e:
@@ -97,12 +152,19 @@ class SBAAutopilot:
         self.email = email_client or SBAEmailClient()
         self.meetings = meeting_manager or SBAMeetingManager()
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
+        self._target_idx = 0
+        self._email_retry_until: dict[str, float] = {}
 
     def status(self) -> dict:
         return dict(self._last_status)
 
     async def _find_new_leads(self) -> int:
-        """Run one lead-finding pass across platforms (best-effort)."""
+        """Run one lead-finding pass across platforms (best-effort).
+
+        Rotates through niche+city targets each pass, dedupes against leads
+        already in Supabase, and saves rows in the leads table's column shape
+        (raw JSONB carries the extra scraped fields).
+        """
         try:
             from admin.tools.sba_lead_sources import find_leads_all
 
@@ -110,18 +172,57 @@ class SBAAutopilot:
             if not cfg:
                 return 0
             url, key = cfg
-            category = os.environ.get("SBA_LEAD_CATEGORY", "plumber")
-            city = os.environ.get("SBA_LEAD_CITY", "Houston")
-            state = os.environ.get("SBA_LEAD_STATE", "TX")
+            targets = _rotation_targets()
+            category, city, state = targets[self._target_idx % len(targets)]
+            self._target_idx += 1
+            logger.info(
+                "lead rotation: %s in %s, %s (pass %d/%d)",
+                category, city, state, self._target_idx, len(targets),
+            )
             leads = await find_leads_all(category, city, state, max_per_source=3)
+
+            # Dedupe against leads already stored (name + phone).
+            existing = load_leads(url, key)
+            existing_keys = set()
+            for l in existing:
+                n = (l.get("name") or "").strip().lower()
+                p = (l.get("phone") or "").strip()
+                if n and p:
+                    existing_keys.add((n, p))
+
             added = 0
             for lead in leads:
-                lead["status"] = "new"
-                lead["source_tag"] = ",".join(lead.get("sources") or [lead.get("source", "")])
-                res = pipe.save_lead(url, key, lead)
+                n = (lead.get("name") or "").strip().lower()
+                p = (lead.get("phone") or "").strip()
+                if n and p and (n, p) in existing_keys:
+                    continue
+                row = {
+                    "name": lead.get("name") or "",
+                    "phone": lead.get("phone") or "",
+                    "email": lead.get("email") or "",
+                    "category": lead.get("category") or category,
+                    "city_state": f"{city}, {state}",
+                    "href": lead.get("href") or "",
+                    "address": lead.get("address") or "",
+                    "has_website": bool(lead.get("website")),
+                    "website_status": "has_website" if lead.get("website") else "verified_none",
+                    "mode": "card",
+                    "text": lead.get("text") or "",
+                    "raw": {
+                        k: v for k, v in lead.items()
+                        if k not in ("name", "phone", "email", "category", "city",
+                                     "state", "href", "address", "website", "text")
+                    },
+                    "status": "candidate",
+                    "workspace_name": "agency",
+                    "client_id": "00000000-0000-0000-0000-000000000001",
+                }
+                res = pipe.save_lead(url, key, row)
                 if res is not None:
                     added += 1
-            logger.info("autopilot: found %d new leads from %d scraped", added, len(leads))
+                    existing_keys.add((n, p))
+            logger.info("autopilot: found %d new leads from %d scraped (%s in %s)",
+                        added, len(leads), category, city)
             return added
         except Exception as exc:  # noqa: BLE001
             logger.warning("lead finding pass failed: %s", exc)
@@ -138,13 +239,19 @@ class SBAAutopilot:
         if not _is_valid_lead_email(email):
             logger.info("skip junk email %s for %s", email, lead.get("name") or "")
             return "invalid_email"
+        # SMTP failure (e.g. Gmail 550 daily limit): don't re-hammer this
+        # recipient until the backoff window has passed.
+        blocked_until = self._email_retry_until.get(email)
+        if blocked_until and time.time() < blocked_until:
+            return "retry_backoff"
         if not lead_business_hours(lead):
             return "deferred"
         subject, body = await draft_email(lead)
         ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
         if ok:
-            sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted", "email_status": "sent"})
+            sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted"})
             return "sent"
+        self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
         return "send_failed"
 
     async def _process_replies(self, url: str, key: str, leads: list[dict]) -> dict[str, int]:
@@ -194,6 +301,7 @@ class SBAAutopilot:
             "emails_sent": 0, "deferred_to_business_hours": 0, "no_email": 0,
             "invalid_email": 0, "send_failed": 0, "owner_notified": 0,
             "meetings_scheduled": 0, "rejected": 0, "new_leads_found": 0,
+            "retry_backoff": 0,
         }
         cfg = supabase_config()
         if not cfg:
@@ -201,22 +309,27 @@ class SBAAutopilot:
             return stats
         url, key = cfg
         leads = load_leads(url, key)
-        sent = 0
+        attempts = 0
         for lead in leads:
-            if sent >= DAILY_EMAIL_CAP:
-                break
             result = await self._email_lead(url, key, lead)
             if result == "sent":
                 stats["emails_sent"] += 1
-                sent += 1
+                attempts += 1
+            elif result == "send_failed":
+                stats["send_failed"] += 1
+                attempts += 1
             elif result == "deferred":
                 stats["deferred_to_business_hours"] += 1
             elif result == "no_email":
                 stats["no_email"] += 1
             elif result == "invalid_email":
                 stats["invalid_email"] += 1
-            elif result == "send_failed":
-                stats["send_failed"] += 1
+            elif result == "retry_backoff":
+                stats["retry_backoff"] += 1
+            # Cap real SMTP attempts per pass (failed sends burned the whole
+            # Gmail daily limit before this cap existed).
+            if attempts >= DAILY_EMAIL_CAP:
+                break
         reply_stats = await self._process_replies(url, key, leads)
         stats.update(reply_stats)
         stats["new_leads_found"] = await self._find_new_leads()

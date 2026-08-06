@@ -1,7 +1,7 @@
 # admin/tests/test_sba_autopilot.py
 import pytest
 
-from admin.agency.sba_autopilot import SBAAutopilot, _is_valid_lead_email, _is_valid_lead_email
+from admin.agency.sba_autopilot import SBAAutopilot, _is_valid_lead_email
 
 
 class FakeEmailClient:
@@ -101,7 +101,6 @@ async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     assert mm.created and mm.created[0]["lead_id"] == "12"
 
 
-
 def test_email_validity_filter():
     # Real-looking business emails pass
     assert _is_valid_lead_email("al@alsauto.com") is True
@@ -116,20 +115,88 @@ def test_email_validity_filter():
     assert _is_valid_lead_email("not-an-email") is False
     assert _is_valid_lead_email("test@example.com") is False
     assert _is_valid_lead_email("") is False
+    # HTML/JS-escape leftovers in the local part are mangled fragments
+    assert _is_valid_lead_email("u003epetmd@wrightsmedia.com") is False
+    assert _is_valid_lead_email("%3eowner@realbiz.com") is False
+    assert _is_valid_lead_email("hello%26gt;x@realbiz.com") is False
 
 
+class FailingEmailClient:
+    """Always fails so we can exercise the SMTP attempt cap + backoff."""
 
-def test_email_validity_filter():
-    # Real-looking business emails pass
-    assert _is_valid_lead_email("al@alsauto.com") is True
-    assert _is_valid_lead_email("victor@quixana.com") is True
-    # Junk domains / generic catch-alls / malformed get blocked
-    assert _is_valid_lead_email("support@discord.com") is False
-    assert _is_valid_lead_email("admission@denison.edu") is False
-    assert _is_valid_lead_email("info@visitdallas.com") is False
-    assert _is_valid_lead_email("contact@gbg.com") is False
-    assert _is_valid_lead_email("blaisefromparis@gmail.com") is False
-    assert _is_valid_lead_email("u003eaccountrecovery@deviantart.com") is False
-    assert _is_valid_lead_email("not-an-email") is False
-    assert _is_valid_lead_email("test@example.com") is False
-    assert _is_valid_lead_email("") is False
+    def __init__(self):
+        self.enabled = True
+        self.sent = []
+        self.replies = []
+
+    async def send_email(self, to_email, subject, body_text, cc_owner=True):
+        self.sent.append({"to": to_email})
+        return False
+
+    async def check_replies(self, mark_read=True):
+        return self.replies
+
+
+def _business_hours(monkeypatch):
+    import datetime as dt
+
+    monkeypatch.setattr(
+        "admin.tools.sba_time.now_in",
+        lambda tz: dt.datetime(2026, 8, 3, 17, 0, tzinfo=dt.timezone.utc).astimezone(
+            __import__("admin.tools.sba_time", fromlist=["load_zone"]).load_zone("America/Chicago")
+        ),
+    )
+
+
+def _no_new_leads(monkeypatch):
+    monkeypatch.setattr(
+        "admin.tools.sba_lead_sources.find_leads_all", lambda *a, **k: []
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_once_caps_smtp_attempts_on_failure(monkeypatch):
+    """Failed sends count toward the cap so one pass can't burn Gmail's limit."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "DAILY_EMAIL_CAP", 2)
+    email = FailingEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    leads = [
+        {"id": str(i), "name": f"Biz {i}", "email": f"owner{i}@biz{i}.com",
+         "category": "plumber", "state": "TX", "status": "new"}
+        for i in range(5)
+    ]
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: leads)
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["send_failed"] == 2
+    assert len(email.sent) == 2  # cap respected: only 2 SMTP attempts
+
+
+@pytest.mark.asyncio
+async def test_run_once_backs_off_failed_recipients(monkeypatch):
+    """A failed recipient is not re-hammered on the next pass."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "DAILY_EMAIL_CAP", 10)
+    email = FailingEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "1", "name": "Slow Co", "email": "slow@slowco.com",
+            "category": "hvac", "state": "TX", "status": "new"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    s1 = await ap.run_once()
+    assert s1["send_failed"] == 1
+    s2 = await ap.run_once()
+    assert s2["send_failed"] == 0
+    assert s2["retry_backoff"] == 1
+    assert len(email.sent) == 1  # no second attempt while in backoff

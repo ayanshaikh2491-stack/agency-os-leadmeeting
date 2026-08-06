@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import random
+import sys
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,17 @@ class ChromeTool:
                 pass
             finally:
                 s.close()
+
+            # On Linux/EC2 the managed daemon service (sba-chrome.service)
+            # owns this CDP port. Auto-starting a second Chrome here starts a
+            # port/profile fight that kills the daemon mid-scrape. Only
+            # auto-start when explicitly enabled (or on Windows dev boxes).
+            if sys.platform.startswith("linux") and os.environ.get("SBA_AUTOSTART_CHROME", "0") != "1":
+                logger.info(
+                    "Chrome daemon on :%s managed by service; skipping auto-start",
+                    self.cdp_port,
+                )
+                return
 
             # Start Chrome daemon
             import subprocess

@@ -253,8 +253,10 @@ class ChromeDaemon:
                 logger.info(f"[{self.workspace}] ✅ Chrome ready on CDP :{self.cdp_port}")
 
                 # ── Monitor health ────────────────────────────────────
-                # Block until all pages close (daemon crash)
-                await self._context.wait_for_event("close")
+                # Block until the context closes (daemon crash). timeout=0
+                # disables playwright's 30s default, so a healthy daemon
+                # stays alive instead of "dying" every 30 seconds.
+                await self._context.wait_for_event("close", timeout=0)
 
             except Exception as e:
                 self._error_count += 1

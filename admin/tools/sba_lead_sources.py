@@ -49,6 +49,7 @@ def normalize_lead(card: dict, source: str) -> dict:
         "city": city,
         "state": state,
         "phone": phone,
+        "href": (card.get("href") or "").strip(),
         "website": website if website and not _is_aggregator(website) else "",
         "category": (card.get("category") or "").strip(),
         "source": source,
