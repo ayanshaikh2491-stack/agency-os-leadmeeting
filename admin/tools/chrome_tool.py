@@ -83,8 +83,18 @@ class ChromeTool:
             # Start Chrome daemon
             import subprocess
             chrome_paths = [
+                # Windows ms-playwright chromium (local dev)
                 os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright\chromium-1228\chrome-win64\chrome.exe"),
                 os.path.expandvars(r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1228\chrome-win64\chrome.exe"),
+                # Linux ms-playwright chromium (EC2 autopilot)
+                os.path.expanduser("~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome"),
+                "/home/ubuntu/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome",
+                # System chrome fallbacks
+                "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+                "/usr/bin/chromium", "/usr/bin/chromium-browser",
+                "/opt/google/chrome/chrome",
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
             ]
             chrome_exe = None
             for p in chrome_paths:

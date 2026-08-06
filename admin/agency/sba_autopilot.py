@@ -15,6 +15,7 @@ import datetime as dt
 import logging
 import os
 import random
+import re
 import sys
 from typing import Any
 
@@ -48,6 +49,44 @@ logger = logging.getLogger("sba.autopilot")
 INTERVAL_MINUTES = int(os.environ.get("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 DAILY_EMAIL_CAP = int(os.environ.get("SBA_DAILY_EMAIL_CAP", "30"))
 OWNER_TZ = os.environ.get("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
+
+# ── Email sanity ─────────────────────────────────────────────────────────
+# Only send cold emails to real-looking business addresses. The browser
+# lead source scrapes contact hints that are often junk (support@discord,
+# admissions@a-university, u003eaccountrecovery@deviantart, ...), so we
+# gate sends behind a strict regex + a junk-domain blocklist.
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+_JUNK_EMAIL_DOMAINS = {
+    "discord.com", "deviantart.com", "facebook.com", "instagram.com",
+    "twitter.com", "x.com", "reddit.com", "youtube.com", "google.com",
+    "gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "aol.com",
+    "zoho.com", "proton.me", "protonmail.com", "icloud.com", "me.com",
+    "live.com", "msn.com", "qq.com", "163.com", "126.com", "tutanota.com",
+    "github.com", "wikipedia.org", "quora.com", "linkedin.com", "tiktok.com",
+    "pinterest.com", "snapchat.com", "whatsapp.com", "telegram.org",
+    "starz.com", "visitdallas.com", "jetblue.com", "denison.edu", "hcfl.gov",
+}
+_JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
+                        "noreply@", "no-reply@", "hello@", "help@", "sales@",
+                        "billing@", "careers@", "jobs@", "hr@", "pr@",
+                        "media@", "newsletter@", "unsubscribe@")
+
+
+def _is_valid_lead_email(email: str) -> bool:
+    """True only for a plausible business cold-email target."""
+    e = (email or "").strip().lower()
+    if not e or not _EMAIL_RE.match(e):
+        return False
+    if e == "test@example.com" or "example.com" in e:
+        return False
+    domain = e.split("@", 1)[1]
+    if domain in _JUNK_EMAIL_DOMAINS:
+        return False
+    # Generic first-party catch-all prefixes are not a human decision maker.
+    for prefix in _JUNK_EMAIL_PREFIXES:
+        if e.startswith(prefix):
+            return False
+    return True
 
 
 class SBAAutopilot:
@@ -96,6 +135,9 @@ class SBAAutopilot:
         status = lead.get("status") or "new"
         if status in ("contacted", "meeting", "replied"):
             return "already_contacted"
+        if not _is_valid_lead_email(email):
+            logger.info("skip junk email %s for %s", email, lead.get("name") or "")
+            return "invalid_email"
         if not lead_business_hours(lead):
             return "deferred"
         subject, body = await draft_email(lead)
@@ -150,8 +192,8 @@ class SBAAutopilot:
         """One full autopilot pass. Returns stats."""
         stats: dict[str, Any] = {
             "emails_sent": 0, "deferred_to_business_hours": 0, "no_email": 0,
-            "send_failed": 0, "owner_notified": 0, "meetings_scheduled": 0,
-            "rejected": 0, "new_leads_found": 0,
+            "invalid_email": 0, "send_failed": 0, "owner_notified": 0,
+            "meetings_scheduled": 0, "rejected": 0, "new_leads_found": 0,
         }
         cfg = supabase_config()
         if not cfg:
@@ -171,6 +213,8 @@ class SBAAutopilot:
                 stats["deferred_to_business_hours"] += 1
             elif result == "no_email":
                 stats["no_email"] += 1
+            elif result == "invalid_email":
+                stats["invalid_email"] += 1
             elif result == "send_failed":
                 stats["send_failed"] += 1
         reply_stats = await self._process_replies(url, key, leads)

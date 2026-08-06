@@ -37,6 +37,7 @@ from admin.agency.sba_store import (
     update_lead,
     update_meeting,
 )
+from admin.agency.sba_pipeline import load_leads_preferred as _load_leads_preferred
 from admin.api.models.schemas import ChatResponse
 import openai
 
@@ -126,7 +127,7 @@ def _get_agency_sba() -> SBAAgent:
 @router.get("/status")
 async def sba_status():
     """SBA agent status + pipeline summary."""
-    all_leads = list_leads()
+    all_leads = _load_leads_preferred()
     pipeline = {}
     for s in ["new", "contacted", "meeting", "proposal", "negotiation", "closed", "lost"]:
         pipeline[s] = [l for l in all_leads if l["status"] == s]
@@ -209,7 +210,10 @@ async def api_list_sba_skills():
 @router.get("/leads")
 async def api_list_leads(status: str | None = None):
     """List all leads, optionally filtered by status."""
-    return {"success": True, "data": {"leads": list_leads(status)}}
+    all_leads = _load_leads_preferred()
+    if status:
+        all_leads = [l for l in all_leads if l["status"] == status]
+    return {"success": True, "data": {"leads": all_leads}}
 
 
 @router.post("/leads")
@@ -249,7 +253,7 @@ async def api_delete_lead(lead_id: str):
 @router.get("/pipeline")
 async def api_pipeline():
     """Full pipeline data — kanban format for frontend."""
-    all_leads = list_leads()
+    all_leads = _load_leads_preferred()
     stages_order = ["new", "contacted", "meeting", "proposal", "negotiation", "closed"]
 
     pipeline = {}

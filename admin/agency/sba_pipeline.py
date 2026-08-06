@@ -77,6 +77,62 @@ def load_leads(url: str, key: str) -> list[dict[str, Any]]:
         return []
 
 
+# Supabase lead status -> local pipeline status (frontend kanban stages).
+_STATUS_MAP = {
+    "candidate": "new",
+    "good": "new",
+    "contacted": "contacted",
+    "meeting": "meeting",
+    "proposal": "proposal",
+    "negotiation": "negotiation",
+    "closed": "closed",
+    "lost": "lost",
+}
+
+
+def _normalize_supabase_lead(l: dict[str, Any]) -> dict[str, Any]:
+    """Shape a Supabase lead like sba_store leads so the API/frontend can render it."""
+    name = (l.get("name") or "").strip()
+    return {
+        "id": str(l.get("id") or ""),
+        "name": name,
+        "business_name": name,
+        "email": (l.get("email") or "").strip(),
+        "phone": (l.get("phone") or "").strip(),
+        "score": 80 if (l.get("status") or "") == "good" else 50,
+        "source": (l.get("category") or l.get("workspace_name") or "supabase"),
+        "status": _STATUS_MAP.get((l.get("status") or "candidate").lower(), "new"),
+        "meeting_ids": [],
+        "context": {
+            "estimated_value": 0,
+            "city_state": l.get("city_state") or "",
+            "href": l.get("href") or "",
+            "category": l.get("category") or "",
+        },
+        "created_at": l.get("created_at") or "",
+    }
+
+
+def load_leads_preferred() -> list[dict[str, Any]]:
+    """Leads from Supabase (autopilot's live store) when configured, else local store.
+
+    The autopilot writes found leads to Supabase; the API previously read only
+    the local SQLite store, so the dashboard showed zero leads while Supabase
+    had hundreds. Prefer Supabase so the frontend sees the real pipeline.
+    """
+    cfg = supabase_config()
+    if cfg:
+        try:
+            supa = load_leads(cfg[0], cfg[1])
+            if supa:
+                return [_normalize_supabase_lead(l) for l in supa]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("supabase lead load failed, falling back to local: %s", exc)
+    from admin.agency.sba_store import list_leads
+
+    return list_leads()
+
+
 def save_lead(url: str, key: str, lead: dict[str, Any]) -> dict | None:
     try:
         return sb_request(url, key, "/rest/v1/leads", method="POST", body=lead)

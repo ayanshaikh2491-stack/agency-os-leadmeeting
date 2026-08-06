@@ -1,7 +1,7 @@
 # admin/tests/test_sba_autopilot.py
 import pytest
 
-from admin.agency.sba_autopilot import SBAAutopilot
+from admin.agency.sba_autopilot import SBAAutopilot, _is_valid_lead_email, _is_valid_lead_email
 
 
 class FakeEmailClient:
@@ -34,7 +34,7 @@ async def test_run_once_sends_email_to_lead_in_business_hours(monkeypatch):
     mm = FakeMeetingManager()
     ap = SBAAutopilot(email_client=email, meeting_manager=mm)
 
-    lead = {"id": "10", "name": "Al's Auto", "email": "al@example.com",
+    lead = {"id": "10", "name": "Al's Auto", "email": "al@alsauto.com",
             "category": "auto repair", "state": "TX", "status": "new",
             "city_state": "Houston, TX"}
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
@@ -52,14 +52,14 @@ async def test_run_once_sends_email_to_lead_in_business_hours(monkeypatch):
 
     stats = await ap.run_once()
     assert stats["emails_sent"] == 1
-    assert email.sent[0]["to"] == "al@example.com"
+    assert email.sent[0]["to"] == "al@alsauto.com"
 
 
 @pytest.mark.asyncio
 async def test_run_once_skips_email_outside_business_hours(monkeypatch):
     email = FakeEmailClient()
     ap = SBAAutopilot(email_client=email)
-    lead = {"id": "11", "name": "Night Biz", "email": "night@example.com",
+    lead = {"id": "11", "name": "Night Biz", "email": "night@nightbiz.com",
             "category": "bar", "state": "CA", "status": "new"}
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
     monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
@@ -85,9 +85,9 @@ async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     mm = FakeMeetingManager()
     ap = SBAAutopilot(email_client=email, meeting_manager=mm)
 
-    lead = {"id": "12", "name": "Lead Co", "email": "lead@example.com",
+    lead = {"id": "12", "name": "Lead Co", "email": "lead@leadco.com",
             "category": "cleaning", "state": "TX", "status": "contacted"}
-    owner_reply = {"from_addr": "boss@example.com", "subject": "Re: lead 12", "body_preview": "Haan 3 baje"}
+    owner_reply = {"from_addr": "boss@ownerco.com", "subject": "Re: lead 12", "body_preview": "Haan 3 baje"}
 
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
     monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
@@ -99,3 +99,37 @@ async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     stats = await ap.run_once()
     assert stats["meetings_scheduled"] == 1
     assert mm.created and mm.created[0]["lead_id"] == "12"
+
+
+
+def test_email_validity_filter():
+    # Real-looking business emails pass
+    assert _is_valid_lead_email("al@alsauto.com") is True
+    assert _is_valid_lead_email("victor@quixana.com") is True
+    # Junk domains / generic catch-alls / malformed get blocked
+    assert _is_valid_lead_email("support@discord.com") is False
+    assert _is_valid_lead_email("admission@denison.edu") is False
+    assert _is_valid_lead_email("info@visitdallas.com") is False
+    assert _is_valid_lead_email("contact@gbg.com") is False
+    assert _is_valid_lead_email("blaisefromparis@gmail.com") is False
+    assert _is_valid_lead_email("u003eaccountrecovery@deviantart.com") is False
+    assert _is_valid_lead_email("not-an-email") is False
+    assert _is_valid_lead_email("test@example.com") is False
+    assert _is_valid_lead_email("") is False
+
+
+
+def test_email_validity_filter():
+    # Real-looking business emails pass
+    assert _is_valid_lead_email("al@alsauto.com") is True
+    assert _is_valid_lead_email("victor@quixana.com") is True
+    # Junk domains / generic catch-alls / malformed get blocked
+    assert _is_valid_lead_email("support@discord.com") is False
+    assert _is_valid_lead_email("admission@denison.edu") is False
+    assert _is_valid_lead_email("info@visitdallas.com") is False
+    assert _is_valid_lead_email("contact@gbg.com") is False
+    assert _is_valid_lead_email("blaisefromparis@gmail.com") is False
+    assert _is_valid_lead_email("u003eaccountrecovery@deviantart.com") is False
+    assert _is_valid_lead_email("not-an-email") is False
+    assert _is_valid_lead_email("test@example.com") is False
+    assert _is_valid_lead_email("") is False
