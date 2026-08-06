@@ -577,6 +577,7 @@ async def organic_connect_route(req: OrganicConfigRequest):
 
 
 @router.get("/organic/oauth/start")
+@router.get("/oauth/start")
 async def organic_oauth_start_route(channel: str, workspace_id: str = "default"):
     """Start a 3-legged OAuth flow: return the platform authorize URL.
 
@@ -588,6 +589,7 @@ async def organic_oauth_start_route(channel: str, workspace_id: str = "default")
 
 
 @router.get("/organic/oauth/callback")
+@router.get("/oauth/callback")
 async def organic_oauth_callback_route(channel: str, state: str, code: str = "", error: str = ""):
     """OAuth callback from the platform. Exchanges code, saves token, 302s home."""
     from fastapi.responses import RedirectResponse
@@ -601,6 +603,7 @@ async def organic_oauth_callback_route(channel: str, state: str, code: str = "",
 
 
 @router.get("/organic/oauth/app")
+@router.get("/oauth/app")
 async def organic_oauth_app_status_route(workspace_id: str = "default"):
     """Report which OAuth channels have app credentials configured."""
     from admin.tools.organic.oauth import app_config_status
@@ -608,6 +611,7 @@ async def organic_oauth_app_status_route(workspace_id: str = "default"):
 
 
 @router.post("/organic/oauth/app")
+@router.post("/oauth/app")
 async def organic_oauth_app_save_route(req: OrganicConfigRequest):
     """Save per-workspace OAuth app credentials (client_id, client_secret)."""
     from admin.tools.organic.oauth import save_app_config

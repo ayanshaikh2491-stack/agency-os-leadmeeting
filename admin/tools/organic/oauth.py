@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -404,16 +405,18 @@ def handle_callback(channel: str, state: str, code: str = "", error: str = "") -
         "channel": channel,
         "workspace_id": workspace_id,
         "user": uname or uid,
-        "redirect": _result_url(channel, True, ""),
+        "redirect": _result_url(channel, True, "", user=uname or uid),
     }
 
 
-def _result_url(channel: str, success: bool, error: str = "") -> str:
+def _result_url(channel: str, success: bool, error: str = "", user: str = "") -> str:
     base = os.environ.get("OAUTH_FRONTEND_URL", "https://agency-frontend-seven.vercel.app/admin/social")
     sep = "&" if "?" in base else "?"
     url = f"{base}{sep}oauth={channel}&success={'1' if success else '0'}"
     if error:
         url += f"&error={error}"
+    if user:
+        url += f"&user={quote(user, safe='')}"
     return url
 
 
