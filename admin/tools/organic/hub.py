@@ -49,6 +49,15 @@ def post(channel_id: str, workspace_id: str, payload: dict[str, Any]) -> dict[st
     if module is None:
         return PostResult(status="error", channel=channel_id, error=f"Module not available for channel: {channel_id}").to_dict()
 
+    # OAuth channels: refresh an expiring token before dispatching. Non-fatal —
+    # the channel module still reports config_missing if no usable token exists.
+    try:
+        from admin.tools.organic.oauth import ensure_fresh_token, oauth_supported
+        if oauth_supported(channel_id):
+            ensure_fresh_token(workspace_id, channel_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("oauth pre-refresh skipped for %s: %s", channel_id, exc)
+
     try:
         result = module.post(workspace_id, payload)
         if isinstance(result, PostResult):

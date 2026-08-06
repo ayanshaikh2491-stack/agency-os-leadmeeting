@@ -6,7 +6,7 @@ from admin.tools.organic.reddit_api import post, _get_access_token
 
 
 def _mock_creds():
-    patcher_token = patch("admin.tools.organic.reddit_api.get_active_token", return_value={"access_token": "tok"})
+    patcher_token = patch("admin.tools.organic.reddit_api.get_token", return_value={"access_token": "tok"})
     patcher_cfg = patch("admin.tools.organic.reddit_api.get_channel_config", return_value={
         "client_id": "cid", "client_secret": "csec", "username": "user", "password": "pass",
     })
@@ -22,7 +22,7 @@ def _mock_creds():
 
 
 def test_post_no_config_returns_config_missing():
-    with patch("admin.tools.organic.reddit_api.get_active_token", return_value=None):
+    with patch("admin.tools.organic.reddit_api.get_token", return_value=None):
         with patch("admin.tools.organic.reddit_api.get_channel_config", return_value={}):
             result = post("ws1", {"subreddit": "r/test", "title": "t", "body": "b"})
     assert result.status == "config_missing"

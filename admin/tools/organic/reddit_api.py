@@ -8,7 +8,7 @@ import requests
 
 from admin.tools.organic.base import CHANNEL_TYPE_API, PostResult
 from admin.tools.organic.config import get_channel_config
-from admin.token_manager import get_active_token
+from admin.token_manager import get_active_token, get_token
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +44,33 @@ def _get_access_token(client_id: str, client_secret: str, username: str, passwor
         return None
 
 
+def _ensure_reddit_fresh(workspace_id: str, access_token: str, client_id: str, client_secret: str) -> str:
+    """Refresh a stored OAuth reddit token if expired; return a usable token.
+
+    Falls back to the existing access token when refresh is unavailable.
+    """
+    try:
+        from admin.tools.organic.oauth import ensure_fresh_token
+        result = ensure_fresh_token(workspace_id, "reddit")
+        if result.get("status") in ("refreshed", "ok"):
+            from admin.token_manager import get_token
+            data = get_token(workspace_id, "reddit")
+            if data and data.get("access_token"):
+                return data["access_token"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Reddit token refresh skipped: %s", exc)
+    return access_token
+
+
 def post(workspace_id: str, payload: dict) -> PostResult:
-    token_data = get_active_token(workspace_id, "reddit")
+    # Use get_token (not get_active_token) so an expired OAuth token can still
+    # be refreshed from its stored refresh_token instead of failing immediately.
+    token_data = get_token(workspace_id, "reddit")
     if not token_data:
         return PostResult(status="config_missing", channel="reddit", error="No Reddit token. Connect via /api/social/organic/config first.")
 
-    # Interface compat: token_manager returns a bare access-token string (or None),
-    # while tests mock it as a dict. Normalize to the dict shape used below.
+    # Interface compat: token_manager may return a bare access-token string
+    # (or None), while tests mock it as a dict. Normalize to the dict shape.
     if isinstance(token_data, str):
         token_data = {"access_token": token_data}
 
@@ -60,10 +80,17 @@ def post(workspace_id: str, payload: dict) -> PostResult:
     username = token_data.get("platform_username") or cfg.get("username", "")
     password = cfg.get("password", "")
 
-    if not (client_id and client_secret and username and password):
+    # OAuth authorization-code connect stores a live access token + refresh token.
+    # Use it directly; fall back to the script-app password grant only when no
+    # stored token exists (keeps old connects working).
+    access_token = token_data.get("access_token", "")
+    if access_token:
+        access_token = _ensure_reddit_fresh(workspace_id, access_token, client_id, client_secret)
+    elif client_id and client_secret and username and password:
+        access_token = _get_access_token(client_id, client_secret, username, password)
+    else:
         return PostResult(status="config_missing", channel="reddit", error="Reddit creds incomplete (client_id, client_secret, username, password).")
 
-    access_token = _get_access_token(client_id, client_secret, username, password)
     if not access_token:
         return PostResult(status="error", channel="reddit", error="Reddit auth failed. Check credentials.")
 

@@ -48,6 +48,7 @@ def save_token(
     workspace_id: str,
     platform: str,
     access_token: str,
+    refresh_token: str = "",
     platform_user_id: str = "",
     platform_username: str = "",
     page_id: str = "",
@@ -64,6 +65,7 @@ def save_token(
         workspace_id: Workspace ID
         platform: facebook, instagram, linkedin, twitter, tiktok, youtube
         access_token: The OAuth access token
+        refresh_token: OAuth refresh token (for auto-refresh flows)
         platform_user_id: Platform user ID
         platform_username: Platform username
         page_id: Facebook Page ID (if applicable)
@@ -71,7 +73,7 @@ def save_token(
         ig_account_id: Instagram Business Account ID
         ig_username: Instagram username
         expires_at: Token expiry datetime (ISO format)
-        token_type: user_token, page_token, long_lived_token
+        token_type: user_token, page_token, long_lived_token, oauth
         scopes: List of permissions/scopes granted
     """
     d = _workspace_dir(workspace_id)
@@ -79,6 +81,7 @@ def save_token(
     token_data = {
         "platform": platform,
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "platform_user_id": platform_user_id,
         "platform_username": platform_username,
         "page_id": page_id,
@@ -169,6 +172,39 @@ def delete_token(workspace_id: str, platform: str) -> dict[str, Any]:
         token_file.unlink()
         return {"status": "deleted", "platform": platform}
     return {"status": "not_found", "platform": platform}
+
+
+def update_token(workspace_id: str, platform: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge fields into a stored token file (used by OAuth refresh).
+
+    Only known keys are merged; unknown keys are ignored to avoid accidental
+    secret-loss. Returns the stored token data or an error dict.
+    """
+    d = _workspace_dir(workspace_id)
+    token_file = d / f"{platform}.json"
+    if not token_file.exists():
+        return {"status": "error", "error": f"No token stored for {platform}."}
+    try:
+        data = json.loads(token_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"status": "error", "error": f"Token file unreadable for {platform}."}
+
+    allowed = {
+        "access_token", "refresh_token", "platform_user_id", "platform_username",
+        "page_id", "page_name", "ig_account_id", "ig_username",
+        "expires_at", "token_type", "scopes", "status", "last_used_at",
+    }
+    changed = False
+    for key, value in patch.items():
+        if key in allowed and value is not None:
+            data[key] = value
+            changed = True
+    if not changed:
+        return {"status": "error", "error": f"No known fields to update for {platform}."}
+
+    data.setdefault("updated_at", _now())
+    token_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return {"status": "updated", "platform": platform, "updated_at": data["updated_at"]}
 
 
 def get_active_token(workspace_id: str, platform: str) -> str | None:

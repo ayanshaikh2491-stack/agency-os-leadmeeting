@@ -101,6 +101,7 @@ def _run_async(coro) -> dict[str, Any]:
 
 def channel_setup_status(workspace_id: str) -> dict[str, Any]:
     """Report connect state for every organic channel in this workspace."""
+    from admin.tools.organic.oauth import oauth_supported
     from admin.tools.organic.registry import list_channels
 
     out: dict[str, Any] = {"workspace_id": workspace_id, "channels": {}}
@@ -112,6 +113,7 @@ def channel_setup_status(workspace_id: str) -> dict[str, Any]:
             "name": ch["name"],
             "type": ch["type"],
             "auth": ch["auth"],
+            "oauth": oauth_supported(cid),
             "connected": state["connected"],
             "missing": state["missing"],
             "fields": CREDENTIAL_FIELDS.get(cid, []),
