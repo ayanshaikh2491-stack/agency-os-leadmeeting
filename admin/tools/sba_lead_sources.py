@@ -82,18 +82,47 @@ def dedupe_leads(leads: list[dict]) -> list[dict]:
 
 def _card_from_items(raw: dict) -> list[dict]:
     items = raw.get("items") or []
+    # chrome_tool.extract() returns {"text": json.dumps([...])}; normalize that
+    # shape too so scrapers work regardless of the extractor contract.
+    if not items:
+        try:
+            txt = raw.get("text") or ""
+            if txt and txt.startswith("["):
+                import json as _json
+
+                items = _json.loads(txt)
+        except Exception:  # noqa: BLE001
+            items = []
     cards = []
     for it in items:
+        if isinstance(it, str):
+            it = {"text": it}
         text = it.get("text") or ""
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if not lines:
             continue
+        # Phone: only the matched span (the whole line may contain "8 PM" junk).
+        phone = ""
+        for ln in lines:
+            m = re.search(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", ln)
+            if m:
+                phone = m.group(0)
+                break
+        # Address: from the first digit run to the end of its line.
+        address = ""
+        for ln in lines:
+            m = re.search(r"\d+\s+\w+", ln)
+            if m:
+                first = re.search(r"\d", ln)
+                if first:
+                    address = ln[first.start():].strip()
+                break
         cards.append({
-            "name": lines[0],
+            "name": it.get("name") or lines[0],
             "text": text,
             "href": it.get("href") or "",
-            "address": next((ln for ln in lines if re.search(r"\d+\s+\w+", ln)), ""),
-            "phone": next((ln for ln in lines if re.search(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", ln)), ""),
+            "address": address,
+            "phone": phone,
         })
     return cards
 
@@ -101,6 +130,51 @@ def _card_from_items(raw: dict) -> list[dict]:
 def _maps_url(category: str, city: str, state: str) -> str:
     q = f"{category} {city} {state}".replace(" ", "+")
     return f"https://www.google.com/maps/search/{q}"
+
+
+# Google Maps result cards in the current DOM: an <a> with an aria-label and a
+# /maps/place href inside the results feed. Class names change often, so we key
+# off the stable aria-label + href pattern and pull text from the card wrapper.
+_MAPS_CARDS_JS = r"""
+() => {
+  const phoneRe = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+  const cardText = (a) => {
+    let el = a;
+    for (let i = 0; i < 6; i++) {
+      if (!el.parentElement) break;
+      el = el.parentElement;
+      const t = (el.innerText || '').trim();
+      if (t && t.length < 800 && phoneRe.test(t)) return t;
+    }
+    const feed = a.closest('[role="feed"] > div');
+    return feed ? (feed.innerText || '').trim() : (a.innerText || '').trim();
+  };
+  const seen = new Set();
+  const out = [];
+  const anchors = document.querySelectorAll('a[aria-label][href*="/maps/place"], a[aria-label][href*="google.com/maps"]');
+  for (const a of anchors) {
+    const label = (a.getAttribute('aria-label') || '').trim();
+    if (!label || label.length < 3 || seen.has(label)) continue;
+    seen.add(label);
+    out.push({ name: label, href: a.href, text: cardText(a) });
+  }
+  return out.slice(0, 40);
+}
+"""
+
+
+async def _scrape_maps_cards(chrome: ChromeTool) -> list[dict]:
+    """Extract Google Maps result cards via JS (aria-label + place href)."""
+    try:
+        cards = await chrome.eval_json(_MAPS_CARDS_JS)
+        if isinstance(cards, list) and cards:
+            # Parse phone/address out of the card text into card fields.
+            return _card_from_items({"items": cards})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("maps JS extraction failed: %s", exc)
+    # Fallback: the generic extractor (kept for older layouts).
+    raw = await chrome.extract(limit=40)
+    return _card_from_items(raw)
 
 
 def _yelp_url(category: str, city: str, state: str) -> str:
@@ -135,7 +209,11 @@ async def find_leads(source: str, category: str, city: str, state: str,
     try:
         if source == "google_maps":
             url = _maps_url(category, city, state)
-            cards = await _scrape_cards(chrome, url)
+            await chrome.goto(url)
+            await chrome.wait("load")
+            # Let the result feed render (lazy-loaded cards).
+            await asyncio.sleep(3)
+            cards = await _scrape_maps_cards(chrome)
             # Card-level: home-service categories show Website button on card;
             # cards without it are high-confidence no-website candidates.
             for card in cards[:max_candidates]:
