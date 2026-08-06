@@ -33,6 +33,28 @@ def _is_aggregator(url: str) -> bool:
     return any(agg in (url or "").lower() for agg in _AGGREGATORS)
 
 
+# UI labels that the generic extractor picks up from aggregator pages
+# (yellowpages search chrome, bing filter pills, etc.). Not real businesses.
+_GENERIC_LABELS = {
+    "use my location", "default", "distance", "open now", "sort",
+    "filter", "filters", "website", "directions", "call", "reviews",
+    "plumber", "electrician", "hvac", "roofer", "landscaper", "salon",
+    "dentist", "painter", "handyman", "auto repair", "cleaning service",
+    "name", "address", "phone", "more", "see all", "view all",
+}
+
+
+def _is_real_business(card: dict) -> bool:
+    """True only for a plausible business card (name + phone)."""
+    name = (card.get("name") or "").strip()
+    phone = (card.get("phone") or "").strip()
+    if not name or not phone:
+        return False
+    if name.lower() in _GENERIC_LABELS:
+        return False
+    return True
+
+
 def normalize_lead(card: dict, source: str) -> dict:
     """Normalize a raw plugin card into the shared lead shape."""
     name = (card.get("name") or card.get("text") or "").strip()
@@ -265,7 +287,9 @@ async def find_leads(source: str, category: str, city: str, state: str,
     finally:
         if own_chrome:
             await chrome.close()
-    return leads
+    # Only real businesses: name + phone. Aggregator UI labels ('Use my
+    # location') and phone-less rows are noise, not prospects.
+    return [lead for lead in leads if _is_real_business(lead)]
 
 
 async def find_leads_all(category: str, city: str, state: str,

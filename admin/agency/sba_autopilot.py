@@ -194,7 +194,11 @@ class SBAAutopilot:
             for lead in leads:
                 n = (lead.get("name") or "").strip().lower()
                 p = (lead.get("phone") or "").strip()
-                if n and p and (n, p) in existing_keys:
+                # Defensive: scrapers filter these, but never save a lead
+                # without a phone or with a generic UI label as a name.
+                if not n or not p:
+                    continue
+                if (n, p) in existing_keys:
                     continue
                 row = {
                     "name": lead.get("name") or "",
