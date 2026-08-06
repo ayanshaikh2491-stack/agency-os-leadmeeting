@@ -507,6 +507,58 @@ class ChromeTool:
 
         return {"text": "✅ LinkedIn login attempted"}
 
+    async def facebook_login(self, email: str, password: str) -> dict[str, Any]:
+        """Login to Facebook and save cookies (Groups/Marketplace session).
+
+        Client gives email/password once; cookies persist so organic posts
+        reuse the session. Mirrors linkedin_login.
+        """
+        p = await self._ensure_page()
+        if not p:
+            return {"error": "Chrome daemon unavailable"}
+
+        await p.goto("https://www.facebook.com/login", wait_until="domcontentloaded")
+        await self._random_delay(1, 2)
+
+        ctx = self._browser.contexts[0] if self._browser and self._browser.contexts else None
+        cookie_file = f"/tmp/sba_fb_cookies_{self.workspace}.json"
+
+        # Try cookies first
+        if os.path.exists(cookie_file):
+            try:
+                with open(cookie_file) as f:
+                    cookies = json.load(f)
+                if ctx:
+                    await ctx.add_cookies(cookies)
+                await p.goto("https://www.facebook.com/", wait_until="domcontentloaded")
+                await self._random_delay(2, 3)
+                if "login" not in p.url:
+                    return {"text": "✅ Facebook already logged in (via cookies)"}
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Fresh login
+        await self._random_delay(1, 2)
+        email_el = p.locator("#email")
+        pass_el = p.locator("#pass")
+        await email_el.fill(email, delay=random.randint(60, 150))
+        await self._random_delay(0.5, 1.5)
+        await pass_el.fill(password, delay=random.randint(60, 150))
+        await self._random_delay(0.5, 1)
+        await p.locator("[name=login]").click()
+        await self._random_delay(3, 5)
+
+        if "login" in p.url:
+            return {"error": "Facebook login failed (wrong email/password or checkpoint). Check the account."}
+
+        # Save cookies
+        if ctx:
+            cookies = await ctx.cookies()
+            with open(cookie_file, "w") as f:
+                json.dump(cookies, f)
+            return {"text": f"✅ Facebook logged in, {len(cookies)} cookies saved"}
+        return {"text": "✅ Facebook login attempted"}
+
     # ── Stub methods ─────────────────────────────────────────────
 
     async def back(self) -> dict[str, Any]:
