@@ -11,6 +11,22 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# ── Organic engine imports (lazy, so social_tools stays importable standalone) ──
+def _organic_hub():
+    from admin.tools.organic.hub import post as hub_post
+    return hub_post
+
+
+def _organic_registry():
+    from admin.tools.organic.registry import list_channels
+    return list_channels()
+
+
+def _organic_config():
+    from admin.tools.organic.config import get_channel_config, list_channel_configs, save_channel_config
+    return get_channel_config, list_channel_configs, save_channel_config
+
+
 # Platform Intelligence
 
 PLATFORM_INTELLIGENCE = {
@@ -621,20 +637,55 @@ def create_post(topic: str = "", platform: str = "instagram") -> dict[str, Any]:
 
 
 def schedule_post(post_data: dict[str, Any] | None = None, datetime_str: str = "") -> dict[str, Any]:
-    """Post schedule karo (via SocialClaw in production)."""
+    """Schedule a post. If post_data contains 'channel', queue through organic engine (Phase 3 scheduler)."""
+    post_data = post_data or {}
+    if post_data.get("channel"):
+        return {
+            "status": "queued",
+            "scheduled_for": datetime_str,
+            "channel": post_data["channel"],
+            "workspace_id": post_data.get("workspace_id", "default"),
+            "note": "Phase 3 scheduler will dispatch this at the scheduled time",
+        }
     return {
         "status": "scheduled",
         "scheduled_for": datetime_str,
-        "post_data": post_data or {},
+        "post_data": post_data,
         "note": "Production mein SocialClaw API call hoga",
     }
 
 
+def organic_post(channel: str, workspace_id: str, payload: dict) -> dict[str, Any]:
+    """Post to an organic channel (reddit, telegram, twitter, linkedin, pinterest, gbp, facebook)."""
+    hub_post = _organic_hub()
+    return hub_post(channel, workspace_id, payload)
+
+
+def organic_channels(workspace_id: str = "default") -> dict[str, Any]:
+    """List available organic channels + their configs for a workspace."""
+    channels = _organic_registry()
+    _, list_configs, _ = _organic_config()
+    return {"channels": channels, "configs": list_configs(workspace_id)}
+
+
+def organic_save_config(channel: str, workspace_id: str, config: dict) -> dict[str, Any]:
+    """Save per-workspace config for an organic channel (subreddits, chat_id, profile_dir...)."""
+    _, _, save_config = _organic_config()
+    return save_config(workspace_id, channel, config)
+
+
 def post_now(post_data: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Post immediately publish karo."""
+    """Post immediately. If post_data contains 'channel', route through organic engine."""
+    post_data = post_data or {}
+    if post_data.get("channel"):
+        return organic_post(
+            post_data["channel"],
+            post_data.get("workspace_id", "default"),
+            {k: v for k, v in post_data.items() if k not in ("channel", "workspace_id")},
+        )
     return {
         "status": "published",
-        "post_data": post_data or {},
+        "post_data": post_data,
         "published_at": datetime.now().isoformat(),
     }
 
@@ -691,6 +742,9 @@ SOCIAL_TOOLS = [
     {"type": "function", "function": {"name": "create_post", "description": "Create complete post", "parameters": {"type": "object", "properties": {"topic": {"type": "string"}, "platform": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "schedule_post", "description": "Schedule post via SocialClaw", "parameters": {"type": "object", "properties": {"post_data": {"type": "object"}, "datetime_str": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "post_now", "description": "Publish immediately via SocialClaw", "parameters": {"type": "object", "properties": {"post_data": {"type": "object"}}}}},
+    {"type": "function", "function": {"name": "organic_post", "description": "Post to organic channels (reddit, telegram, twitter, linkedin, pinterest, gbp, facebook)", "parameters": {"type": "object", "properties": {"channel": {"type": "string"}, "workspace_id": {"type": "string"}, "payload": {"type": "object"}}}}},
+    {"type": "function", "function": {"name": "organic_channels", "description": "List organic channels and their configs", "parameters": {"type": "object", "properties": {"workspace_id": {"type": "string"}}}}},
+    {"type": "function", "function": {"name": "organic_save_config", "description": "Save channel config (subreddits, chat_id, profile_dir)", "parameters": {"type": "object", "properties": {"channel": {"type": "string"}, "workspace_id": {"type": "string"}, "config": {"type": "object"}}}}},
     {"type": "function", "function": {"name": "social_accounts", "description": "Manage connected accounts", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "content_queue", "description": "View scheduled posts", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "post_analytics", "description": "Track post performance", "parameters": {"type": "object", "properties": {"post_id": {"type": "string"}}}}},
@@ -717,6 +771,9 @@ _TOOL_REGISTRY: dict[str, Any] = {
     "create_post": create_post,
     "schedule_post": schedule_post,
     "post_now": post_now,
+    "organic_post": organic_post,
+    "organic_channels": organic_channels,
+    "organic_save_config": organic_save_config,
     "social_accounts": social_accounts,
     "content_queue": content_queue,
     "post_analytics": post_analytics,
