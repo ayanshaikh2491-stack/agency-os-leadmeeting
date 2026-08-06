@@ -43,6 +43,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
+from admin.agency.social_skills import detect_skills, build_skill_context
 from admin.config import settings
 from admin.tools.social_tools import SOCIAL_TOOLS, execute_social_tool
 from admin.workspace.agent_bus import send_message
@@ -128,6 +129,15 @@ async def social_call_llm(state: SocialAgentState) -> dict[str, Any]:
     )
     messages = [{"role": "system", "content": system}]
     messages.extend(state.get("messages", []))
+
+    # Superpower skill context injection
+    if messages and messages[-1].get("role") == "user":
+        skills = detect_skills(messages[-1]["content"])
+        skill_ctx = build_skill_context(skills)
+        if skill_ctx:
+            messages[-1]["content"] += (
+                "\n\n## Relevant Skills (use these frameworks)\n" + skill_ctx
+            )
 
     client = _get_llm_client()
     model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
