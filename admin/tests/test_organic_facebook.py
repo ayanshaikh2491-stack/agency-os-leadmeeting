@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from admin.tools.organic.facebook_browser import post, _is_marketplace
 
