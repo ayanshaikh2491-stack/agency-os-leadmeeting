@@ -152,6 +152,15 @@ async def sba_autopilot_status():
     return {"status": SBAAutopilot().status()}
 
 
+@router.get("/reasoning")
+async def sba_reasoning(limit: int = 25, event: str = ""):
+    """Show the agent's reasoning journal — why it scored, skipped,
+    rejected, or emailed each lead. `event` filters to one decision type.
+    """
+    from admin.agency import sba_reason as reason
+    return {"events": reason.recent_decisions(limit=limit, event=event or None)}
+
+
 # ── Chat ────────────────────────────────────────────────────────────────────
 
 

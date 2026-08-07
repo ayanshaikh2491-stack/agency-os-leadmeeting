@@ -13,10 +13,14 @@ ADMIN_ROOT = PROJECT_ROOT / "admin"
 
 # ── Free provider defaults ─────────────────────────────────────────────────
 #
-# Default models are free-tier:
+# Default models fall back to Groq's free tier only when .env sets nothing:
 #   Groq →  groq/llama-3.3-70b-versatile  (fast, free, ~30 req/min)
-#         →  groq/llama-3.1-8b-instant     (lightweight workspace agent)
 #   Sign up: https://console.groq.com  →  copy your GROQ_API_KEY
+#
+# PRODUCTION (EC2) and this machine use the owner's OpenAI-compatible key:
+#   base  = https://opencode.ai/zen/v1   (OPENCODE_ZEN_API_KEY / WORKSPACE_API_KEY)
+#   model = big-pickle
+# See .env - those values override the defaults below.
 #
 # Other free options (swap in .env / env vars):
 #   Google Gemini  →  gemini/gemini-2.0-flash          (API key: GEMINI_API_KEY)

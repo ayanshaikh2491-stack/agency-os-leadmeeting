@@ -24,8 +24,8 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from admin.agency import sba_pipeline as pipe  # noqa: E402
+from admin.agency import sba_reason as reason  # noqa: E402
 from admin.agency.sba_pipeline import (  # noqa: E402
-    classify_reply,
     is_owner,
     load_leads,
     owner_notification_body,
@@ -328,6 +328,7 @@ class SBAAutopilot:
                     existing_keys.add((n, p))
 
             added = 0
+            rows: list[dict] = []
             for lead in leads:
                 n = (lead.get("name") or "").strip().lower()
                 p = (lead.get("phone") or "").strip()
@@ -358,10 +359,41 @@ class SBAAutopilot:
                     "workspace_name": "agency",
                     "client_id": "00000000-0000-0000-0000-000000000001",
                 }
+                rows.append(row)
+
+            # The agent thinks about every new lead before it enters the funnel:
+            # score 0-100, an action (contact/wait/skip) and a one-line reason.
+            sem = asyncio.Semaphore(reason.JUDGE_CONCURRENCY)
+
+            async def _judge(row: dict) -> tuple[dict, str]:
+                async with sem:
+                    verdict = await reason.judge_lead(row)
+                raw = dict(row.get("raw") or {})
+                raw["lead_score"] = verdict["score"]
+                raw["lead_reason"] = verdict["reason"]
+                raw["lead_action"] = verdict["action"]
+                row["raw"] = raw
+                reason.log_decision({
+                    "event": "lead_judged",
+                    "name": row.get("name") or "",
+                    "category": category,
+                    "city_state": row.get("city_state") or "",
+                    "verdict": verdict,
+                })
+                return row, verdict["action"]
+
+            if rows:
+                judged = await asyncio.gather(*(_judge(r) for r in rows))
+                rows = [r for r, action in judged if action != "skip"]
+                skipped = sum(1 for _, action in judged if action == "skip")
+                if skipped:
+                    logger.info("agent skipped %d lead(s) as not worth contacting", skipped)
+
+            for row in rows:
                 res = pipe.save_lead(url, key, row)
                 if res is not None:
                     added += 1
-                    existing_keys.add((n, p))
+                    existing_keys.add(((row.get("name") or "").strip().lower(), (row.get("phone") or "").strip()))
             logger.info("autopilot: found %d new leads from %d scraped (%s in %s)",
                         added, len(leads), category, city)
             return added
@@ -450,10 +482,36 @@ class SBAAutopilot:
             return "retry_backoff"
         if not lead_business_hours(lead):
             return "deferred"
+        # LLM second opinion: for consumer/homepage mailboxes (anything that is
+        # NOT the lead's own domain), confirm the address really belongs to this
+        # business before spending a send. A model failure falls back to ok=True
+        # so a flaky model never silently blocks a legitimate mailbox.
+        if provenance != "own_domain":
+            verdict = await reason.verify_email(
+                lead.get("name") or "", email,
+                sources=[lead.get("href") or ""],
+            )
+            if not verdict.get("ok"):
+                reason.log_decision({
+                    "event": "email_rejected",
+                    "name": lead.get("name") or "",
+                    "email": email,
+                    "confidence": verdict.get("confidence"),
+                    "reason": verdict.get("reason") or "not the business",
+                })
+                logger.info("agent rejected email %s for %s: %s",
+                            email, lead.get("name") or "", verdict.get("reason") or "not the business")
+                return "invalid_email"
         subject, body = await draft_email(lead)
         ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
         if ok:
             sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted"})
+            reason.log_decision({
+                "event": "email_sent",
+                "name": lead.get("name") or "",
+                "email": email,
+                "provenance": provenance,
+            })
             return "sent"
         self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
         return "send_failed"
@@ -486,8 +544,18 @@ class SBAAutopilot:
                     sb_patch_lead(url, key, str(lead["id"]), {"status": "rejected"})
                     stats["rejected"] += 1
             else:
-                # Lead reply
-                kind = classify_reply(body)
+                # Lead reply — the agent understands intent (and any meeting
+                # time) before deciding what to do.
+                rep = await reason.understand_reply(body)
+                kind = rep["intent"]
+                meeting_time = rep.get("meeting_time") or ""
+                reason.log_decision({
+                    "event": "reply_understood",
+                    "from": from_addr,
+                    "intent": kind,
+                    "meeting_time": meeting_time,
+                    "reason": rep.get("reason") or "",
+                })
                 lead = next((l for l in leads if (l.get("email") or "").lower() in from_addr.lower()), None)
                 if not lead or kind != "yes":
                     continue
@@ -513,7 +581,8 @@ class SBAAutopilot:
             return stats
         url, key = cfg
         self._enrichments_this_pass = 0
-        leads = load_leads(url, key)
+        # The agent emails the best-scored prospects first within the daily cap.
+        leads = reason.prioritize(load_leads(url, key))
         attempts = 0
         for lead in leads:
             result = await self._email_lead(url, key, lead)
@@ -540,6 +609,10 @@ class SBAAutopilot:
         stats["new_leads_found"] = await self._find_new_leads()
         stats["last_run"] = now_in(OWNER_TZ).isoformat()
         self._last_status = stats
+        reason.log_decision({
+            "event": "pass_summary",
+            "stats": {k: v for k, v in stats.items() if k != "last_run"},
+        })
         logger.info("autopilot pass: %s", stats)
         return stats
 

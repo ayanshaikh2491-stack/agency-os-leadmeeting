@@ -4,6 +4,16 @@ import pytest
 from admin.agency.sba_autopilot import SBAAutopilot, _is_valid_lead_email
 
 
+@pytest.fixture(autouse=True)
+def _no_real_llm(monkeypatch):
+    """Keep the reasoning layer deterministic: the LLM email second-opinion
+    always approves, as if the model agreed the mailbox belongs to the business.
+    (The reasoning layer itself has its own tests in test_sba_reason.py.)"""
+    async def _ok(*args, **kwargs):
+        return {"ok": True, "confidence": 1.0, "reason": "test"}
+    monkeypatch.setattr("admin.agency.sba_reason.verify_email", _ok)
+
+
 class FakeEmailClient:
     def __init__(self):
         self.enabled = True
