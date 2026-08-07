@@ -210,10 +210,20 @@ def _name_tokens(name: str) -> list[str]:
 
 
 def _text_matches_tokens(text: str, tokens: list[str]) -> bool:
+    """Require strong evidence the page IS the business.
+
+    With 2+ distinctive name tokens (e.g. "Midtown Smiles"), BOTH must appear
+    so a same-name other business ("Midtown Comics") can't pass. A single
+    token name only passes if that token appears — acceptable, since the
+    caller's own-website path is always tried first anyway.
+    """
     if not tokens:
         return True  # no distinctive tokens -> don't over-filter
     t = (text or "").lower()
-    return any(tok in t for tok in tokens)
+    matched = [tok for tok in tokens if tok in t]
+    if len(tokens) >= 2:
+        return len(matched) >= 2
+    return len(matched) >= 1
 
 
 def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
@@ -265,6 +275,9 @@ def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
         "school", "academy", "university", "college", "campus", "alumni",
         "wikipedia", "help center", "help centre", "frequently asked",
         "recipes", "how to", "news article", "blog post", "faq",
+        "county", "government", "municipal", "town of", "city of",
+        "foundation", "nonprofit", "non-profit", "chamber of commerce",
+        "association", "ministry", "church", "congregation", "parish",
     )
     if not tokens:
         return True
