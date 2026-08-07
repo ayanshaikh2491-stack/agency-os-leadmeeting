@@ -331,6 +331,7 @@ def test_consumer_email_requires_first_party_provenance():
     assert _is_valid_lead_email("triangleroofingnola@gmail.com", allow_consumer=True) is True
     assert _is_valid_lead_email("you@company.com", allow_consumer=True) is False
     assert _is_valid_lead_email("bd@grubhub.com", allow_consumer=True) is False
+    assert _is_valid_lead_email("investorrelations@wellsfargo.com", allow_consumer=True) is False
     assert _is_valid_lead_email("info@gmail.com", allow_consumer=True) is False
 
 

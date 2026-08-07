@@ -95,6 +95,7 @@ _JUNK_EMAIL_DOMAINS = {
     "github.com", "wikipedia.org", "quora.com", "linkedin.com", "tiktok.com",
     "pinterest.com", "snapchat.com", "whatsapp.com", "telegram.org",
     "starz.com", "visitdallas.com", "jetblue.com", "denison.edu", "hcfl.gov",
+    "wellsfargo.com", "wellsfargoadvisors.com",
     # Media/news/consumer sites whose scraped "emails" are editorial addresses,
     # never a small-business decision maker.
     "wikihow.com", "zhihu.com", "biblegateway.com", "salon.com",
