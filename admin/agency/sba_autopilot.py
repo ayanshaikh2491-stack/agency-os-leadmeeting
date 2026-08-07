@@ -112,6 +112,18 @@ _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
                         "recreationdepartment@", "parkingservices@",
                         "mychartsupport@", "subscriptionsupport@",
                         "guest@", "stop@", "care@", "service@", "name@")
+# Local parts that scream "automated/aggregator", not a human decision maker
+# (ad-alerts@, notifications@, alert@, ...).
+_JUNK_LOCAL_PAT = re.compile(
+    r"(alert|notif|noreply|no-?reply|donotreply|automated|mailer|bounce|"
+    r"postmaster|webmaster|abuse|marketing@|promo@|deals@|offers@)",
+    re.I,
+)
+# A school/university/campus domain is not a small-business decision maker.
+_SCHOOL_DOMAIN_MARKERS = (
+    "school", "academy", "k12", "college", "univ", "campus", "faculty",
+    "alumni", "edu.",
+)
 # HTML/JS-escape leftovers mean the scraped value is a mangled page fragment
 # (e.g. "u003e" is the unicode escape for ">"), not a real mailbox.
 _MALFORMED_TOKENS = ("u003e", "u003c", "%3e", "%3c", "&gt;", "&lt;", "\\u003e", "\\u003c")
@@ -191,11 +203,15 @@ def _is_valid_lead_email(email: str) -> bool:
     if e == "test@example.com" or "example.com" in e:
         return False
     domain = e.split("@", 1)[1]
+    local = e.split("@", 1)[0]
     tld = domain.rsplit(".", 1)[-1]
     if tld in _JUNK_TLDS:
         return False
     # gov/edu/mil — a municipality, school, or military site, not a local biz.
     if domain.endswith(_GOV_EDU_TLDS):
+        return False
+    # School/university/campus domains are never a local business mailbox.
+    if any(m in domain for m in _SCHOOL_DOMAIN_MARKERS):
         return False
     if domain in _JUNK_EMAIL_DOMAINS:
         return False
@@ -203,6 +219,8 @@ def _is_valid_lead_email(email: str) -> bool:
     for prefix in _JUNK_EMAIL_PREFIXES:
         if e.startswith(prefix):
             return False
+    if _JUNK_LOCAL_PAT.search(local):
+        return False
     return True
 
 

@@ -134,6 +134,11 @@ def test_email_validity_filter():
     assert _is_valid_lead_email("hello@realbiz.com") is False
     assert _is_valid_lead_email("stories@realdiner.com") is False
     assert _is_valid_lead_email("jane@realplumbing.com") is True
+    # School domains + automated/aggregator local parts are not targets
+    assert _is_valid_lead_email("mmcnulty@carrollschool.org") is False
+    assert _is_valid_lead_email("ad-alerts@on4u.es") is False
+    assert _is_valid_lead_email("notifications@realdiner.com") is False
+    assert _is_valid_lead_email("webmaster@realdiner.com") is False
 
 
 @pytest.mark.asyncio

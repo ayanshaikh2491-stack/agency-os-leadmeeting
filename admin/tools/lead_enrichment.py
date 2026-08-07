@@ -58,6 +58,18 @@ _JUNK_PREFIXES = (
     "advertise@", "partners@", "founders@", "team@", "privacy@", "legal@",
     "guest@", "stop@", "care@", "service@", "name@",
 )
+# Local parts that scream "automated/aggregator", not a human decision maker
+# (ad-alerts@, notifications@, alert@, ...).
+_JUNK_LOCAL_PAT = re.compile(
+    r"(alert|notif|noreply|no-?reply|donotreply|automated|mailer|bounce|"
+    r"postmaster|webmaster|abuse|marketing@|promo@|deals@|offers@)",
+    re.I,
+)
+# A school/university/campus domain is not a small-business decision maker.
+_SCHOOL_DOMAIN_MARKERS = (
+    "school", "academy", "k12", "college", "univ", "campus", "faculty",
+    "alumni", "edu.",
+)
 # Platform / listing / directory / media domains. A result on one of these is
 # a listing page for the business, NOT the business website. Crawling it is
 # exactly how bd@grubhub.com and stories@wikihow.com got saved.
@@ -162,17 +174,21 @@ def _is_valid_email(email: str) -> bool:
         return False
     if "example.com" in e:
         return False
-    domain = e.split("@", 1)[1]
+    local, domain = e.split("@", 1)[0], e.split("@", 1)[1]
     tld = domain.rsplit(".", 1)[-1]
     if tld in _JUNK_TLDS:
         return False
     if domain.endswith(_GOV_EDU_TLDS):
+        return False
+    if any(m in domain for m in _SCHOOL_DOMAIN_MARKERS):
         return False
     if domain in SKIP_DOMAINS:
         return False
     for prefix in _JUNK_PREFIXES:
         if e.startswith(prefix):
             return False
+    if _JUNK_LOCAL_PAT.search(local):
+        return False
     return True
 
 
@@ -240,8 +256,16 @@ def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
 
     This is the anti-junk gate: grubhub.com/wikihow.com/midtownatl.com never
     mention "Cooper Plumbing" (or whatever the lead is), so they're rejected
-    as crawl targets and their emails are never collected.
+    as crawl targets and their emails are never collected. Pages that look
+    like a school, article, or portal (non-business) are also rejected even
+    when a single name token coincidentally appears (Carroll Family Dental
+    vs carrollschool.org).
     """
+    _NON_BUSINESS_MARKERS = (
+        "school", "academy", "university", "college", "campus", "alumni",
+        "wikipedia", "help center", "help centre", "frequently asked",
+        "recipes", "how to", "news article", "blog post", "faq",
+    )
     if not tokens:
         return True
     for scheme in ("https", "http"):
@@ -257,7 +281,11 @@ def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
                 desc = meta["content"]
             h1 = soup.find("h1")
             h1t = h1.get_text() if h1 else ""
-            if _text_matches_tokens(title + " " + desc + " " + h1t, tokens):
+            page_text = title + " " + desc + " " + h1t
+            low = page_text.lower()
+            if any(m in low for m in _NON_BUSINESS_MARKERS):
+                return False
+            if _text_matches_tokens(page_text, tokens):
                 return True
             return False
         except requests.RequestException:
