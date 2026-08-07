@@ -1,0 +1,15 @@
+[Unit]
+Description=SBA Chrome Daemon - Agency Workspace
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/sba-backend
+ExecStart=/home/ubuntu/sba-backend/venv/bin/python -m admin.tools.browser_daemon --workspace agency
+Restart=always
+RestartSec=3
+StartLimitInterval=0
+
+[Install]
+WantedBy=multi-user.target

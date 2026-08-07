@@ -107,6 +107,7 @@ FILES = [
     "admin/workspace/agents/social.py",
     "admin/workspace/agents/website.py",
     "deploy/sba-autopilot.service",
+    "deploy/sba-chrome.service",
     "docs/sba_autopilot_deploy.md",
 ]
 
