@@ -96,6 +96,8 @@ FILES = [
     "admin/tools/sba_meeting.py",
     "admin/tools/sba_time.py",
     "admin/tools/sba_translate.py",
+    "admin/tools/sba_tools.py",
+    "admin/tools/lead_enrichment.py",
     "admin/tools/social_tools.py",
     "admin/utils/email_sender.py",
     "admin/workspace/agent_bus.py",
@@ -155,6 +157,8 @@ COMPILE_FILES = [
     "admin/tools/sba_meeting.py",
     "admin/tools/sba_time.py",
     "admin/tools/sba_translate.py",
+    "admin/tools/sba_tools.py",
+    "admin/tools/lead_enrichment.py",
     "admin/tools/social_tools.py",
     "admin/utils/email_sender.py",
     "admin/workspace/agent_bus.py",
@@ -293,6 +297,14 @@ def main() -> int:
         log("tzdata installed.")
     else:
         log("tzdata present.")
+
+    # 5b. enrichment deps (requests + bs4) for lead_enrichment.py
+    r = ssh(
+        f"cd {REMOTE_ROOT} && venv/bin/python -c \"import requests, bs4\" "
+        f"|| venv/bin/pip install requests beautifulsoup4; echo DEPS_OK",
+        timeout=240,
+    )
+    log("enrichment deps ready.")
 
     # 6. autopilot unit + swap services
     r = ssh(

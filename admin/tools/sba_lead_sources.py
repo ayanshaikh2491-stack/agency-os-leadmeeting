@@ -215,9 +215,112 @@ def _facebook_url(category: str, city: str, state: str) -> str:
     return f"https://www.facebook.com/search/pages/?q={category.replace(' ', '+')}+{city.replace(' ', '+')}+{state}"
 
 
+# YellowPages search result cards: .result wrapper with h3.n-heading (name),
+# .phones.phone.primary (phone), .street-address + .locality (address), and the
+# website link (.track-visit-website). The generic extractor grabs sidebar/
+# header noise, so we target cards explicitly.
+_YELLOWPAGES_CARDS_JS = r"""
+() => {
+  const phoneRe = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+  const out = [];
+  const seen = new Set();
+  const cards = document.querySelectorAll('.result, div[class*="result"]');
+  for (const c of cards) {
+    const nameEl = c.querySelector('h3.n-heading a, h2 a, a[href*="/yellowpages.com"] .n-business-name, a.business-name, h3 a');
+    if (!nameEl) continue;
+    const name = (nameEl.innerText || '').trim();
+    if (!name || name.length < 2 || seen.has(name)) continue;
+    let phone = '';
+    const phoneEl = c.querySelector('.phones.phone.primary, .phone-primary, div.phone, .phones');
+    if (phoneEl) {
+      const m = (phoneEl.innerText || '').match(phoneRe);
+      if (m) phone = m[0];
+    }
+    if (!phone) {
+      const m = (c.innerText || '').match(phoneRe);
+      if (m) phone = m[0];
+    }
+    const addrEl = c.querySelector('.street-address, .address, div[class*="address"]');
+    const address = (addrEl ? (addrEl.innerText || '').trim() : '');
+    const siteEl = c.querySelector('a[class*="website"], a.track-visit-website, a[href^="http"]');
+    const website = siteEl ? (siteEl.getAttribute('href') || '') : '';
+    seen.add(name);
+    out.push({ name, phone, address, website, href: nameEl.getAttribute('href') || '' });
+  }
+  return out.slice(0, 40);
+}
+"""
+
+# Yelp search result cards: li[data-testid="serp-result"] (or div fallback) with
+# h3/h4 name and a phone in the card body. Yelp often bot-blocks with an empty
+# body; the JS extractor still returns [] gracefully so other sources continue.
+_YELP_CARDS_JS = r"""
+() => {
+  const phoneRe = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+  const out = [];
+  const seen = new Set();
+  const cards = document.querySelectorAll('li[data-testid="serp-result"], div[data-testid="serp-result"], li[data-testid="result"]');
+  for (const c of cards) {
+    const nameEl = c.querySelector('h3 a, h4 a, h3 span, a[href*="/biz/"]');
+    if (!nameEl) continue;
+    const name = (nameEl.innerText || '').trim();
+    if (!name || name.length < 2 || seen.has(name)) continue;
+    const m = (c.innerText || '').match(phoneRe);
+    if (!m) continue;  // Yelp cards without a visible phone are no-prospects
+    const siteEl = c.querySelector('a[href^="http"][rel="noopener"], a[class*="website"]');
+    const website = siteEl ? (siteEl.getAttribute('href') || '') : '';
+    const addrEl = c.querySelector('div[class*="address"], address, div[class*="location"]');
+    seen.add(name);
+    out.push({
+      name,
+      phone: m[0],
+      address: addrEl ? (addrEl.innerText || '').trim() : '',
+      website,
+      href: nameEl.getAttribute('href') || '',
+    });
+  }
+  return out.slice(0, 40);
+}
+"""
+
+
 async def _scrape_cards(chrome: ChromeTool, url: str) -> list[dict]:
     await chrome.goto(url)
     await chrome.wait("load")
+    raw = await chrome.extract(limit=20)
+    return _card_from_items(raw)
+
+
+async def _scrape_yellowpages(chrome: ChromeTool, url: str) -> list[dict]:
+    """YellowPages: JS card extractor with a generic fallback."""
+    await chrome.goto(url)
+    await chrome.wait("load")
+    await asyncio.sleep(1.5)
+    try:
+        cards = await chrome.eval_json(_YELLOWPAGES_CARDS_JS)
+        if isinstance(cards, list) and cards:
+            return cards
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("yellowpages JS extraction failed: %s", exc)
+    raw = await chrome.extract(limit=20)
+    return _card_from_items(raw)
+
+
+async def _scrape_yelp(chrome: ChromeTool, url: str) -> list[dict]:
+    """Yelp: JS card extractor; retry once on empty body (bot-block flake)."""
+    await chrome.goto(url)
+    await chrome.wait("load")
+    await asyncio.sleep(2)
+    cards: list[dict] = []
+    try:
+        cards = await chrome.eval_json(_YELP_CARDS_JS)
+        if not (isinstance(cards, list) and cards):
+            await asyncio.sleep(2)
+            cards = await chrome.eval_json(_YELP_CARDS_JS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("yelp JS extraction failed: %s", exc)
+    if isinstance(cards, list) and cards:
+        return cards
     raw = await chrome.extract(limit=20)
     return _card_from_items(raw)
 
@@ -245,7 +348,7 @@ async def find_leads(source: str, category: str, city: str, state: str,
                 lead["verified"] = True  # maps card pattern; place-page verify optional
                 leads.append(lead)
         elif source == "yelp":
-            cards = await _scrape_cards(chrome, _yelp_url(category, city, state))
+            cards = await _scrape_yelp(chrome, _yelp_url(category, city, state))
             for card in cards[:max_candidates]:
                 lead = normalize_lead(card, source)
                 lead["city"], lead["state"] = city, state
@@ -257,7 +360,7 @@ async def find_leads(source: str, category: str, city: str, state: str,
                     lead["verified"] = True  # no real website -> prospect
                 leads.append(lead)
         elif source == "yellowpages":
-            cards = await _scrape_cards(chrome, _yellowpages_url(category, city, state))
+            cards = await _scrape_yellowpages(chrome, _yellowpages_url(category, city, state))
             for card in cards[:max_candidates]:
                 lead = normalize_lead(card, source)
                 lead["city"], lead["state"] = city, state
@@ -286,7 +389,12 @@ async def find_leads(source: str, category: str, city: str, state: str,
         logger.warning("find_leads(%s) failed: %s", source, exc)
     finally:
         if own_chrome:
-            await chrome.close()
+            # A wedged playwright transport can hang stop() forever; never
+            # let a cleanup call freeze the pipeline (seen: 9h autopilot hang).
+            try:
+                await asyncio.wait_for(chrome.close(), timeout=10)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("chrome.close() after %s timed out: %s", source, exc)
     # Only real businesses: name + phone. Aggregator UI labels ('Use my
     # location') and phone-less rows are noise, not prospects.
     return [lead for lead in leads if _is_real_business(lead)]
@@ -310,5 +418,8 @@ async def find_leads_all(category: str, city: str, state: str,
             await asyncio.sleep(1.0)
     finally:
         if own_chrome:
-            await chrome.close()
+            try:
+                await asyncio.wait_for(chrome.close(), timeout=10)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("chrome.close() after lead pass timed out: %s", exc)
     return dedupe_leads(all_leads)

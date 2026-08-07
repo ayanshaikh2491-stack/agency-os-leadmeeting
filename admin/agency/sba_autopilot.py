@@ -49,6 +49,15 @@ logger = logging.getLogger("sba.autopilot")
 
 INTERVAL_MINUTES = int(os.environ.get("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 DAILY_EMAIL_CAP = int(os.environ.get("SBA_DAILY_EMAIL_CAP", "30"))
+# Hard ceiling for one full pass. A wedged CDP/Supabase call (seen: 9h hang)
+# must not freeze the loop; on timeout the pass is dropped and the browser
+# handle is reset for the next iteration.
+PASS_TIMEOUT_SECONDS = int(os.environ.get("SBA_AUTOPILOT_PASS_TIMEOUT_SECONDS", "1500"))
+# Per-call ceiling for the lead-finding sub-pass (browser scraping).
+LEAD_PASS_TIMEOUT_SECONDS = int(os.environ.get("SBA_LEAD_PASS_TIMEOUT_SECONDS", "900"))
+# Max auto-enrichments (Bing + site crawls) per pass; each lead is retried at
+# most once per 24h so we don't hammer search engines on every cycle.
+MAX_ENRICH_PER_PASS = int(os.environ.get("SBA_MAX_ENRICH_PER_PASS", "8"))
 OWNER_TZ = os.environ.get("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
 # Don't re-hammer a recipient for 24h after an SMTP failure (Gmail 550
 # daily-limit resets next day; retrying every 15 min just burns the limit).
@@ -60,6 +69,16 @@ EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(
 # admissions@a-university, u003eaccountrecovery@deviantart, ...), so we
 # gate sends behind a strict regex + a junk-domain blocklist.
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+# TLDs that are never a real mailbox host (JS bundle filenames, placeholder
+# domains, internal names). "preact@10.5.13.compat.module.min.js" passes the
+# regex above, so we also reject file-extension TLDs and fake TLDs.
+_JUNK_TLDS = {
+    "js", "css", "png", "jpg", "jpeg", "gif", "svg", "webp", "html", "htm",
+    "json", "xml", "php", "local", "internal", "invalid", "test", "example",
+    "localhost", "donotuse", "company", "home", "lan", "intranet",
+}
+# Government/education/ISP-style domains are never a local business target.
+_GOV_EDU_TLDS = ("gov", "edu", "mil")
 _JUNK_EMAIL_DOMAINS = {
     "discord.com", "deviantart.com", "facebook.com", "instagram.com",
     "twitter.com", "x.com", "reddit.com", "youtube.com", "google.com",
@@ -69,13 +88,30 @@ _JUNK_EMAIL_DOMAINS = {
     "github.com", "wikipedia.org", "quora.com", "linkedin.com", "tiktok.com",
     "pinterest.com", "snapchat.com", "whatsapp.com", "telegram.org",
     "starz.com", "visitdallas.com", "jetblue.com", "denison.edu", "hcfl.gov",
+    # Media/news/consumer sites whose scraped "emails" are editorial addresses,
+    # never a small-business decision maker.
+    "wikihow.com", "zhihu.com", "biblegateway.com", "salon.com",
+    "indianexpress.com", "grubhub.com", "rent.com", "joinbelle.com",
+    "repeallouisville.com", "salemwebnetwork.com", "the-uptown.com",
+    "52pojie.cn", "roamartists.com", "sa-comms.com", "whichiscorrect.com",
+    "central.com", "volarerevere.com", "tnvacation.com", "midtownatl.com",
+    "lenoxtools.com", "icstucson.org", "wiltondentalassoc.com",
+    "districtgov.org", "bizjournals.com", "chamberofcommerce.com",
+    "company.com", "yourdomain.com", "sentry.io", "wixpress.com",
+    "godaddy.com", "domainsbyproxy.com", "googleusercontent.com",
 }
+# Domains that look like the *first party* but actually are just a big
+# conglomerate/parent brand — not the local decision maker either.
 _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
                         "noreply@", "no-reply@", "hello@", "help@", "sales@",
                         "billing@", "careers@", "jobs@", "hr@", "pr@",
                         "media@", "newsletter@", "unsubscribe@", "editor@",
                         "tips@", "newsroom@", "submissions@", "stories@",
-                        "advertise@", "partners@", "founders@", "team@")
+                        "advertise@", "partners@", "founders@", "team@",
+                        "privacy@", "legal@", "addressadmissions@",
+                        "recreationdepartment@", "parkingservices@",
+                        "mychartsupport@", "subscriptionsupport@",
+                        "guest@", "stop@", "care@", "service@", "name@")
 # HTML/JS-escape leftovers mean the scraped value is a mangled page fragment
 # (e.g. "u003e" is the unicode escape for ">"), not a real mailbox.
 _MALFORMED_TOKENS = ("u003e", "u003c", "%3e", "%3c", "&gt;", "&lt;", "\\u003e", "\\u003c")
@@ -155,6 +191,12 @@ def _is_valid_lead_email(email: str) -> bool:
     if e == "test@example.com" or "example.com" in e:
         return False
     domain = e.split("@", 1)[1]
+    tld = domain.rsplit(".", 1)[-1]
+    if tld in _JUNK_TLDS:
+        return False
+    # gov/edu/mil — a municipality, school, or military site, not a local biz.
+    if domain.endswith(_GOV_EDU_TLDS):
+        return False
     if domain in _JUNK_EMAIL_DOMAINS:
         return False
     # Generic first-party catch-all prefixes are not a human decision maker.
@@ -174,6 +216,8 @@ class SBAAutopilot:
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
         self._target_idx = 0
         self._email_retry_until: dict[str, float] = {}
+        self._enriched_at: dict[str, float] = {}
+        self._enrichments_this_pass = 0
 
     def status(self) -> dict:
         return dict(self._last_status)
@@ -199,7 +243,12 @@ class SBAAutopilot:
                 "lead rotation: %s in %s, %s (pass %d/%d)",
                 category, city, state, self._target_idx, len(targets),
             )
-            leads = await find_leads_all(category, city, state, max_per_source=5)
+            # Browser scraping can wedge on a dead CDP transport; bound it so
+            # the autopilot loop always survives (previously hung 9h here).
+            leads = await asyncio.wait_for(
+                find_leads_all(category, city, state, max_per_source=5),
+                timeout=LEAD_PASS_TIMEOUT_SECONDS,
+            )
 
             # Dedupe against leads already stored (name + phone).
             existing = load_leads(url, key)
@@ -252,14 +301,70 @@ class SBAAutopilot:
             logger.warning("lead finding pass failed: %s", exc)
             return 0
 
+    async def _enrich_lead_email(self, url: str, key: str, lead: dict) -> str:
+        """Auto-fill a candidate lead's email via safe domain-trust enrichment.
+
+        Only candidate leads get enriched (never re-contact already-contacted
+        ones). The enrichment crawls only domains whose homepage mentions the
+        business name, so grubhub.com/wikihow.com-type junk never gets saved.
+        Returns 'no_email' when nothing trustworthy was found.
+        """
+        name = (lead.get("name") or "").strip()
+        if not name:
+            return "no_email"
+        city_state = lead.get("city_state") or lead.get("context", {}).get("city_state") or ""
+        city = city_state.split(",")[0].strip() if city_state else ""
+        try:
+            from admin.tools.lead_enrichment import find_lead_email
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("lead_enrichment import failed: %s", exc)
+            return "no_email"
+        try:
+            res = await asyncio.wait_for(
+                asyncio.to_thread(
+                    find_lead_email,
+                    name,
+                    city,
+                    lead.get("category") or "",
+                    lead.get("website") or "",
+                    False,  # we PATCH below so failure is logged consistently
+                    lead.get("id"),
+                ),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            logger.info("enrichment timed out for %s", name)
+            return "no_email"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("enrichment failed for %s: %s", name, exc)
+            return "no_email"
+        email = (res or {}).get("email") or ""
+        if email and _is_valid_lead_email(email):
+            logger.info("enriched %s -> %s (sources=%s)", name, email, res.get("domains"))
+            self._email_retry_until.pop(email, None)
+            return email
+        return "no_email"
+
     async def _email_lead(self, url: str, key: str, lead: dict) -> str:
         """Send a professional cold email if lead is in business hours."""
         email = (lead.get("email") or "").strip()
+        status = lead.get("status") or "new"
+        if status in ("contacted", "meeting", "replied", "owner_confirm"):
+            return "already_contacted"
+        if not email and status in ("candidate", "new") and self._enrichments_this_pass < MAX_ENRICH_PER_PASS:
+            # Auto-enrichment: fill real business emails before giving up.
+            # Each lead is tried at most once per 24h (Bing + site crawls are
+            # expensive; a miss today is unlikely to be a hit tomorrow).
+            lid = str(lead.get("id") or "")
+            last_try = self._enriched_at.get(lid, 0.0)
+            if time.time() - last_try > 24 * 3600:
+                self._enriched_at[lid] = time.time()
+                self._enrichments_this_pass += 1
+                email = await self._enrich_lead_email(url, key, lead)
+                if email and not sb_patch_lead(url, key, lid, {"email": email}):
+                    logger.warning("could not persist enriched email for %s", lead.get("name"))
         if not email:
             return "no_email"
-        status = lead.get("status") or "new"
-        if status in ("contacted", "meeting", "replied"):
-            return "already_contacted"
         if not _is_valid_lead_email(email):
             logger.info("skip junk email %s for %s", email, lead.get("name") or "")
             return "invalid_email"
@@ -332,6 +437,7 @@ class SBAAutopilot:
             self._last_status.update(stats)
             return stats
         url, key = cfg
+        self._enrichments_this_pass = 0
         leads = load_leads(url, key)
         attempts = 0
         for lead in leads:
@@ -367,10 +473,35 @@ class SBAAutopilot:
         logger.info("SBA autopilot starting (interval=%dm, cap=%d)", INTERVAL_MINUTES, DAILY_EMAIL_CAP)
         while True:
             try:
-                await self.run_once()
+                # Bound every pass: a wedged CDP/Supabase call must never
+                # freeze the loop (seen: autopilot hung 9h on a dead daemon
+                # connection). Timeout -> log + stale playwright reset.
+                await asyncio.wait_for(self.run_once(), timeout=PASS_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.exception("autopilot pass timed out after %ss — resetting browser handle", PASS_TIMEOUT_SECONDS)
+                # Drop any stale playwright connection so the next pass
+                # reconnects fresh instead of awaiting a dead transport.
+                try:
+                    await asyncio.wait_for(self._reset_chrome(), timeout=15)
+                except Exception:  # noqa: BLE001
+                    logger.warning("chrome handle reset failed (will retry next pass)")
             except Exception as exc:  # noqa: BLE001
                 logger.exception("autopilot iteration failed: %s", exc)
             await asyncio.sleep(INTERVAL_MINUTES * 60)
+
+    async def _reset_chrome(self) -> None:
+        """Best-effort close of the cached ChromeTool connection."""
+        try:
+            from admin.agency import langgraph_sba as lg
+            for ws in list(lg._chrome_registry.keys()):
+                ch = lg._chrome_registry.pop(ws, None)
+                if ch is not None:
+                    try:
+                        await asyncio.wait_for(ch.close(), timeout=10)
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def main() -> None:

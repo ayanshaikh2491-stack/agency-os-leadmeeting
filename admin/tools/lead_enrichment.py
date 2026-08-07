@@ -1,0 +1,432 @@
+"""Lead email enrichment for SBA — powered by Bing RSS search + domain trust.
+
+The SBA agent calls find_lead_email(name, city, category, website) via tool
+dispatch, and the autopilot uses it to auto-fill candidate leads.
+
+Why "domain trust": naive enrichment crawls whatever domains Bing returns,
+which produced junk like bd@grubhub.com (GrubHub listing page), stories@wikihow.com
+(a how-to article), info@midtownatl.com (a visitor site). This module only
+trusts a result domain after (1) it is not a known platform/aggregator/media
+domain, (2) its homepage actually mentions the lead's business name, and
+(3) the email itself passes strict validity rules. If the caller supplies the
+lead's own scraped website, that domain is crawled first and is the only one
+that can override a search result.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import time
+import urllib.parse
+from typing import Any
+
+import requests
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
+
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+# ── Strict validity (mirrors sba_autopilot._is_valid_lead_email) ─────────
+_JUNK_TLDS = {
+    "js", "css", "png", "jpg", "jpeg", "gif", "svg", "webp", "html", "htm",
+    "json", "xml", "php", "local", "internal", "invalid", "test", "example",
+    "localhost", "donotuse", "company", "home", "lan", "intranet",
+}
+_GOV_EDU_TLDS = ("gov", "edu", "mil")
+_BAD_EMAIL_PAT = re.compile(
+    r"(example|sentry|wixpress|yourdomain|email\.com|@2x|\.\.|donotreply|"
+    r"no-reply|noreply|@sentry|@wix|@godaddy|@cloudflare|@googleusercontent|"
+    r"u003e|u003c|%3e|%3c|&gt;|&lt;)",
+    re.I,
+)
+_JUNK_PREFIXES = (
+    "support@", "press@", "info@", "contact@", "admin@", "noreply@",
+    "no-reply@", "hello@", "help@", "sales@", "billing@", "careers@",
+    "jobs@", "hr@", "pr@", "media@", "newsletter@", "unsubscribe@",
+    "editor@", "tips@", "newsroom@", "submissions@", "stories@",
+    "advertise@", "partners@", "founders@", "team@", "privacy@", "legal@",
+    "guest@", "stop@", "care@", "service@", "name@",
+)
+# Platform / listing / directory / media domains. A result on one of these is
+# a listing page for the business, NOT the business website. Crawling it is
+# exactly how bd@grubhub.com and stories@wikihow.com got saved.
+SKIP_DOMAINS = {
+    # Directories & listings
+    "google.com", "google.co.in", "maps.google.com", "facebook.com",
+    "instagram.com", "twitter.com", "x.com", "linkedin.com", "yelp.com",
+    "yellowpages.com", "yellowpages.ca", "bing.com", "duckduckgo.com",
+    "youtube.com", "pinterest.com", "tripadvisor.com", "angieslist.com",
+    "bbb.org", "houzz.com", "thumbtack.com", "nextdoor.com", "foursquare.com",
+    "manta.com", "superpages.com", "whitepages.com", "redfin.com", "zillow.com",
+    "realtor.com", "groupon.com", "birdeye.com", "local.com", "hotfrog.com",
+    "cylex.us.com", "merchantcircle.com", "citysearch.com", "mapquest.com",
+    "chamberofcommerce.com", "bizjournals.com", "zmenu.com", "remax.com",
+    "houseofnames.com", "find-us-here.com", "merchantcircle.com", "n49.com",
+    "brownbook.net", "tupalo.com", "cybo.com", "opendi.com", "yellow.place",
+    "nicelocal.com", "yably.com", "infobel.com", "kompass.com", "europages.com",
+    "theknot.com", "weddingwire.com", "thumbtack.com", "porch.com",
+    "homeadvisor.com", "angie.com", "buildzoom.com", "cnet.com", "cityfos.com",
+    # Food delivery / reservation platforms
+    "grubhub.com", "doordash.com", "ubereats.com", "opentable.com",
+    "resy.com", "eatstreet.com", "postmates.com", "seamless.com",
+    "chownow.com", "toasttab.com", "squareup.com", "square.site",
+    "flexbook.com", "booksy.com", "schedulicity.com", "vagaro.com",
+    "mindbodyonline.com", "acuityscheduling.com", "calendly.com",
+    "styleseat.com", "opencare.com", "zocdoc.com", "healthgrades.com",
+    "webmd.com", "vitals.com", "medicare.gov", "care.com",
+    # Consumer / media / editorial sites
+    "wikihow.com", "zhihu.com", "biblegateway.com", "salon.com",
+    "indianexpress.com", "rent.com", "joinbelle.com", "repeallouisville.com",
+    "salemwebnetwork.com", "the-uptown.com", "52pojie.cn", "roamartists.com",
+    "sa-comms.com", "whichiscorrect.com", "central.com", "volarerevere.com",
+    "tnvacation.com", "midtownatl.com", "lenoxtools.com", "icstucson.org",
+    "wiltondentalassoc.com", "districtgov.org", "wikipedia.org", "quora.com",
+    "gravatar.com", "vimeo.com", "yelp.com", "forbes.com", "usatoday.com",
+    "newsweek.com", "patch.com", "nextdoor.com", "onlyinyourstate.com",
+    # Big brands / parents / placeholder hosts
+    "company.com", "yourdomain.com", "sentry.io", "wixpress.com",
+    "godaddy.com", "domainsbyproxy.com", "googleusercontent.com",
+    "wix.com", "squarespace.com", "godaddysites.com", "webs.com",
+    "weebly.com", "wordpress.com", "blogspot.com", "tumblr.com",
+    "starbucks.com", "mcdonalds.com", "homedepot.com", "lowes.com",
+    "walmart.com", "costco.com", "target.com", "amazon.com", "ebay.com",
+    "etsy.com", "craigslist.org", "yellowbot.com", "cylex.com", "yellowee.com",
+    "spoke.com", "zoominfo.com", "dnb.com", "linkedin.com", "glassdoor.com",
+    "indeed.com", "monster.com", "careerbuilder.com",
+}
+# Common business-name filler words — not distinctive enough to match a
+# homepage against (e.g. "plumbing" matches every plumber's site).
+_BUSINESS_STOPWORDS = {
+    "a", "an", "the", "and", "or", "of", "at", "for", "llc", "inc", "co",
+    "company", "corporation", "corp", "group", "services", "service", "solutions",
+    "plumbing", "hvac", "heating", "cooling", "air", "electric", "electrical",
+    "roofing", "roofer", "landscaping", "landscape", "painting", "painter",
+    "cleaning", "handyman", "repair", "remodeling", "construction", "contractors",
+    "contractor", "salon", "spa", "dental", "dentistry", "dentist", "clinic",
+    "medical", "auto", "cars", "automotive", "mechanic", "barber", "barbing",
+    "studio", "design", "designs", "boutique", "shop", "store", "market",
+    "kitchen", "bath", "restaurant", "cafe", "coffee", "pizza", "bar", "grill",
+    "locksmith", "moving", "movers", "pest", "control", "exterminator",
+    "lawn", "care", "tree", "towing", "garage", "insurance", "financial",
+    "accounting", "tax", "legal", "law", "attorney", "realty", "realtor",
+    "homes", "properties", "property", "estates", "travel", "tours", "hotel",
+    "motel", "inn", "lodging", "pet", "grooming", "veterinary", "vet", "fitness",
+    "gym", "yoga", "beauty", "nails", "lashes", "massage", "transportation",
+    "logistics", "shipping", "supplies", "materials", "products", "systems",
+}
+
+
+def _env(key: str, default: str = "") -> str:
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    for p in (
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"),
+        "/home/ubuntu/sba-backend/.env",
+    ):
+        try:
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith(key + "="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            continue
+    return default
+
+
+def _supabase_config() -> tuple[str, str] | None:
+    url = _env("SUPABASE_URL", "http://18.213.66.136:8050").rstrip("/")
+    key = _env("SUPABASE_SERVICE_KEY", "")
+    if not key:
+        return None
+    return url, key
+
+
+def _is_valid_email(email: str) -> bool:
+    e = (email or "").strip().lower()
+    if not e or not EMAIL_RE.fullmatch(e):
+        return False
+    if _BAD_EMAIL_PAT.search(e):
+        return False
+    if "example.com" in e:
+        return False
+    domain = e.split("@", 1)[1]
+    tld = domain.rsplit(".", 1)[-1]
+    if tld in _JUNK_TLDS:
+        return False
+    if domain.endswith(_GOV_EDU_TLDS):
+        return False
+    if domain in SKIP_DOMAINS:
+        return False
+    for prefix in _JUNK_PREFIXES:
+        if e.startswith(prefix):
+            return False
+    return True
+
+
+def _clean_domain(url: str) -> str:
+    try:
+        dom = urllib.parse.urlparse(url).netloc.lower()
+        return dom[4:] if dom.startswith("www.") else dom
+    except Exception:
+        return ""
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Distinctive searchable tokens from a business name (lowercase)."""
+    out = []
+    for tok in re.findall(r"[a-z0-9]+", (name or "").lower()):
+        if len(tok) >= 4 and tok not in _BUSINESS_STOPWORDS:
+            out.append(tok)
+    return out
+
+
+def _text_matches_tokens(text: str, tokens: list[str]) -> bool:
+    if not tokens:
+        return True  # no distinctive tokens -> don't over-filter
+    t = (text or "").lower()
+    return any(tok in t for tok in tokens)
+
+
+def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
+    """Bing RSS search. Returns [{url, title, desc}]."""
+    for attempt in range(3):
+        try:
+            r = SESSION.get(
+                "https://www.bing.com/search",
+                params={"format": "rss", "q": query, "count": count},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                time.sleep(2)
+                continue
+            soup = BeautifulSoup(r.text, "xml")
+            out = []
+            for item in soup.find_all("item"):
+                title = item.title.get_text() if item.title else ""
+                link = item.link.get_text() if item.link else ""
+                desc = item.description.get_text() if item.description else ""
+                out.append({"url": link, "title": title, "desc": desc})
+            return out
+        except requests.RequestException:
+            time.sleep(2)
+    return []
+
+
+def _extract_emails_from_text(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    found = set()
+    for m in EMAIL_RE.findall(text):
+        if _is_valid_email(m):
+            found.add(m.lower())
+    return found
+
+
+def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
+    """True if the domain's homepage mentions the business name tokens.
+
+    This is the anti-junk gate: grubhub.com/wikihow.com/midtownatl.com never
+    mention "Cooper Plumbing" (or whatever the lead is), so they're rejected
+    as crawl targets and their emails are never collected.
+    """
+    if not tokens:
+        return True
+    for scheme in ("https", "http"):
+        try:
+            r = SESSION.get(f"{scheme}://{domain}/", timeout=timeout, allow_redirects=True)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            title = soup.title.get_text() if soup.title else ""
+            desc = ""
+            meta = soup.find("meta", attrs={"name": "description"})
+            if meta and meta.get("content"):
+                desc = meta["content"]
+            h1 = soup.find("h1")
+            h1t = h1.get_text() if h1 else ""
+            if _text_matches_tokens(title + " " + desc + " " + h1t, tokens):
+                return True
+            return False
+        except requests.RequestException:
+            continue
+        time.sleep(0.3)
+    return False
+
+
+def _crawl_domain(domain: str, timeout: int = 12) -> set[str]:
+    """Fetch homepage + contact/about pages and extract emails."""
+    found = set()
+    for p in ("/", "/contact", "/contact-us", "/about", "/about-us"):
+        for scheme in ("https", "http"):
+            u = f"{scheme}://{domain}{p}"
+            try:
+                r = SESSION.get(u, timeout=timeout, allow_redirects=True)
+                if r.status_code != 200:
+                    continue
+                found |= _extract_emails_from_text(r.text)
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select('a[href^="mailto:"]'):
+                    m = a["href"][7:].split("?")[0]
+                    if _is_valid_email(m):
+                        found.add(m.lower())
+                if found:
+                    return found
+                break
+            except requests.RequestException:
+                continue
+        time.sleep(0.4)
+    return found
+
+
+def find_lead_email(
+    name: str,
+    city: str = "",
+    category: str = "",
+    website: str = "",
+    patch_supabase: bool = True,
+    supabase_id: Any = None,
+) -> dict[str, Any]:
+    """Main entry: find a *verified* email for a lead.
+
+    Order of trust:
+      1. The lead's own website (from the scraper card), if given.
+      2. Bing result domains whose homepage mentions the lead's name.
+    Returns dict with email + sources. Junk domains are never crawled.
+    """
+    name = (name or "").strip().strip('"')
+    city = (city or "").strip()
+    category = (category or "").strip()
+
+    if not name:
+        return {"email": "", "domains": [], "all_emails": [],
+                "sources": [], "patched": False}
+
+    tokens = _name_tokens(name)
+
+    emails: set[str] = set()
+    crawled: list[str] = []
+    search_sources: list[str] = []
+
+    # 1) Own website — highest trust, crawl first.
+    own_domain = _clean_domain(website or "")
+    if own_domain and own_domain not in SKIP_DOMAINS:
+        found = _crawl_domain(own_domain)
+        if found:
+            emails |= found
+            crawled.append(own_domain)
+        search_sources.append(website)
+
+    # 2) Bing search with homepage-name verification.
+    if not emails:
+        queries = []
+        if city and category:
+            queries.append(f'"{name}" {city} {category}')
+        if city:
+            queries.append(f'"{name}" {city}')
+        queries.append(f'"{name}" email')
+        for q in queries[:3]:
+            results = bing_search(q)
+            time.sleep(1.0)
+            for res in results:
+                url = res.get("url", "")
+                dom = _clean_domain(url)
+                if not dom or dom in SKIP_DOMAINS or dom in crawled:
+                    continue
+                # Anti-junk gate: only crawl domains that plausibly ARE the
+                # business (homepage mentions the name). This is what kills
+                # grubhub.com, wikihow.com, midtownatl.com, etc.
+                if not _homepage_check(dom, tokens):
+                    continue
+                found = _crawl_domain(dom)
+                if found:
+                    emails |= found
+                    crawled.append(dom)
+                    search_sources.append(url)
+                    break
+            if emails:
+                break
+
+    best = ""
+    if emails:
+        best = max(emails, key=lambda e: _score_email(e, own_domain))
+
+    patched = False
+    if best and patch_supabase and supabase_id is not None:
+        patched = patch_email(supabase_id, best)
+
+    return {
+        "email": best,
+        "domains": crawled[:3],
+        "all_emails": sorted(emails),
+        "sources": search_sources[:3],
+        "patched": patched,
+    }
+
+
+def _score_email(email: str, own_domain: str) -> int:
+    """Rank candidates: own-domain and person-like local parts win.
+
+    Generic prefixes (info@/contact@) are blocked by validity rules anyway, so
+    never prefer them; a plausible name (john@, service@diy) is a better target.
+    """
+    local = email.split("@", 1)[0].lower()
+    edom = email.split("@", 1)[1].lower()
+    score = 0
+    if own_domain and edom == own_domain:
+        score += 5
+    elif own_domain and edom.endswith("." + own_domain):
+        score += 4
+    if any(k in local for k in ("info", "contact", "hello", "enquiry", "office", "admin", "mail")):
+        score += 1  # valid but weak (rare: these are usually filtered earlier)
+    elif re.search(r"[a-z]", local) and local not in ("info", "contact", "sales", "support", "service"):
+        score += 2  # person-like or business-specific local part
+    if len(local) >= 5:
+        score += 1
+    return score
+
+
+def patch_email(lead_id: Any, email: str) -> bool:
+    cfg = _supabase_config()
+    if not cfg:
+        return False
+    url, key = cfg
+    try:
+        r = SESSION.patch(
+            f"{url}/rest/v1/leads?id=eq.{lead_id}",
+            json={"email": email},
+            headers={
+                "apikey": key,
+                "Authorization": "Bearer " + key,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            timeout=15,
+        )
+        return r.status_code in (200, 201, 204)
+    except requests.RequestException:
+        return False
+
+
+if __name__ == "__main__":
+    import sys
+
+    args = sys.argv[1:]
+    n = args[0] if args else input("Lead name: ")
+    c = args[1] if len(args) > 1 else ""
+    cat = args[2] if len(args) > 2 else ""
+    site = args[3] if len(args) > 3 else ""
+    res = find_lead_email(n, c, cat, website=site, patch_supabase=False)
+    print(json.dumps(res, indent=2, default=str))

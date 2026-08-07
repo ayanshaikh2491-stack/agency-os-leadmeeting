@@ -119,6 +119,58 @@ def test_email_validity_filter():
     assert _is_valid_lead_email("u003epetmd@wrightsmedia.com") is False
     assert _is_valid_lead_email("%3eowner@realbiz.com") is False
     assert _is_valid_lead_email("hello%26gt;x@realbiz.com") is False
+    # Wrong-domain emails seen in production: listing/media/visitor sites
+    assert _is_valid_lead_email("bd@grubhub.com") is False
+    assert _is_valid_lead_email("stories@wikihow.com") is False
+    assert _is_valid_lead_email("info@midtownatl.com") is False
+    assert _is_valid_lead_email("recreationdepartment@districtgov.org") is False
+    assert _is_valid_lead_email("info@chamberofcommerce.com") is False
+    # JS-bundle TLDs and gov/edu/mil are never a local business mailbox
+    assert _is_valid_lead_email("preact@10.5.13.compat.module.min.js") is False
+    assert _is_valid_lead_email("mail@nih.gov") is False
+    assert _is_valid_lead_email("admissions@college.edu") is False
+    assert _is_valid_lead_email("owner@localhost") is False
+    # Generic first-party catch-all prefixes are not a decision maker
+    assert _is_valid_lead_email("hello@realbiz.com") is False
+    assert _is_valid_lead_email("stories@realdiner.com") is False
+    assert _is_valid_lead_email("jane@realplumbing.com") is True
+
+
+@pytest.mark.asyncio
+async def test_run_once_enriches_candidate_without_email(monkeypatch):
+    """A candidate lead with no email gets auto-enriched before the send gate."""
+    import admin.agency.sba_autopilot as mod
+
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "20", "name": "Fresh Plumbing Co", "email": "",
+            "category": "plumber", "state": "TX", "status": "candidate",
+            "city_state": "Austin, TX"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    async def fake_enrich(u, k, l):
+        return "owner@freshplumbingco.com"
+    monkeypatch.setattr(ap, "_enrich_lead_email", fake_enrich)
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["emails_sent"] == 1
+    assert email.sent[0]["to"] == "owner@freshplumbingco.com"
+
+
+def test_enrichment_module_rejects_junk(monkeypatch):
+    """The enrichment module uses the same strict validity as the autopilot."""
+    from admin.tools.lead_enrichment import _is_valid_email, _name_tokens
+
+    assert _is_valid_email("bd@grubhub.com") is False
+    assert _is_valid_email("stories@wikihow.com") is False
+    assert _is_valid_email("info@midtownatl.com") is False
+    assert _is_valid_email("owner@freshplumbingco.com") is True
+    # Business-name tokens drop filler words so homepage matching is precise
+    assert "plumbing" not in _name_tokens("Cooper Plumbing & Air LLC")
+    assert "cooper" in _name_tokens("Cooper Plumbing & Air LLC")
 
 
 class FailingEmailClient:

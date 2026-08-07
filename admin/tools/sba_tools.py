@@ -15,6 +15,8 @@ import logging
 from typing import Any
 
 from admin.agency.sba_store import create_lead, list_leads, update_lead
+from admin.tools.lead_enrichment import find_lead_email as _find_lead_email
+from admin.tools.lead_enrichment import _is_valid_email as _valid_email
 
 logger = logging.getLogger(__name__)
 
@@ -161,8 +163,20 @@ def save_lead_record(
 ) -> dict[str, Any]:
     """Save a lead to the lead store.
 
+    Junk/scraped emails (aggregator, media, placeholder domains) are rejected
+    so bad addresses never enter the pipeline. Use find_lead_email instead.
+
     Returns the created lead record.
     """
+    email = (email or "").strip()
+    if email and not _valid_email(email):
+        return {
+            "status": "error",
+            "error": ("email rejected: looks like a listing/media/placeholder "
+                       f"address ({email}). Call find_lead_email to look up the "
+                       "real business email before saving."),
+        }
+    notes_list = []
     notes_list = []
     if notes:
         notes_list.append({"text": notes, "timestamp": __import__("datetime").datetime.now().isoformat()})
@@ -378,6 +392,23 @@ SBA_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "find_lead_email",
+            "description": "Find a REAL business email for a lead by searching the web and crawling only domains that plausibly belong to the business. Use this instead of copying emails from listing/directory pages (GrubHub, Yelp, wikihow, etc. are rejected). Pass the lead's own website if you have it for the most accurate result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Business/lead name exactly as saved"},
+                    "city": {"type": "string", "description": "City, if known"},
+                    "category": {"type": "string", "description": "Industry/category, e.g. 'plumber'"},
+                    "website": {"type": "string", "description": "Lead's own website URL if known (highest trust source)"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "update_lead_info",
             "description": "Update a lead's info — especially industry/type, needs, scope, next_steps. Call this after meeting with client to save what you learned.",
             "parameters": {
@@ -404,6 +435,7 @@ SBA_TOOL_DISPATCH: dict[str, str] = {
     "save_lead_record": "save_lead_record",
     "list_saved_leads": "list_saved_leads",
     "qualify_lead": "qualify_lead",
+    "find_lead_email": "find_lead_email",
     "update_lead_info": "update_lead_info",
 }
 
@@ -424,6 +456,13 @@ def execute_sba_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             notes=args.get("notes", ""),
         ),
         "list_saved_leads": lambda: list_saved_leads(status=args.get("status")),
+        "find_lead_email": lambda: _find_lead_email(
+            name=args.get("name", ""),
+            city=args.get("city", ""),
+            category=args.get("category", ""),
+            website=args.get("website", ""),
+            patch_supabase=False,
+        ),
         "qualify_lead": lambda: qualify_lead(
             lead_score=args.get("lead_score", 50),
             has_budget=args.get("has_budget", False),
