@@ -59,6 +59,13 @@ LEAD_PASS_TIMEOUT_SECONDS = int(os.environ.get("SBA_LEAD_PASS_TIMEOUT_SECONDS", 
 # most once per 24h so we don't hammer search engines on every cycle.
 MAX_ENRICH_PER_PASS = int(os.environ.get("SBA_MAX_ENRICH_PER_PASS", "8"))
 OWNER_TZ = os.environ.get("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
+# Where the lead-rotation cursor lives so process restarts don't reset it.
+# Without this, every deploy re-scrapes target #0 (all dupes -> 0 new leads).
+_ROTATION_STATE_FILE = os.environ.get(
+    "SBA_ROTATION_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                 ".sba_rotation_state"),
+)
 # Don't re-hammer a recipient for 24h after an SMTP failure (Gmail 550
 # daily-limit resets next day; retrying every 15 min just burns the limit).
 EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(24 * 3600)))
@@ -232,10 +239,24 @@ class SBAAutopilot:
         self.email = email_client or SBAEmailClient()
         self.meetings = meeting_manager or SBAMeetingManager()
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
-        self._target_idx = 0
+        self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
         self._enriched_at: dict[str, float] = {}
         self._enrichments_this_pass = 0
+
+    def _load_rotation_idx(self) -> int:
+        try:
+            with open(_ROTATION_STATE_FILE, encoding="utf-8") as f:
+                return int(f.read().strip() or "0")
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _save_rotation_idx(self, idx: int) -> None:
+        try:
+            with open(_ROTATION_STATE_FILE, "w", encoding="utf-8") as f:
+                f.write(str(idx))
+        except Exception:  # noqa: BLE001
+            pass
 
     def status(self) -> dict:
         return dict(self._last_status)
@@ -257,6 +278,7 @@ class SBAAutopilot:
             targets = _rotation_targets()
             category, city, state = targets[self._target_idx % len(targets)]
             self._target_idx += 1
+            self._save_rotation_idx(self._target_idx)
             logger.info(
                 "lead rotation: %s in %s, %s (pass %d/%d)",
                 category, city, state, self._target_idx, len(targets),
@@ -325,18 +347,18 @@ class SBAAutopilot:
         Only candidate leads get enriched (never re-contact already-contacted
         ones). The enrichment crawls only domains whose homepage mentions the
         business name, so grubhub.com/wikihow.com-type junk never gets saved.
-        Returns 'no_email' when nothing trustworthy was found.
+        Returns '' when nothing trustworthy was found.
         """
         name = (lead.get("name") or "").strip()
         if not name:
-            return "no_email"
+            return ""
         city_state = lead.get("city_state") or lead.get("context", {}).get("city_state") or ""
         city = city_state.split(",")[0].strip() if city_state else ""
         try:
             from admin.tools.lead_enrichment import find_lead_email
         except Exception as exc:  # noqa: BLE001
             logger.warning("lead_enrichment import failed: %s", exc)
-            return "no_email"
+            return ""
         try:
             res = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -352,16 +374,16 @@ class SBAAutopilot:
             )
         except asyncio.TimeoutError:
             logger.info("enrichment timed out for %s", name)
-            return "no_email"
+            return ""
         except Exception as exc:  # noqa: BLE001
             logger.warning("enrichment failed for %s: %s", name, exc)
-            return "no_email"
+            return ""
         email = (res or {}).get("email") or ""
         if email and _is_valid_lead_email(email):
             logger.info("enriched %s -> %s (sources=%s)", name, email, res.get("domains"))
             self._email_retry_until.pop(email, None)
             return email
-        return "no_email"
+        return ""
 
     async def _email_lead(self, url: str, key: str, lead: dict) -> str:
         """Send a professional cold email if lead is in business hours."""

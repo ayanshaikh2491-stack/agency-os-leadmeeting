@@ -178,6 +178,21 @@ def test_enrichment_module_rejects_junk(monkeypatch):
     assert "cooper" in _name_tokens("Cooper Plumbing & Air LLC")
 
 
+def test_rotation_cursor_survives_restart(monkeypatch, tmp_path):
+    """The lead-rotation cursor persists so restarts don't re-scrape target #0."""
+    import admin.agency.sba_autopilot as mod
+
+    state = tmp_path / ".sba_rotation_state"
+    monkeypatch.setattr(mod, "_ROTATION_STATE_FILE", str(state))
+    ap1 = mod.SBAAutopilot()
+    assert ap1._target_idx == 0
+    ap1._target_idx += 1
+    ap1._save_rotation_idx(ap1._target_idx)
+
+    ap2 = mod.SBAAutopilot()  # simulate process restart
+    assert ap2._target_idx == 1
+
+
 class FailingEmailClient:
     """Always fails so we can exercise the SMTP attempt cap + backoff."""
 

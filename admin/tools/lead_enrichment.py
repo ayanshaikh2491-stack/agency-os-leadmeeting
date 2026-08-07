@@ -116,6 +116,18 @@ SKIP_DOMAINS = {
     "etsy.com", "craigslist.org", "yellowbot.com", "cylex.com", "yellowee.com",
     "spoke.com", "zoominfo.com", "dnb.com", "linkedin.com", "glassdoor.com",
     "indeed.com", "monster.com", "careerbuilder.com",
+    # Consumer mailboxes: never a business decision maker's cold-email target.
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.in", "yahoo.co.in",
+    "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com", "msn.com",
+    "aol.com", "icloud.com", "me.com", "mac.com", "proton.me",
+    "protonmail.com", "zoho.com", "qq.com", "163.com", "126.com",
+    "tutanota.com", "gmx.com", "gmx.net", "mail.com", "yandex.com",
+    "yandex.ru", "fastmail.com", "hey.com", "pm.me", "mail.ru",
+    "rediffmail.com", "bol.com.br", "uol.com.br", "web.de", "orange.fr",
+    "wanadoo.fr", "libero.it", "virgilio.it", "t-online.de", "btinternet.com",
+    "sky.com", "virginmedia.com", "cox.net", "verizon.net", "att.net",
+    "sbcglobal.net", "comcast.net", "charter.net", "earthlink.net",
+    "frontiernet.net", "roadrunner.com", "optimum.net", "suddenlink.net",
 }
 # Common business-name filler words — not distinctive enough to match a
 # homepage against (e.g. "plumbing" matches every plumber's site).
