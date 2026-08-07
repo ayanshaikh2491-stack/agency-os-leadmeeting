@@ -261,7 +261,8 @@ class ChromeTool:
         if not p:
             return {"error": "Chrome daemon unavailable"}
         result = await self._safe(
-            p.goto(url, wait_until="domcontentloaded", timeout=45000)
+            p.goto(url, wait_until="domcontentloaded",
+                   timeout=int(os.environ.get("SBA_CHROME_GOTO_TIMEOUT", "120000")))
         )
         await self._random_delay(MIN_DELAY_AFTER_NAV, MAX_DELAY_AFTER_NAV)
         return result
