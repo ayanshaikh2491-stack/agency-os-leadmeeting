@@ -73,10 +73,10 @@ def _ts() -> str:
 # ── Persistence ────────────────────────────────────────────────────────────
 
 
-def load_strategy() -> dict[str, Any]:
+def load_strategy(path: str | None = None) -> dict[str, Any]:
     s = dict(DEFAULT_STRATEGY)
     try:
-        with open(STRATEGY_FILE, encoding="utf-8") as f:
+        with open(path or STRATEGY_FILE, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             for k in DEFAULT_STRATEGY:
@@ -87,10 +87,11 @@ def load_strategy() -> dict[str, Any]:
     return s
 
 
-def save_strategy(s: dict[str, Any]) -> bool:
+def save_strategy(s: dict[str, Any], path: str | None = None) -> bool:
     try:
-        os.makedirs(os.path.dirname(STRATEGY_FILE) or ".", exist_ok=True)
-        with open(STRATEGY_FILE, "w", encoding="utf-8") as f:
+        target = path or STRATEGY_FILE
+        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
             json.dump(s, f, indent=2, default=str)
         return True
     except Exception as exc:  # noqa: BLE001
@@ -98,31 +99,32 @@ def save_strategy(s: dict[str, Any]) -> bool:
         return False
 
 
-def active_strategy() -> dict[str, Any]:
+def active_strategy(path: str | None = None) -> dict[str, Any]:
     """Public snapshot for the dashboard/API (defaults when nothing saved)."""
-    return load_strategy()
+    return load_strategy(path=path)
 
 
 # ── Observation: the agent tracks its own performance ─────────────────────
 
 
-def observe_pass(stats: dict[str, Any]) -> dict[str, Any]:
+def observe_pass(stats: dict[str, Any], path: str | None = None) -> dict[str, Any]:
     """Update streak counters from one pass's results. Never raises."""
-    s = load_strategy()
+    s = load_strategy(path=path)
     leads = int(stats.get("new_leads_found") or 0)
     s["zero_lead_passes"] = 0 if leads > 0 else int(s.get("zero_lead_passes", 0)) + 1
     sent = int(stats.get("emails_sent") or 0)
     signal = int(stats.get("owner_notified") or 0) + int(stats.get("meetings_scheduled") or 0)
     s["zero_reply_passes"] = 0 if (sent == 0 or signal > 0) else int(s.get("zero_reply_passes", 0)) + 1
-    save_strategy(s)
+    save_strategy(s, path=path)
     return s
 
 
-def metrics_from_journal(hours: int | None = None) -> dict[str, Any]:
+def metrics_from_journal(hours: int | None = None, log_path: str | None = None) -> dict[str, Any]:
     """Aggregate the agent's own journal into a performance snapshot.
 
     Only pass summaries inside the window count; an empty journal yields an
     empty snapshot so the loop never wastes a review (or an email) on nothing.
+    log_path selects a per-workspace journal.
     """
     hours = hours or METRICS_WINDOW_HOURS
     now = dt.datetime.now(dt.timezone.utc)
@@ -131,7 +133,7 @@ def metrics_from_journal(hours: int | None = None) -> dict[str, Any]:
     replies_yes = 0
     meetings = 0
     by_category: dict[str, dict[str, int]] = {}
-    for e in reason.recent_decisions(limit=500):
+    for e in reason.recent_decisions(limit=500, log_path=log_path):
         ts = e.get("ts") or ""
         try:
             t = dt.datetime.fromisoformat(ts)
@@ -212,14 +214,16 @@ def _sanitize_review(data: dict[str, Any]) -> dict[str, Any]:
     return {"angle": angle, "focus": focus, "notes": notes, "actions": actions}
 
 
-async def review_strategy(force: bool = False, metrics: dict[str, Any] | None = None) -> dict[str, Any] | None:
+async def review_strategy(force: bool = False, metrics: dict[str, Any] | None = None,
+                         path: str | None = None, log_path: str | None = None) -> dict[str, Any] | None:
     """Ask the LLM to review the strategy and persist the changes.
 
     Never raises and never blocks the loop: on model failure it returns None
-    and the previous strategy stays in place.
+    and the previous strategy stays in place. `path`/`log_path` select a
+    per-workspace strategy file and journal.
     """
-    s = load_strategy()
-    metrics = metrics or metrics_from_journal()
+    s = load_strategy(path=path)
+    metrics = metrics or metrics_from_journal(log_path=log_path)
     if not metrics.get("passes"):
         logger.info("strategy review skipped: no pass data in window")
         return None
@@ -275,52 +279,53 @@ async def review_strategy(force: bool = False, metrics: dict[str, Any] | None = 
         "actions": s["actions"],
     })
     s["history"] = hist[-30:]
-    save_strategy(s)
+    save_strategy(s, path=path)
     reason.log_decision({
         "event": "strategy_review",
         "angle": s["angle"],
         "focus": s["focus"],
         "actions": s["actions"],
         "metrics": {k: v for k, v in metrics.items() if k != "by_category"},
-    })
+    }, log_path=log_path)
     logger.info("strategy reviewed: angle=%r focus=%s", s["angle"], s["focus"])
     return s
 
 
-async def maybe_review(stats: dict[str, Any], force: bool = False) -> dict[str, Any] | None:
+async def maybe_review(stats: dict[str, Any], force: bool = False,
+                       path: str | None = None, log_path: str | None = None) -> dict[str, Any] | None:
     """Called after every pass. Observes results, then reviews when due.
 
     Milestones force an early review: a meeting just booked (the agent wants
     to know why it worked) or an alert-level streak (things are broken).
     """
-    s = observe_pass(stats)
-    metrics = metrics_from_journal()
+    s = observe_pass(stats, path=path)
+    metrics = metrics_from_journal(log_path=log_path)
     milestone = (
         int(stats.get("meetings_scheduled") or 0) > 0
         or int(stats.get("owner_notified") or 0) > 0
         or int(s.get("zero_lead_passes", 0)) >= ALERT_ZERO_LEAD_PASSES
         or int(s.get("zero_reply_passes", 0)) >= ALERT_ZERO_REPLY_PASSES
     )
-    return await review_strategy(force=force or milestone, metrics=metrics)
+    return await review_strategy(force=force or milestone, metrics=metrics, path=path, log_path=log_path)
 
 
 # ── Owner communication: the agent reports to its boss ─────────────────────
 
 
-def digest_kind_needed(stats: dict[str, Any], metrics: dict[str, Any]) -> str:
+def digest_kind_needed(stats: dict[str, Any], metrics: dict[str, Any], path: str | None = None) -> str:
     """Which owner email (if any) is due right now: '' = none."""
-    s = load_strategy()
-    if int(s.get("zero_lead_passes", 0)) >= ALERT_ZERO_LEAD_PASSES and digest_due("alert_leads"):
+    s = load_strategy(path=path)
+    if int(s.get("zero_lead_passes", 0)) >= ALERT_ZERO_LEAD_PASSES and digest_due("alert_leads", path=path):
         return "alert_leads"
-    if int(s.get("zero_reply_passes", 0)) >= ALERT_ZERO_REPLY_PASSES and digest_due("alert_replies"):
+    if int(s.get("zero_reply_passes", 0)) >= ALERT_ZERO_REPLY_PASSES and digest_due("alert_replies", path=path):
         return "alert_replies"
-    if metrics.get("passes") and digest_due("daily"):
+    if metrics.get("passes") and digest_due("daily", path=path):
         return "daily"
     return ""
 
 
-def digest_due(kind: str) -> bool:
-    s = load_strategy()
+def digest_due(kind: str, path: str | None = None) -> bool:
+    s = load_strategy(path=path)
     key = "last_digest" if kind == "daily" else "last_alert"
     last = s.get(key)
     if not last:
@@ -332,10 +337,10 @@ def digest_due(kind: str) -> bool:
     return (dt.datetime.now(dt.timezone.utc) - last_t).total_seconds() >= DIGEST_INTERVAL_SECONDS
 
 
-def mark_digest(kind: str) -> None:
-    s = load_strategy()
+def mark_digest(kind: str, path: str | None = None) -> None:
+    s = load_strategy(path=path)
     s["last_digest" if kind == "daily" else "last_alert"] = _ts()
-    save_strategy(s)
+    save_strategy(s, path=path)
 
 
 def build_digest_body(kind: str, stats: dict[str, Any], metrics: dict[str, Any], strategy: dict[str, Any]) -> str:

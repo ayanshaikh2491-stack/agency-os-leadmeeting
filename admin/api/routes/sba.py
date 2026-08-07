@@ -1056,6 +1056,160 @@ async def sba_manual_pipeline_scan(workspace_id: str = "agency"):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-WORKSPACE SBA — Per-client workspace config, reasoning & strategy
+#══════════════════════════════════════════════════
+
+
+class WorkspaceSBAUpdate(BaseModel):
+    """Ek workspace ki SBA config update karne ka body."""
+    enabled: bool = True
+    owner_email: str = ""
+    industry: str = ""
+
+
+def _workspaces_summary() -> list:
+    """Saare enabled SBA workspaces ka summary — dashboard ke liye.
+
+    Kabhi raise nahi karta: har workspace ki har field safe default ke
+    saath aati hai, chahe Supabase / journal / strategy fail ho jaye.
+    """
+    from admin.agency.sba_biztypes import (
+        get_workspace_config,
+        journal_path,
+        list_sba_workspaces,
+        strategy_path,
+    )
+
+    workspaces = []
+    try:
+        items = list_sba_workspaces()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_sba_workspaces failed: %s", exc)
+        return workspaces
+
+    for ws in items:
+        name = ws.get("name", "")
+        if not name:
+            continue
+        summary = {
+            "name": name,
+            "category": ws.get("category", ""),
+            "enabled": True,
+            "owner_email": ws.get("owner_email", ""),
+            "angle": ws.get("angle", ""),
+            "rotation": ws.get("rotation", []),
+            "leads": 0,
+            "emails_sent": 0,
+            "replies_yes": 0,
+            "meetings": 0,
+            "last_review": None,
+        }
+
+        # ── Workspace config (enabled, owner, angle, rotation) ─────────
+        try:
+            cfg = get_workspace_config(name) or {}
+            summary["enabled"] = bool(cfg.get("enabled", True))
+            summary["category"] = cfg.get("category", summary["category"])
+            summary["owner_email"] = cfg.get("owner_email", summary["owner_email"])
+            summary["angle"] = cfg.get("angle", summary["angle"])
+            summary["rotation"] = cfg.get("rotation", summary["rotation"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_workspace_config(%s) failed: %s", name, exc)
+
+        # ── Lead count (Supabase store; missing workspace_name = "agency")
+        try:
+            from admin.agency.sba_pipeline import load_leads, supabase_config
+
+            cfg_sb = supabase_config()
+            leads = load_leads(cfg_sb[0], cfg_sb[1]) if cfg_sb else []
+            summary["leads"] = len(
+                [l for l in leads if (l.get("workspace_name") or "agency") == name]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("leads count for %s failed: %s", name, exc)
+
+        # ── Journal stats (per-workspace journal path) ────────────────
+        try:
+            from admin.agency import sba_reason as reason
+
+            events = reason.recent_decisions(limit=500, log_path=journal_path(name))
+            summary["emails_sent"] = sum(
+                1 for e in events if e.get("event") == "email_sent"
+            )
+            summary["replies_yes"] = sum(
+                1
+                for e in events
+                if e.get("event") == "reply_understood" and e.get("intent") == "yes"
+            )
+            meetings = 0
+            for e in events:
+                if e.get("event") == "pass_summary":
+                    stats = e.get("stats")
+                    if isinstance(stats, dict):
+                        try:
+                            meetings += int(stats.get("meetings_scheduled", 0) or 0)
+                        except (TypeError, ValueError):
+                            pass
+            summary["meetings"] = meetings
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("journal stats for %s failed: %s", name, exc)
+
+        # ── Last strategy review ───────────────────────────────────────
+        try:
+            from admin.agency import sba_strategy as strat
+
+            summary["last_review"] = strat.load_strategy(
+                path=strategy_path(name)
+            ).get("last_review")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("strategy load for %s failed: %s", name, exc)
+
+        workspaces.append(summary)
+    return workspaces
+
+
+@router.get("/workspaces")
+async def api_sba_workspaces():
+    """Saare SBA workspaces ka summary — leads, emails, replies, meetings, review."""
+    return {"success": True, "workspaces": _workspaces_summary()}
+
+
+@router.post("/workspaces/{name}/sba")
+async def api_sba_workspace_update(name: str, payload: WorkspaceSBAUpdate):
+    """Ek workspace ki SBA config update karo — enable/disable, owner, industry."""
+    from admin.agency.sba_biztypes import set_workspace_config
+
+    set_workspace_config(
+        name,
+        enabled=payload.enabled,
+        owner_email=payload.owner_email,
+        industry=payload.industry,
+    )
+    return {"success": True, "workspaces": _workspaces_summary()}
+
+
+@router.get("/workspaces/{name}/reasoning")
+async def api_sba_workspace_reasoning(name: str, limit: int = 25):
+    """Ek workspace ka reasoning journal — iske leads ke saare decisions."""
+    from admin.agency import sba_reason as reason
+    from admin.agency.sba_biztypes import journal_path
+
+    events = reason.recent_decisions(limit=limit, log_path=journal_path(name))
+    return {"events": events, "workspace": name}
+
+
+@router.get("/workspaces/{name}/strategy")
+async def api_sba_workspace_strategy(name: str):
+    """Ek workspace ki active strategy — angle, focus, actions, history."""
+    from admin.agency import sba_strategy as strat
+    from admin.agency.sba_biztypes import strategy_path
+
+    return {
+        "success": True,
+        "data": strat.active_strategy(path=strategy_path(name)),
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SBA ULTIMATE — New Email/Meeting/Translate Endpoints
 #══════════════════════════════════════════════════════════════════
 

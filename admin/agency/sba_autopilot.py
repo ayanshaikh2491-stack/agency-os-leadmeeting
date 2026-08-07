@@ -27,7 +27,6 @@ from admin.agency import sba_pipeline as pipe  # noqa: E402
 from admin.agency import sba_reason as reason  # noqa: E402
 from admin.agency import sba_strategy as strat  # noqa: E402
 from admin.agency.sba_pipeline import (  # noqa: E402
-    is_owner,
     load_leads,
     owner_notification_body,
     parse_owner_command,
@@ -274,28 +273,53 @@ def _is_valid_lead_email(email: str, allow_consumer: bool = False) -> bool:
 
 
 class SBAAutopilot:
-    """Always-on autonomous SBA loop."""
+    """Always-on autonomous SBA loop for one workspace.
+
+    Each workspace gets its own agent: its own lead pool (workspace_name),
+    niche rotation, strategy file, reasoning journal, and owner email. The
+    agency workspace ("agency") behaves exactly as before.
+    """
 
     def __init__(self, email_client: SBAEmailClient | None = None,
-                 meeting_manager: SBAMeetingManager | None = None) -> None:
+                 meeting_manager: SBAMeetingManager | None = None,
+                 workspace_name: str = "agency",
+                 owner_email: str | None = None) -> None:
         self.email = email_client or SBAEmailClient()
         self.meetings = meeting_manager or SBAMeetingManager()
+        self.workspace_name = workspace_name or "agency"
+        # Per-workspace state: rotation, strategy file, journal, owner email.
+        try:
+            from admin.agency import sba_biztypes as biztypes
+            cfg = biztypes.get_workspace_config(self.workspace_name)
+            self._rotation = list(cfg.get("rotation") or _rotation_targets())
+            self._rotation_state_file = biztypes.rotation_state_path(self.workspace_name)
+            self._strategy_path = biztypes.strategy_path(self.workspace_name)
+            self._journal_path = biztypes.journal_path(self.workspace_name)
+            self._owner_email = owner_email or cfg.get("owner_email") or ""
+        except Exception:  # noqa: BLE001
+            logger.warning("biztypes config failed for %r, using defaults", self.workspace_name)
+            self._rotation = list(_rotation_targets())
+            self._rotation_state_file = _ROTATION_STATE_FILE
+            self._strategy_path = strat.STRATEGY_FILE
+            self._journal_path = reason.REASON_LOG
+            self._owner_email = owner_email or ""
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
         self._enriched_at: dict[str, float] = {}
         self._enrichments_this_pass = 0
+        self._last_notified_lead_id: str | None = None
 
     def _load_rotation_idx(self) -> int:
         try:
-            with open(_ROTATION_STATE_FILE, encoding="utf-8") as f:
+            with open(self._rotation_state_file, encoding="utf-8") as f:
                 return int(f.read().strip() or "0")
         except Exception:  # noqa: BLE001
             return 0
 
     def _save_rotation_idx(self, idx: int) -> None:
         try:
-            with open(_ROTATION_STATE_FILE, "w", encoding="utf-8") as f:
+            with open(self._rotation_state_file, "w", encoding="utf-8") as f:
                 f.write(str(idx))
         except Exception:  # noqa: BLE001
             pass
@@ -317,7 +341,7 @@ class SBAAutopilot:
             if not cfg:
                 return 0
             url, key = cfg
-            targets = _rotation_targets()
+            targets = self._rotation or _rotation_targets()
             category, city, state = targets[self._target_idx % len(targets)]
             self._target_idx += 1
             self._save_rotation_idx(self._target_idx)
@@ -332,10 +356,12 @@ class SBAAutopilot:
                 timeout=LEAD_PASS_TIMEOUT_SECONDS,
             )
 
-            # Dedupe against leads already stored (name + phone).
+            # Dedupe against leads already stored for THIS workspace (name + phone).
             existing = load_leads(url, key)
             existing_keys = set()
             for l in existing:
+                if (l.get("workspace_name") or "agency") != self.workspace_name:
+                    continue
                 n = (l.get("name") or "").strip().lower()
                 p = (l.get("phone") or "").strip()
                 if n and p:
@@ -370,7 +396,7 @@ class SBAAutopilot:
                                      "state", "href", "address", "website", "text")
                     },
                     "status": "candidate",
-                    "workspace_name": "agency",
+                    "workspace_name": self.workspace_name,
                     "client_id": "00000000-0000-0000-0000-000000000001",
                 }
                 rows.append(row)
@@ -393,7 +419,7 @@ class SBAAutopilot:
                     "category": category,
                     "city_state": row.get("city_state") or "",
                     "verdict": verdict,
-                })
+                }, log_path=self._journal_path)
                 return row, verdict["action"]
 
             if rows:
@@ -512,7 +538,7 @@ class SBAAutopilot:
                     "email": email,
                     "confidence": verdict.get("confidence"),
                     "reason": verdict.get("reason") or "not the business",
-                })
+                }, log_path=self._journal_path)
                 logger.info("agent rejected email %s for %s: %s",
                             email, lead.get("name") or "", verdict.get("reason") or "not the business")
                 return "invalid_email"
@@ -526,10 +552,35 @@ class SBAAutopilot:
                 "email": email,
                 "provenance": provenance,
                 "category": lead.get("category") or "",
-            })
+            }, log_path=self._journal_path)
             return "sent"
         self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
         return "send_failed"
+
+    def _is_owner(self, from_addr: str) -> bool:
+        """True when the reply came from this workspace's owner (the agency
+        owner or the client workspace's owner_email) — such replies are owner
+        commands, not lead replies."""
+        low = (from_addr or "").lower()
+        candidates = {OWNER_EMAIL, self._owner_email}
+        return any(bool(e) and e.lower() in low for e in candidates)
+
+    def _resolve_owner_lead(self, cmd_lead_id: str, leads: list[dict]) -> dict | None:
+        """The lead an owner reply refers to: try the id embedded in the reply,
+        then the lead we last notified this owner about, then any lead waiting
+        on owner confirmation."""
+        if cmd_lead_id:
+            for l in leads:
+                if str(l.get("id")) == str(cmd_lead_id):
+                    return l
+        if self._last_notified_lead_id:
+            for l in leads:
+                if str(l.get("id")) == str(self._last_notified_lead_id):
+                    return l
+        for l in leads:
+            if (l.get("status") or "") == "owner_confirm":
+                return l
+        return None
 
     async def _process_replies(self, url: str, key: str, leads: list[dict]) -> dict[str, int]:
         stats = {"owner_notified": 0, "meetings_scheduled": 0, "rejected": 0}
@@ -538,13 +589,20 @@ class SBAAutopilot:
             from_addr = rep.get("from_addr", "")
             body = rep.get("body_preview", "") or rep.get("body_full", "")
             subject = rep.get("subject", "")
-            if is_owner(from_addr):
+            if self._is_owner(from_addr):
                 cmd = parse_owner_command(subject, body)
-                lead = next((l for l in leads if str(l.get("id")) == str(cmd.get("lead_id"))), None)
+                lead = self._resolve_owner_lead(cmd.get("lead_id") or "", leads)
                 if not lead or cmd.get("action") == "unknown":
                     continue
                 if cmd["action"] == "haan":
-                    iso, text = meeting_slot(lead, OWNER_TZ)
+                    hour = None
+                    t = cmd.get("time") or ""
+                    if t and len(t) >= 2:
+                        try:
+                            hour = int(t[:2])
+                        except (TypeError, ValueError):
+                            hour = None
+                    iso, text = meeting_slot(lead, OWNER_TZ, hour=hour)
                     await self.meetings.create_meeting(
                         lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
                         lead_email=lead.get("email") or "", proposed_time=iso,
@@ -570,14 +628,18 @@ class SBAAutopilot:
                     "intent": kind,
                     "meeting_time": meeting_time,
                     "reason": rep.get("reason") or "",
-                })
+                }, log_path=self._journal_path)
                 lead = next((l for l in leads if (l.get("email") or "").lower() in from_addr.lower()), None)
                 if not lead or kind != "yes":
                     continue
+                # The workspace owner (client or agency) is the one who must
+                # book the meeting, not the lead who just said "yes".
+                owner_to = self._owner_email or OWNER_EMAIL
                 await self.email.send_email(
-                    to_email=from_addr, subject="Lead interested!",
+                    to_email=owner_to, subject="New interested lead!",
                     body_text=owner_notification_body(lead, body[:300]), cc_owner=True,
                 )
+                self._last_notified_lead_id = str(lead.get("id") or "")
                 sb_patch_lead(url, key, str(lead["id"]), {"status": "owner_confirm"})
                 stats["owner_notified"] += 1
         return stats
@@ -597,9 +659,12 @@ class SBAAutopilot:
         url, key = cfg
         self._enrichments_this_pass = 0
         # Layer 3: the agent's own current message angle (from its last review).
-        angle = strat.load_strategy().get("angle") or None
-        # The agent emails the best-scored prospects first within the daily cap.
-        leads = reason.prioritize(load_leads(url, key))
+        angle = strat.load_strategy(path=self._strategy_path).get("angle") or None
+        # The agent emails the best-scored prospects first within the daily cap,
+        # from THIS workspace's own lead pool only.
+        all_leads = load_leads(url, key)
+        ws_leads = [l for l in all_leads if (l.get("workspace_name") or "agency") == self.workspace_name]
+        leads = reason.prioritize(ws_leads)
         attempts = 0
         for lead in leads:
             result = await self._email_lead(url, key, lead, angle=angle)
@@ -628,32 +693,34 @@ class SBAAutopilot:
         self._last_status = stats
         reason.log_decision({
             "event": "pass_summary",
+            "workspace": self.workspace_name,
             "stats": {k: v for k, v in stats.items() if k != "last_run"},
-        })
+        }, log_path=self._journal_path)
         await self._learn_and_report(stats)
         logger.info("autopilot pass: %s", stats)
         return stats
 
     async def _learn_and_report(self, stats: dict[str, Any]) -> None:
         """Layer 2 + 3: observe this pass, review strategy when due, and email
-        the owner a digest/alert when something important happened. Never
-        blocks the loop (all failures are caught inside strat)."""
+        the workspace owner a digest/alert when something important happened.
+        Never blocks the loop (all failures are caught inside strat)."""
         try:
-            s = await strat.maybe_review(stats)
+            s = await strat.maybe_review(stats, path=self._strategy_path, log_path=self._journal_path)
         except Exception as exc:  # noqa: BLE001
             logger.warning("strategy review failed: %s", exc)
-            s = strat.load_strategy()
-        if not (self.email.enabled and OWNER_EMAIL):
+            s = strat.load_strategy(path=self._strategy_path)
+        owner_to = self._owner_email or OWNER_EMAIL
+        if not (self.email.enabled and owner_to):
             return
         try:
-            metrics = strat.metrics_from_journal()
-            kind = strat.digest_kind_needed(stats, metrics)
+            metrics = strat.metrics_from_journal(log_path=self._journal_path)
+            kind = strat.digest_kind_needed(stats, metrics, path=self._strategy_path)
             if not kind:
                 return
             body = strat.build_digest_body(kind, stats, metrics, s)
             subject = strat.OWNER_DIGEST_SUBJECTS[kind]
-            await self.email.send_email(to_email=OWNER_EMAIL, subject=subject, body_text=body, cc_owner=False)
-            strat.mark_digest(kind)
+            await self.email.send_email(to_email=owner_to, subject=subject, body_text=body, cc_owner=False)
+            strat.mark_digest(kind, path=self._strategy_path)
             logger.info("owner %s email sent (%s)", kind, subject)
         except Exception as exc:  # noqa: BLE001
             logger.warning("owner digest email failed: %s", exc)
@@ -694,10 +761,60 @@ class SBAAutopilot:
             pass
 
 
+class SBAWorkspaceRunner:
+    """Runs one SBA pass for every enabled workspace (agency + clients).
+
+    Each workspace gets its own SBAAutopilot instance (own leads, rotation,
+    strategy, journal, owner email). One service runs them all in sequence so
+    the lead-finding browser work never overlaps between workspaces.
+    """
+
+    def __init__(self) -> None:
+        self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
+
+    async def run_all_once(self) -> dict[str, Any]:
+        from admin.agency import sba_biztypes as biztypes
+        stats: dict[str, Any] = {}
+        for ws in biztypes.list_sba_workspaces():
+            name = ws.get("name") or "agency"
+            try:
+                ap = SBAAutopilot(workspace_name=name, owner_email=ws.get("owner_email") or "")
+                s = await asyncio.wait_for(ap.run_once(), timeout=PASS_TIMEOUT_SECONDS)
+                stats[name] = {k: v for k, v in s.items() if k != "last_run"}
+            except asyncio.TimeoutError:
+                logger.exception("workspace %s pass timed out", name)
+                stats[name] = {"timeout": True}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("workspace %s pass failed: %s", name, exc)
+                stats[name] = {"error": str(exc)[:200]}
+        self._last_status = {
+            "started": self._last_status.get("started"),
+            "last_run": now_in(OWNER_TZ).isoformat(),
+            "workspaces": stats,
+        }
+        return stats
+
+    async def run_forever(self) -> None:
+        logger.info("SBA workspace runner starting (interval=%dm)", INTERVAL_MINUTES)
+        while True:
+            try:
+                await asyncio.wait_for(self.run_all_once(), timeout=max(PASS_TIMEOUT_SECONDS * 4, 600))
+            except asyncio.TimeoutError:
+                logger.exception("workspace runner pass timed out")
+                try:
+                    ap = SBAAutopilot(workspace_name="agency")
+                    await asyncio.wait_for(ap._reset_chrome(), timeout=15)
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("workspace runner pass failed: %s", exc)
+            await asyncio.sleep(INTERVAL_MINUTES * 60)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    ap = SBAAutopilot()
-    asyncio.run(ap.run_forever())
+    runner = SBAWorkspaceRunner()
+    asyncio.run(runner.run_forever())
 
 
 if __name__ == "__main__":

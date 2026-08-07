@@ -159,10 +159,13 @@ def prioritize(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(leads, key=lambda l: -_score(l))
 
 
-def log_decision(entry: dict[str, Any]) -> None:
-    """Append one reasoning line to the decision journal (JSONL)."""
+def log_decision(entry: dict[str, Any], log_path: str | None = None) -> None:
+    """Append one reasoning line to the decision journal (JSONL).
+
+    log_path overrides the global journal (used for per-workspace journals).
+    """
     try:
-        path = REASON_LOG
+        path = log_path or REASON_LOG
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         entry = dict(entry)
         entry.setdefault("ts", dt.datetime.now(dt.timezone.utc).isoformat())
@@ -172,11 +175,11 @@ def log_decision(entry: dict[str, Any]) -> None:
         logger.debug("log_decision failed: %s", exc)
 
 
-def recent_decisions(limit: int = 50, event: str | None = None) -> list[dict[str, Any]]:
+def recent_decisions(limit: int = 50, event: str | None = None, log_path: str | None = None) -> list[dict[str, Any]]:
     """Tail of the decision journal (newest first), for the dashboard/API."""
     out: list[dict[str, Any]] = []
     try:
-        with open(REASON_LOG, encoding="utf-8") as f:
+        with open(log_path or REASON_LOG, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

@@ -94,15 +94,18 @@ def next_business_time(lead: dict, tz: str | None = None) -> str:
         candidate += dt.timedelta(days=1)
 
 
-def meeting_slot(lead: dict, owner_tz: str = OWNER_TZ) -> tuple[str, str]:
+def meeting_slot(lead: dict, owner_tz: str = OWNER_TZ, hour: int | None = None) -> tuple[str, str]:
     """Pick the lead's next business morning at 10:00 local (skips weekends/past).
 
-    Returns (iso UTC datetime, human text like "India raat 8:30 = US subah 10").
+    Pass ``hour`` (0-23 local) when the owner asked for a specific time like
+    "haan 3 baje". Returns (iso UTC datetime, human text like "India raat
+    8:30 = US subah 10").
     """
+    h = hour if isinstance(hour, int) and 0 <= hour <= 23 else 10
     lead_tz = lead_timezone(lead)
     lead_now = now_in(lead_tz)
-    # Lead's next business morning 10:00 local
-    slot = lead_now.replace(hour=10, minute=0, second=0, microsecond=0)
+    # Lead's next business morning at h:00 local
+    slot = lead_now.replace(hour=h, minute=0, second=0, microsecond=0)
     if slot <= lead_now or slot.weekday() >= 6:
         slot += dt.timedelta(days=1)
         while slot.weekday() >= 6:
