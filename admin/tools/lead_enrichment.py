@@ -128,6 +128,12 @@ SKIP_DOMAINS = {
     "sky.com", "virginmedia.com", "cox.net", "verizon.net", "att.net",
     "sbcglobal.net", "comcast.net", "charter.net", "earthlink.net",
     "frontiernet.net", "roadrunner.com", "optimum.net", "suddenlink.net",
+    # Big media/brand sites. These can match short name tokens by accident
+    # (e.g. "Paw Wow" vs Paramount's "Paw Patrol") and should never be crawled
+    # as a lead's business website.
+    "pluto.tv", "paramountplus.com", "paramount.com", "netflix.com",
+    "hulu.com", "disneyplus.com", "hbomax.com", "max.com", "peacocktv.com",
+    "apple.com", "spotify.com", "pandora.com",
 }
 # Common business-name filler words — not distinctive enough to match a
 # homepage against (e.g. "plumbing" matches every plumber's site).
@@ -221,21 +227,45 @@ def _name_tokens(name: str) -> list[str]:
     return out
 
 
-def _text_matches_tokens(text: str, tokens: list[str]) -> bool:
+# Words that add no identity to the full-name phrase (legal suffixes and pure
+# filler). Unlike _BUSINESS_STOPWORDS these are dropped from the PHRASE too, so
+# "Cooper Plumbing & Air LLC" matches a site titled "Cooper Plumbing & Air".
+_PHRASE_FILLERS = {
+    "a", "an", "the", "and", "of", "for", "at", "or",
+    "llc", "inc", "co", "corp", "ltd", "company", "dba",
+}
+
+
+def _name_phrase(name: str) -> str:
+    """Normalized contiguous business-name phrase, e.g. 'J & E Express Auto'
+    -> 'j e express auto'. Used when distinctive tokens are too weak to match
+    against (short names like 'Paw Wow' would otherwise let ANY page pass)."""
+    return " ".join(
+        w for w in re.findall(r"[a-z0-9]+", (name or "").lower())
+        if len(w) >= 2 and w not in _PHRASE_FILLERS
+    )
+
+
+def _text_matches_tokens(text: str, tokens: list[str], phrase: str = "") -> bool:
     """Require strong evidence the page IS the business.
 
-    With 2+ distinctive name tokens (e.g. "Midtown Smiles"), BOTH must appear
-    so a same-name other business ("Midtown Comics") can't pass. A single
-    token name only passes if that token appears — acceptable, since the
-    caller's own-website path is always tried first anyway.
+    With 2+ distinctive name tokens (e.g. "Midtown Smiles"), ALL must appear
+    so a same-name other business ("Midtown Comics") can't pass. With 0-1
+    distinctive tokens (short names like "Paw Wow", "Ace Plumbing"), substring
+    matching is far too loose: a media page can mention "paw"/"wow" separately
+    (Paramount's "Paw Patrol") or a generic word alone. Those names only pass
+    when the FULL contiguous name phrase appears on the page.
     """
-    if not tokens:
-        return True  # no distinctive tokens -> don't over-filter
     t = (text or "").lower()
-    matched = [tok for tok in tokens if tok in t]
     if len(tokens) >= 2:
-        return len(matched) >= 2
-    return len(matched) >= 1
+        return all(tok in t for tok in tokens)
+    # 0 or 1 distinctive token -> the contiguous full-name phrase must appear.
+    # Normalize the text the same way as the phrase so '&', '-', '/' etc. don't
+    # break "cooper plumbing air" vs "Cooper Plumbing & Air".
+    if not phrase:
+        return False
+    nt = " ".join(re.findall(r"[a-z0-9]+", t))
+    return phrase in nt
 
 
 def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
@@ -273,15 +303,18 @@ def _extract_emails_from_text(text: str | None) -> set[str]:
     return found
 
 
-def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
-    """True if the domain's homepage mentions the business name tokens.
+def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int = 10) -> bool:
+    """True if the domain's homepage mentions the business name.
 
     This is the anti-junk gate: grubhub.com/wikihow.com/midtownatl.com never
     mention "Cooper Plumbing" (or whatever the lead is), so they're rejected
-    as crawl targets and their emails are never collected. Pages that look
-    like a school, article, or portal (non-business) are also rejected even
-    when a single name token coincidentally appears (Carroll Family Dental
-    vs carrollschool.org).
+    as crawl targets and their emails are never collected. Short names with no
+    distinctive tokens ("Paw Wow") only pass when their FULL name phrase is on
+    the page, so a media site that coincidentally mentions "paw"/"wow"
+    (Paramount's "Paw Patrol") can't slip through. Pages that look like a
+    school, article, or portal (non-business) are also rejected even when a
+    single name token coincidentally appears (Carroll Family Dental vs
+    carrollschool.org).
     """
     _NON_BUSINESS_MARKERS = (
         "school", "academy", "university", "college", "campus", "alumni",
@@ -291,8 +324,9 @@ def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
         "foundation", "nonprofit", "non-profit", "chamber of commerce",
         "association", "ministry", "church", "congregation", "parish",
     )
-    if not tokens:
-        return True
+    if not tokens and not name:
+        return False  # nothing to match against -> never trust a random domain
+    phrase = _name_phrase(name)
     for scheme in ("https", "http"):
         try:
             r = SESSION.get(f"{scheme}://{domain}/", timeout=timeout, allow_redirects=True)
@@ -310,7 +344,7 @@ def _homepage_check(domain: str, tokens: list[str], timeout: int = 10) -> bool:
             low = page_text.lower()
             if any(m in low for m in _NON_BUSINESS_MARKERS):
                 return False
-            if _text_matches_tokens(page_text, tokens):
+            if _text_matches_tokens(page_text, tokens, phrase):
                 return True
             return False
         except requests.RequestException:
@@ -400,8 +434,8 @@ def find_lead_email(
                     continue
                 # Anti-junk gate: only crawl domains that plausibly ARE the
                 # business (homepage mentions the name). This is what kills
-                # grubhub.com, wikihow.com, midtownatl.com, etc.
-                if not _homepage_check(dom, tokens):
+                # grubhub.com, wikihow.com, midtownatl.com, pluto.tv, etc.
+                if not _homepage_check(dom, tokens, name):
                     continue
                 found = _crawl_domain(dom)
                 if found:

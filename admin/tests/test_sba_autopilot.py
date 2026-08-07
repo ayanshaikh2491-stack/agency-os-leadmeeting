@@ -178,6 +178,42 @@ def test_enrichment_module_rejects_junk(monkeypatch):
     assert "cooper" in _name_tokens("Cooper Plumbing & Air LLC")
 
 
+def test_homepage_gate_needs_phrase_for_short_names():
+    """Short names with no distinctive tokens ("Paw Wow") must NOT let a random
+    media page pass just because it mentions 'paw'/'wow' separately (the
+    lgsupport@pluto.tv / paramountplus.com regression)."""
+    from admin.tools.lead_enrichment import _name_phrase, _name_tokens, _text_matches_tokens
+
+    tokens = _name_tokens("Paw Wow")
+    phrase = _name_phrase("Paw Wow")
+    assert tokens == []  # both words are too short to be distinctive
+    assert phrase == "paw wow"
+
+    # A streaming/media page mentioning the words separately must be rejected.
+    media_title = "Paramount+ | Stream Movies, Series & Live TV | Paw Patrol, Sports & Wow"
+    assert _text_matches_tokens(media_title, tokens, phrase) is False
+    # The real grooming business's page (full name present) passes.
+    real_title = "Paw Wow Grooming | Las Vegas Pet Spa"
+    assert _text_matches_tokens(real_title, tokens, phrase) is True
+
+    # 1 distinctive token: token alone is not enough, the full phrase is needed.
+    coop_tokens = _name_tokens("Cooper Plumbing & Air LLC")
+    assert coop_tokens == ["cooper"]
+    coop_phrase = _name_phrase("Cooper Plumbing & Air LLC")
+    assert coop_phrase == "cooper plumbing air"
+    assert _text_matches_tokens("Cooper Plumbing & Air | Austin", coop_tokens, coop_phrase) is True
+    # A page that only has the generic token (no full name) is rejected.
+    assert _text_matches_tokens("Cooper Air Conditioning | Cooling Services", coop_tokens, coop_phrase) is False
+
+    # 2+ distinctive tokens: ALL must appear (same-name other business fails).
+    mid_tokens = _name_tokens("Midtown Smiles Dental")
+    assert "midtown" in mid_tokens and "smiles" in mid_tokens
+    assert _text_matches_tokens("Midtown Smiles Dental Care", mid_tokens, "") is True
+    assert _text_matches_tokens("Midtown Comics & Gifts", mid_tokens, "") is False
+    # No name at all -> never trust (no tokens AND no phrase).
+    assert _text_matches_tokens("anything", [], "") is False
+
+
 def test_rotation_cursor_survives_restart(monkeypatch, tmp_path):
     """The lead-rotation cursor persists so restarts don't re-scrape target #0."""
     import admin.agency.sba_autopilot as mod
