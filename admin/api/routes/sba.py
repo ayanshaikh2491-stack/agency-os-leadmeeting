@@ -161,6 +161,19 @@ async def sba_reasoning(limit: int = 25, event: str = ""):
     return {"events": reason.recent_decisions(limit=limit, event=event or None)}
 
 
+@router.get("/strategy")
+async def sba_strategy():
+    """The agent's current strategy: angle, focus targets, actions, history."""
+    from admin.agency import sba_strategy as strat
+    return {"success": True, "data": strat.active_strategy()}
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def sba_dashboard():
+    """Self-contained live view: pipeline, agent reasoning, and strategy."""
+    return HTMLResponse(content=_SBA_DASHBOARD_PAGE)
+
+
 # ── Chat ────────────────────────────────────────────────────────────────────
 
 
@@ -1354,3 +1367,99 @@ btn.onclick = async () => {
 async def sba_meeting_translate_page():
     """Companion page for live speech-to-speech translation during meetings."""
     return HTMLResponse(content=_MEETING_TRANSLATE_PAGE)
+
+_SBA_DASHBOARD_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SBA Agent Console</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0b1220; color: #e2e8f0; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: #64748b; font-size: 13px; margin: 0 0 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .card { background: #111a2e; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 14px; }
+  .card .n { font-size: 26px; font-weight: 700; }
+  .card .l { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+  .sec { font-size: 14px; font-weight: 700; margin: 22px 0 8px; color: #93c5fd; }
+  .row { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .row .t { color: #94a3b8; font-size: 11px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; margin-left: 6px; }
+  .tag.yes { background: #14532d; color: #86efac; }
+  .tag.skip { background: #450a0a; color: #fca5a5; }
+  .tag.wait { background: #78350f; color: #fcd34d; }
+  .tag.info { background: #1e3a8a; color: #bfdbfe; }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; color: #7dd3fc; }
+  .pill { display: inline-block; background: #1e293b; border-radius: 999px; padding: 2px 10px; margin: 0 6px 6px 0; font-size: 12px; color: #cbd5e1; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+  a { color: #60a5fa; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧠 SBA Agent Console</h1>
+  <p class="sub">Agent ka dimaag: strategy, har decision ki wajah, aur live results</p>
+  <div id="err" style="display:none;color:#fca5a5;background:#450a0a;border-radius:10px;padding:10px;margin-bottom:14px"></div>
+
+  <div class="sec">Current strategy</div>
+  <div class="card" id="strategy"><div class="n" style="font-size:14px">loading...</div></div>
+
+  <div class="sec">Last pass</div>
+  <div class="grid" id="stats"><div class="card"><div class="n">-</div><div class="l">loading</div></div></div>
+
+  <div class="sec">Agent decisions (reasoning journal)</div>
+  <div id="journal"><div class="row">loading...</div></div>
+</div>
+<script>
+async function j(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " -> " + r.status);
+  return r.json();
+}
+const esc = (s) => (s ?? "").toString().replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function tagFor(a) {
+  const m = {contact:"info", skip:"skip", wait:"wait", yes:"yes", no:"skip", maybe:"wait", stop:"skip"};
+  const cls = m[a] || "info";
+  return '<span class="tag '+cls+'">'+esc(a)+'</span>';
+}
+async function load() {
+  try {
+    const [st, ap, jn] = await Promise.all([
+      j("/api/sba/strategy"), j("/api/sba/autopilot/status"),
+      j("/api/sba/reasoning?limit=30"),
+    ]);
+    const s = st.data || {};
+    document.getElementById("strategy").innerHTML =
+      '<div style="font-size:14px;line-height:1.6"><b>Angle:</b> ' + esc(s.angle) + '<br>' +
+      '<b>Focus:</b> ' + (s.focus && s.focus.length ? s.focus.map(f => '<span class="pill">'+esc(f.join(', '))+'</span>').join('') : '<span class="pill">default rotation</span>') + '<br>' +
+      (s.actions && s.actions.length ? '<b>Actions:</b> ' + s.actions.map(a => '• ' + esc(a)).join('<br>') : '') +
+      (s.last_review ? '<div class="t">last review: '+esc(s.last_review)+'</div>' : '') + '</div>';
+    const stt = ap.status || {};
+    const items = [["emails_sent","emails"],["new_leads_found","new leads"],["owner_notified","yes-replies"],
+                   ["meetings_scheduled","meetings"],["invalid_email","rejected"],["send_failed","send fails"]];
+    document.getElementById("stats").innerHTML = items.map(([k,l]) =>
+      '<div class="card"><div class="n">'+(stt[k] ?? 0)+'</div><div class="l">'+l+'</div></div>').join("");
+    const evs = jn.events || [];
+    document.getElementById("journal").innerHTML = evs.length ? evs.map(e => {
+      let line = "";
+      if (e.event === "lead_judged") line = '<b>'+esc(e.name)+'</b> '+tagFor(e.verdict && e.verdict.action)+' score '+(e.verdict && e.verdict.score)+' &mdash; '+esc(e.verdict && e.verdict.reason);
+      else if (e.event === "email_sent") line = '📧 emailed <b>'+esc(e.name)+'</b> ('+esc(e.email)+')';
+      else if (e.event === "email_rejected") line = '🚫 rejected '+esc(e.email)+' &mdash; '+esc(e.reason);
+      else if (e.event === "reply_understood") line = '💬 reply from '+esc(e.from)+' -> '+tagFor(e.intent)+(e.meeting_time?' at '+esc(e.meeting_time):'');
+      else if (e.event === "strategy_review") line = '🧠 strategy reviewed &mdash; '+esc(e.angle);
+      else line = '<b>'+esc(e.event)+'</b>';
+      if (e.event === "pass_summary" && e.stats) line = '📊 pass: ' + Object.entries(e.stats).filter(([,v])=>v).map(([k,v])=>k+'='+v).join(' · ');
+      return '<div class="row">'+line+'<div class="t">'+esc(e.ts)+'</div></div>';
+    }).join("") : '<div class="row">Abhi koi decisions nahi &mdash; journal khali hai. Pehla pass ke baad yahan bhar jayega.</div>';
+  } catch (e) {
+    document.getElementById("err").style.display = "block";
+    document.getElementById("err").textContent = "Load failed: " + e.message;
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>"""

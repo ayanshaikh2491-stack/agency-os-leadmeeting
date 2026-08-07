@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from admin.agency import sba_pipeline as pipe  # noqa: E402
 from admin.agency import sba_reason as reason  # noqa: E402
+from admin.agency import sba_strategy as strat  # noqa: E402
 from admin.agency.sba_pipeline import (  # noqa: E402
     is_owner,
     load_leads,
@@ -33,7 +34,7 @@ from admin.agency.sba_pipeline import (  # noqa: E402
     sb_patch_lead,
     supabase_config,
 )
-from admin.tools.sba_email_client import SBAEmailClient  # noqa: E402
+from admin.tools.sba_email_client import OWNER_EMAIL, SBAEmailClient  # noqa: E402
 from admin.tools.sba_email_draft import draft_email  # noqa: E402
 from admin.tools.sba_meeting import SBAMeetingManager  # noqa: E402
 from admin.tools.sba_time import (  # noqa: E402
@@ -213,7 +214,20 @@ def _rotation_targets() -> list[tuple[str, str, str]]:
                 return [tuple(i) for i in items]
         except Exception:  # noqa: BLE001
             logger.warning("SBA_LEAD_ROTATION invalid, using default rotation")
-    return list(_LEAD_TARGETS)
+    base = list(_LEAD_TARGETS)
+    # Layer 3: the agent's own strategy review can pick priority niche+city
+    # targets; those are tried first before the default rotation.
+    try:
+        focus = [
+            tuple(t) for t in (strat.load_strategy().get("focus") or [])
+            if isinstance(t, (list, tuple)) and len(t) == 3
+            and all(isinstance(x, str) and x.strip() for x in t)
+        ]
+        if focus:
+            return focus[:3] + base
+    except Exception:  # noqa: BLE001
+        pass
+    return base
 
 
 def _is_valid_lead_email(email: str, allow_consumer: bool = False) -> bool:
@@ -449,7 +463,7 @@ class SBAAutopilot:
             return email, provenance
         return "", ""
 
-    async def _email_lead(self, url: str, key: str, lead: dict) -> str:
+    async def _email_lead(self, url: str, key: str, lead: dict, angle: str | None = None) -> str:
         """Send a professional cold email if lead is in business hours."""
         email = (lead.get("email") or "").strip()
         provenance = (lead.get("email_provenance") or "").strip()
@@ -502,7 +516,7 @@ class SBAAutopilot:
                 logger.info("agent rejected email %s for %s: %s",
                             email, lead.get("name") or "", verdict.get("reason") or "not the business")
                 return "invalid_email"
-        subject, body = await draft_email(lead)
+        subject, body = await draft_email(lead, angle=angle)
         ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
         if ok:
             sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted"})
@@ -511,6 +525,7 @@ class SBAAutopilot:
                 "name": lead.get("name") or "",
                 "email": email,
                 "provenance": provenance,
+                "category": lead.get("category") or "",
             })
             return "sent"
         self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
@@ -581,11 +596,13 @@ class SBAAutopilot:
             return stats
         url, key = cfg
         self._enrichments_this_pass = 0
+        # Layer 3: the agent's own current message angle (from its last review).
+        angle = strat.load_strategy().get("angle") or None
         # The agent emails the best-scored prospects first within the daily cap.
         leads = reason.prioritize(load_leads(url, key))
         attempts = 0
         for lead in leads:
-            result = await self._email_lead(url, key, lead)
+            result = await self._email_lead(url, key, lead, angle=angle)
             if result == "sent":
                 stats["emails_sent"] += 1
                 attempts += 1
@@ -613,8 +630,33 @@ class SBAAutopilot:
             "event": "pass_summary",
             "stats": {k: v for k, v in stats.items() if k != "last_run"},
         })
+        await self._learn_and_report(stats)
         logger.info("autopilot pass: %s", stats)
         return stats
+
+    async def _learn_and_report(self, stats: dict[str, Any]) -> None:
+        """Layer 2 + 3: observe this pass, review strategy when due, and email
+        the owner a digest/alert when something important happened. Never
+        blocks the loop (all failures are caught inside strat)."""
+        try:
+            s = await strat.maybe_review(stats)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("strategy review failed: %s", exc)
+            s = strat.load_strategy()
+        if not (self.email.enabled and OWNER_EMAIL):
+            return
+        try:
+            metrics = strat.metrics_from_journal()
+            kind = strat.digest_kind_needed(stats, metrics)
+            if not kind:
+                return
+            body = strat.build_digest_body(kind, stats, metrics, s)
+            subject = strat.OWNER_DIGEST_SUBJECTS[kind]
+            await self.email.send_email(to_email=OWNER_EMAIL, subject=subject, body_text=body, cc_owner=False)
+            strat.mark_digest(kind)
+            logger.info("owner %s email sent (%s)", kind, subject)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("owner digest email failed: %s", exc)
 
     async def run_forever(self) -> None:
         """Infinite loop — never sleeps, keeps checking for work."""

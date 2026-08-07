@@ -30,7 +30,7 @@ def fallback_email(lead: dict) -> tuple[str, str]:
     return subject, body
 
 
-async def _llm_draft(lead: dict, skill_context: str) -> tuple[str, str]:
+async def _llm_draft(lead: dict, skill_context: str, angle: str | None = None) -> tuple[str, str]:
     """Call the configured LLM to draft a personalized email."""
     import openai
 
@@ -48,6 +48,9 @@ async def _llm_draft(lead: dict, skill_context: str) -> tuple[str, str]:
         "and end with a soft CTA for a 15-minute call.\n\n"
         f"RELEVANT SKILLS:\n{skill_context}"
     )
+    if angle:
+        # Layer 3: the agent's current strategy angle, decided by its own review.
+        system += f"\n\nCURRENT MESSAGE ANGLE (weave this in naturally, do not quote it):\n{angle}"
     user = (
         f"Lead: {name} ({category}) in {city_state}. "
         "Return JSON: {\"subject\": \"...\", \"body\": \"...\"}. Body plain text only."
@@ -70,14 +73,14 @@ async def _llm_draft(lead: dict, skill_context: str) -> tuple[str, str]:
     return subject, body
 
 
-async def draft_email(lead: dict) -> tuple[str, str]:
+async def draft_email(lead: dict, angle: str | None = None) -> tuple[str, str]:
     """Draft a professional email; fall back to template on any failure."""
     try:
         from admin.agency.sba_skills import build_skill_context, detect_skills
 
         skills = detect_skills(f"cold outreach email to {lead.get('name', '')}", max_skills=2)
         ctx = build_skill_context(skills) if skills else "No extra skills matched."
-        return await _llm_draft(lead, ctx)
+        return await _llm_draft(lead, ctx, angle=angle)
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM email draft failed (%s); using template", exc)
         return fallback_email(lead)
