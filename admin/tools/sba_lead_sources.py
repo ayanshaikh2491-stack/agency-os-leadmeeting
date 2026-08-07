@@ -171,6 +171,42 @@ _MAPS_CARDS_JS = r"""
     const feed = a.closest('[role="feed"] > div');
     return feed ? (feed.innerText || '').trim() : (a.innerText || '').trim();
   };
+  // Domains that are platforms/aggregators, never the business's own site.
+  const BAD_HOSTS = ['google.com','google.co.in','google.co.uk','maps.google.com','facebook.com','instagram.com','twitter.com','x.com','linkedin.com','yelp.com','yellowpages.com','yellowpages.ca','bing.com','youtube.com','tripadvisor.com','angieslist.com','bbb.org','zillow.com','realtor.com','redfin.com','booking.com','opentable.com','grubhub.com','doordash.com','ubereats.com','homeadvisor.com','porch.com','thumbtack.com','maps.app.goo.gl','goo.gl','g.page','whitepages.com','superpages.com','manta.com','houzz.com','foursquare.com','yellowbot.com','nicelocal.com','cylex.us.com','merchantcircle.com','chamberofcommerce.com','cityfos.com'];
+  // The card row = the direct child of the feed that contains this anchor.
+  const rowOf = (a) => {
+    const feed = a.closest('[role="feed"]');
+    if (feed) {
+      const kids = feed.children;
+      for (let i = 0; i < kids.length; i++) if (kids[i].contains(a)) return kids[i];
+    }
+    let el = a;
+    for (let i = 0; i < 5; i++) {
+      if (!el.parentElement) break;
+      el = el.parentElement;
+      if (el.querySelectorAll && el.querySelectorAll('a[href*="/maps/place"]').length === 1) return el;
+    }
+    return null;
+  };
+  // The business's own website link inside the card row ("Visit X's
+  // website" button or the first external http link that is not a platform).
+  const websiteOf = (row) => {
+    if (!row || !row.querySelectorAll) return '';
+    const links = row.querySelectorAll('a[href^="http"]');
+    for (const l of links) {
+      const al = (l.getAttribute('aria-label') || '').toLowerCase();
+      if (al.startsWith('visit') && al.includes('website')) return l.getAttribute('href') || '';
+    }
+    for (const l of links) {
+      const h = (l.getAttribute('href') || '').trim();
+      if (!h || h.includes('/maps/place') || h.includes('google.com')) continue;
+      let host = '';
+      try { host = new URL(h).hostname.replace(/^www\./, '').toLowerCase(); }
+      catch (e) { continue; }
+      if (host && !BAD_HOSTS.includes(host)) return h;
+    }
+    return '';
+  };
   const seen = new Set();
   const out = [];
   const anchors = document.querySelectorAll('a[aria-label][href*="/maps/place"], a[aria-label][href*="google.com/maps"]');
@@ -178,7 +214,8 @@ _MAPS_CARDS_JS = r"""
     const label = (a.getAttribute('aria-label') || '').trim();
     if (!label || label.length < 3 || seen.has(label)) continue;
     seen.add(label);
-    out.push({ name: label, href: a.href, text: cardText(a) });
+    const row = rowOf(a);
+    out.push({ name: label, href: a.href, text: cardText(a), website: websiteOf(row) });
   }
   return out.slice(0, 40);
 }

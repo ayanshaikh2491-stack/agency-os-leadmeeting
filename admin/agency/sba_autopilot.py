@@ -57,7 +57,7 @@ PASS_TIMEOUT_SECONDS = int(os.environ.get("SBA_AUTOPILOT_PASS_TIMEOUT_SECONDS", 
 LEAD_PASS_TIMEOUT_SECONDS = int(os.environ.get("SBA_LEAD_PASS_TIMEOUT_SECONDS", "900"))
 # Max auto-enrichments (Bing + site crawls) per pass; each lead is retried at
 # most once per 24h so we don't hammer search engines on every cycle.
-MAX_ENRICH_PER_PASS = int(os.environ.get("SBA_MAX_ENRICH_PER_PASS", "8"))
+MAX_ENRICH_PER_PASS = int(os.environ.get("SBA_MAX_ENRICH_PER_PASS", "12"))
 OWNER_TZ = os.environ.get("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
 # Where the lead-rotation cursor lives so process restarts don't reset it.
 # Without this, every deploy re-scrapes target #0 (all dupes -> 0 new leads).
@@ -358,16 +358,17 @@ class SBAAutopilot:
 
             # Dedupe against leads already stored for THIS workspace (name + phone).
             existing = load_leads(url, key)
-            existing_keys = set()
+            existing_by_key: dict[tuple[str, str], dict] = {}
             for l in existing:
                 if (l.get("workspace_name") or "agency") != self.workspace_name:
                     continue
                 n = (l.get("name") or "").strip().lower()
                 p = (l.get("phone") or "").strip()
                 if n and p:
-                    existing_keys.add((n, p))
+                    existing_by_key[(n, p)] = l
 
             added = 0
+            refreshed = 0
             rows: list[dict] = []
             for lead in leads:
                 n = (lead.get("name") or "").strip().lower()
@@ -376,12 +377,26 @@ class SBAAutopilot:
                 # without a phone or with a generic UI label as a name.
                 if not n or not p:
                     continue
-                if (n, p) in existing_keys:
+                key_pair = (n, p)
+                old = existing_by_key.get(key_pair)
+                if old is not None:
+                    # Backfill: old leads were scraped before the maps card
+                    # captured websites. Now that we see the website, patch it
+                    # so enrichment can find the business email.
+                    new_site = (lead.get("website") or "").strip()
+                    if new_site and not (old.get("website") or "").strip():
+                        if sb_patch_lead(url, key, str(old.get("id") or ""), {
+                            "website": new_site,
+                            "has_website": True,
+                            "website_status": "has_website",
+                        }):
+                            refreshed += 1
                     continue
                 row = {
                     "name": lead.get("name") or "",
                     "phone": lead.get("phone") or "",
                     "email": lead.get("email") or "",
+                    "website": lead.get("website") or "",
                     "category": lead.get("category") or category,
                     "city_state": f"{city}, {state}",
                     "href": lead.get("href") or "",
@@ -433,9 +448,9 @@ class SBAAutopilot:
                 res = pipe.save_lead(url, key, row)
                 if res is not None:
                     added += 1
-                    existing_keys.add(((row.get("name") or "").strip().lower(), (row.get("phone") or "").strip()))
-            logger.info("autopilot: found %d new leads from %d scraped (%s in %s)",
-                        added, len(leads), category, city)
+                    existing_by_key[((row.get("name") or "").strip().lower(), (row.get("phone") or "").strip())] = row
+            logger.info("autopilot: found %d new leads, refreshed %d websites from %d scraped (%s in %s)",
+                        added, refreshed, len(leads), category, city)
             return added
         except Exception as exc:  # noqa: BLE001
             logger.warning("lead finding pass failed: %s", exc)

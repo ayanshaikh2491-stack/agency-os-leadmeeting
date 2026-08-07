@@ -102,7 +102,7 @@ async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
     monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr("admin.agency.sba_autopilot.sb_patch_lead", lambda u, k, sid, upd: True)
-    monkeypatch.setattr("admin.agency.sba_autopilot.is_owner", lambda a: True)
+    monkeypatch.setattr(SBAAutopilot, "_is_owner", lambda self, a: True)
     monkeypatch.setattr("admin.agency.sba_autopilot.parse_owner_command", lambda s, b: {"lead_id": "12", "action": "haan", "time": "15:00"})
     email.replies = [owner_reply]
 
@@ -229,7 +229,8 @@ def test_rotation_cursor_survives_restart(monkeypatch, tmp_path):
     import admin.agency.sba_autopilot as mod
 
     state = tmp_path / ".sba_rotation_state"
-    monkeypatch.setattr(mod, "_ROTATION_STATE_FILE", str(state))
+    import admin.agency.sba_biztypes as biztypes
+    monkeypatch.setattr(biztypes, "rotation_state_path", lambda ws: str(state))
     ap1 = mod.SBAAutopilot()
     assert ap1._target_idx == 0
     ap1._target_idx += 1
