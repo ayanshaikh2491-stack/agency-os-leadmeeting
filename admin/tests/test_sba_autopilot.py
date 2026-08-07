@@ -155,7 +155,7 @@ async def test_run_once_enriches_candidate_without_email(monkeypatch):
     monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
     async def fake_enrich(u, k, l):
-        return "owner@freshplumbingco.com"
+        return "owner@freshplumbingco.com", "own_domain"
     monkeypatch.setattr(ap, "_enrich_lead_email", fake_enrich)
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
@@ -308,3 +308,68 @@ async def test_run_once_backs_off_failed_recipients(monkeypatch):
     assert s2["send_failed"] == 0
     assert s2["retry_backoff"] == 1
     assert len(email.sent) == 1  # no second attempt while in backoff
+
+
+def test_consumer_email_requires_first_party_provenance():
+    """A gmail address is junk unless enrichment proved it came from the
+    business's own verified page (small local businesses run on gmail, so
+    we must not block them entirely, but a random gmail is never a target)."""
+    from admin.tools.lead_enrichment import _is_valid_email
+
+    # Enrichment collect gate: gmail rejected by default...
+    assert _is_valid_email("triangleroofingnola@gmail.com") is False
+    # ...accepted from the business's own verified page.
+    assert _is_valid_email("triangleroofingnola@gmail.com", allow_consumer=True) is True
+    # Blocklist/prefix rules still apply even when consumer is allowed.
+    assert _is_valid_email("you@company.com", allow_consumer=True) is False
+    assert _is_valid_email("bd@grubhub.com", allow_consumer=True) is False
+    assert _is_valid_email("investorrelations@wellsfargo.com", allow_consumer=True) is False
+    assert _is_valid_email("info@gmail.com", allow_consumer=True) is False
+
+    # Autopilot send gate: same rule, driven by email_provenance.
+    assert _is_valid_lead_email("triangleroofingnola@gmail.com") is False
+    assert _is_valid_lead_email("triangleroofingnola@gmail.com", allow_consumer=True) is True
+    assert _is_valid_lead_email("you@company.com", allow_consumer=True) is False
+    assert _is_valid_lead_email("bd@grubhub.com", allow_consumer=True) is False
+    assert _is_valid_lead_email("info@gmail.com", allow_consumer=True) is False
+
+
+@pytest.mark.asyncio
+async def test_consumer_email_from_verified_page_sends(monkeypatch):
+    """End-to-end: a lead whose enrichment returned a gmail from its own
+    verified page is emailed; the same gmail without provenance is skipped."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "DAILY_EMAIL_CAP", 10)
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+
+    lead = {"id": "1", "name": "Triangle Roofing LLC", "email": "",
+            "category": "roofer", "state": "LA", "status": "candidate",
+            "city_state": "New Orleans, LA"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+
+    # Enrichment returns a gmail mailbox found on the business's own page.
+    async def fake_enrich(u, k, l):
+        return "triangleroofingnola@gmail.com", "consumer"
+    monkeypatch.setattr(ap, "_enrich_lead_email", fake_enrich)
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["emails_sent"] == 1
+    assert email.sent[0]["to"] == "triangleroofingnola@gmail.com"
+
+    # Same address but enrichment could NOT prove first-party -> skipped.
+    # Fresh instance so the 24h enrichment cooldown doesn't skip the second run.
+    email2 = FakeEmailClient()
+    ap2 = mod.SBAAutopilot(email_client=email2)
+    async def fake_enrich_junk(u, k, l):
+        return "triangleroofingnola@gmail.com", ""
+    monkeypatch.setattr(ap2, "_enrich_lead_email", fake_enrich_junk)
+    stats = await ap2.run_once()
+    assert stats["emails_sent"] == 0
+    assert stats["invalid_email"] == 1
+    assert email2.sent == []

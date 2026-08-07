@@ -134,6 +134,26 @@ SKIP_DOMAINS = {
     "pluto.tv", "paramountplus.com", "paramount.com", "netflix.com",
     "hulu.com", "disneyplus.com", "hbomax.com", "max.com", "peacocktv.com",
     "apple.com", "spotify.com", "pandora.com",
+    # Big-bank/aggregator domains that are never a local small business.
+    "wellsfargo.com", "wellsfargoadvisors.com",
+}
+# Consumer / free mailboxes. These are the *business's own* mailbox for many
+# local small businesses (a roofer with no domain runs on
+# triangleroofingnola@gmail.com). They are only accepted when the address was
+# found on the business's own verified page (own website or a homepage that
+# mentions the business name). Unverified consumer addresses are still junk.
+_CONSUMER_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.in", "yahoo.co.in",
+    "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com", "msn.com",
+    "aol.com", "icloud.com", "me.com", "mac.com", "proton.me",
+    "protonmail.com", "zoho.com", "qq.com", "163.com", "126.com",
+    "tutanota.com", "gmx.com", "gmx.net", "mail.com", "yandex.com",
+    "yandex.ru", "fastmail.com", "hey.com", "pm.me", "mail.ru",
+    "rediffmail.com", "bol.com.br", "uol.com.br", "web.de", "orange.fr",
+    "wanadoo.fr", "libero.it", "virgilio.it", "t-online.de", "btinternet.com",
+    "sky.com", "virginmedia.com", "cox.net", "verizon.net", "att.net",
+    "sbcglobal.net", "comcast.net", "charter.net", "earthlink.net",
+    "frontiernet.net", "roadrunner.com", "optimum.net", "suddenlink.net",
 }
 # Common business-name filler words — not distinctive enough to match a
 # homepage against (e.g. "plumbing" matches every plumber's site).
@@ -184,7 +204,7 @@ def _supabase_config() -> tuple[str, str] | None:
     return url, key
 
 
-def _is_valid_email(email: str) -> bool:
+def _is_valid_email(email: str, allow_consumer: bool = False) -> bool:
     e = (email or "").strip().lower()
     if not e or not EMAIL_RE.fullmatch(e):
         return False
@@ -201,7 +221,10 @@ def _is_valid_email(email: str) -> bool:
     if any(m in domain for m in _SCHOOL_DOMAIN_MARKERS):
         return False
     if domain in SKIP_DOMAINS:
-        return False
+        if allow_consumer and domain in _CONSUMER_DOMAINS:
+            pass
+        else:
+            return False
     for prefix in _JUNK_PREFIXES:
         if e.startswith(prefix):
             return False
@@ -293,12 +316,12 @@ def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
     return []
 
 
-def _extract_emails_from_text(text: str | None) -> set[str]:
+def _extract_emails_from_text(text: str | None, allow_consumer: bool = False) -> set[str]:
     if not text:
         return set()
     found = set()
     for m in EMAIL_RE.findall(text):
-        if _is_valid_email(m):
+        if _is_valid_email(m, allow_consumer=allow_consumer):
             found.add(m.lower())
     return found
 
@@ -353,7 +376,7 @@ def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int
     return False
 
 
-def _crawl_domain(domain: str, timeout: int = 12) -> set[str]:
+def _crawl_domain(domain: str, timeout: int = 12, allow_consumer: bool = False) -> set[str]:
     """Fetch homepage + contact/about pages and extract emails."""
     found = set()
     for p in ("/", "/contact", "/contact-us", "/about", "/about-us"):
@@ -363,11 +386,11 @@ def _crawl_domain(domain: str, timeout: int = 12) -> set[str]:
                 r = SESSION.get(u, timeout=timeout, allow_redirects=True)
                 if r.status_code != 200:
                     continue
-                found |= _extract_emails_from_text(r.text)
+                found |= _extract_emails_from_text(r.text, allow_consumer=allow_consumer)
                 soup = BeautifulSoup(r.text, "html.parser")
                 for a in soup.select('a[href^="mailto:"]'):
                     m = a["href"][7:].split("?")[0]
-                    if _is_valid_email(m):
+                    if _is_valid_email(m, allow_consumer=allow_consumer):
                         found.add(m.lower())
                 if found:
                     return found
@@ -407,10 +430,13 @@ def find_lead_email(
     crawled: list[str] = []
     search_sources: list[str] = []
 
-    # 1) Own website — highest trust, crawl first.
+    # 1) Own website — highest trust, crawl first. Consumer mailboxes (gmail,
+    #    yahoo, ...) are the real business mailbox for many local businesses
+    #    with no domain, so they are accepted here and on any page whose
+    #    homepage is verified to mention the business name below.
     own_domain = _clean_domain(website or "")
     if own_domain and own_domain not in SKIP_DOMAINS:
-        found = _crawl_domain(own_domain)
+        found = _crawl_domain(own_domain, allow_consumer=True)
         if found:
             emails |= found
             crawled.append(own_domain)
@@ -437,7 +463,7 @@ def find_lead_email(
                 # grubhub.com, wikihow.com, midtownatl.com, pluto.tv, etc.
                 if not _homepage_check(dom, tokens, name):
                     continue
-                found = _crawl_domain(dom)
+                found = _crawl_domain(dom, allow_consumer=True)
                 if found:
                     emails |= found
                     crawled.append(dom)
@@ -447,15 +473,24 @@ def find_lead_email(
                 break
 
     best = ""
+    provenance = ""
     if emails:
         best = max(emails, key=lambda e: _score_email(e, own_domain))
+        edom = best.split("@", 1)[1].lower()
+        if own_domain and (edom == own_domain or edom.endswith("." + own_domain)):
+            provenance = "own_domain"
+        elif edom in _CONSUMER_DOMAINS:
+            provenance = "consumer"
+        else:
+            provenance = "homepage"
 
     patched = False
     if best and patch_supabase and supabase_id is not None:
-        patched = patch_email(supabase_id, best)
+        patched = patch_email(supabase_id, best, provenance)
 
     return {
         "email": best,
+        "provenance": provenance,
         "domains": crawled[:3],
         "all_emails": sorted(emails),
         "sources": search_sources[:3],
@@ -485,15 +520,18 @@ def _score_email(email: str, own_domain: str) -> int:
     return score
 
 
-def patch_email(lead_id: Any, email: str) -> bool:
+def patch_email(lead_id: Any, email: str, provenance: str = "") -> bool:
     cfg = _supabase_config()
     if not cfg:
         return False
     url, key = cfg
+    payload: dict[str, Any] = {"email": email}
+    if provenance:
+        payload["email_provenance"] = provenance
     try:
         r = SESSION.patch(
             f"{url}/rest/v1/leads?id=eq.{lead_id}",
-            json={"email": email},
+            json=payload,
             headers={
                 "apikey": key,
                 "Authorization": "Bearer " + key,

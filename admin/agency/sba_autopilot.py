@@ -107,6 +107,24 @@ _JUNK_EMAIL_DOMAINS = {
     "company.com", "yourdomain.com", "sentry.io", "wixpress.com",
     "godaddy.com", "domainsbyproxy.com", "googleusercontent.com",
 }
+# Consumer / free mailboxes (gmail, yahoo, ...). Many local small businesses
+# run their business mailbox on these. They are only acceptable as a send
+# target when email_provenance says the address came from the business's own
+# verified page; without that flag they are junk (a random gmail is not a
+# business decision maker).
+_CONSUMER_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.in", "yahoo.co.in",
+    "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com", "msn.com",
+    "aol.com", "icloud.com", "me.com", "mac.com", "proton.me",
+    "protonmail.com", "zoho.com", "qq.com", "163.com", "126.com",
+    "tutanota.com", "gmx.com", "gmx.net", "mail.com", "yandex.com",
+    "yandex.ru", "fastmail.com", "hey.com", "pm.me", "mail.ru",
+    "rediffmail.com", "bol.com.br", "uol.com.br", "web.de", "orange.fr",
+    "wanadoo.fr", "libero.it", "virgilio.it", "t-online.de", "btinternet.com",
+    "sky.com", "virginmedia.com", "cox.net", "verizon.net", "att.net",
+    "sbcglobal.net", "comcast.net", "charter.net", "earthlink.net",
+    "frontiernet.net", "roadrunner.com", "optimum.net", "suddenlink.net",
+}
 # Domains that look like the *first party* but actually are just a big
 # conglomerate/parent brand — not the local decision maker either.
 _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
@@ -197,8 +215,14 @@ def _rotation_targets() -> list[tuple[str, str, str]]:
     return list(_LEAD_TARGETS)
 
 
-def _is_valid_lead_email(email: str) -> bool:
-    """True only for a plausible business cold-email target."""
+def _is_valid_lead_email(email: str, allow_consumer: bool = False) -> bool:
+    """True only for a plausible business cold-email target.
+
+    allow_consumer=True permits gmail/yahoo/... mailboxes, but ONLY when the
+    caller can prove the address came from the business's own verified page
+    (email_provenance == 'consumer' set by enrichment). Everything else is
+    checked identically in both modes.
+    """
     raw = (email or "").strip()
     if not raw:
         return False
@@ -221,7 +245,10 @@ def _is_valid_lead_email(email: str) -> bool:
     if any(m in domain for m in _SCHOOL_DOMAIN_MARKERS):
         return False
     if domain in _JUNK_EMAIL_DOMAINS:
-        return False
+        if allow_consumer and domain in _CONSUMER_DOMAINS:
+            pass
+        else:
+            return False
     # Generic first-party catch-all prefixes are not a human decision maker.
     for prefix in _JUNK_EMAIL_PREFIXES:
         if e.startswith(prefix):
@@ -347,18 +374,18 @@ class SBAAutopilot:
         Only candidate leads get enriched (never re-contact already-contacted
         ones). The enrichment crawls only domains whose homepage mentions the
         business name, so grubhub.com/wikihow.com-type junk never gets saved.
-        Returns '' when nothing trustworthy was found.
+        Returns (email, provenance); both '' when nothing trustworthy was found.
         """
         name = (lead.get("name") or "").strip()
         if not name:
-            return ""
+            return "", ""
         city_state = lead.get("city_state") or lead.get("context", {}).get("city_state") or ""
         city = city_state.split(",")[0].strip() if city_state else ""
         try:
             from admin.tools.lead_enrichment import find_lead_email
         except Exception as exc:  # noqa: BLE001
             logger.warning("lead_enrichment import failed: %s", exc)
-            return ""
+            return "", ""
         try:
             res = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -374,20 +401,25 @@ class SBAAutopilot:
             )
         except asyncio.TimeoutError:
             logger.info("enrichment timed out for %s", name)
-            return ""
+            return "", ""
         except Exception as exc:  # noqa: BLE001
             logger.warning("enrichment failed for %s: %s", name, exc)
-            return ""
+            return "", ""
         email = (res or {}).get("email") or ""
-        if email and _is_valid_lead_email(email):
-            logger.info("enriched %s -> %s (sources=%s)", name, email, res.get("domains"))
+        provenance = (res or {}).get("provenance") or ""
+        # Enrichment only collects consumer mailboxes from the business's own
+        # verified page, so a consumer address it returns is trusted.
+        if email and _is_valid_lead_email(email, allow_consumer=(provenance == "consumer")):
+            logger.info("enriched %s -> %s (provenance=%s, sources=%s)",
+                        name, email, provenance, res.get("domains"))
             self._email_retry_until.pop(email, None)
-            return email
-        return ""
+            return email, provenance
+        return "", ""
 
     async def _email_lead(self, url: str, key: str, lead: dict) -> str:
         """Send a professional cold email if lead is in business hours."""
         email = (lead.get("email") or "").strip()
+        provenance = (lead.get("email_provenance") or "").strip()
         status = lead.get("status") or "new"
         if status in ("contacted", "meeting", "replied", "owner_confirm"):
             return "already_contacted"
@@ -400,12 +432,14 @@ class SBAAutopilot:
             if time.time() - last_try > 24 * 3600:
                 self._enriched_at[lid] = time.time()
                 self._enrichments_this_pass += 1
-                email = await self._enrich_lead_email(url, key, lead)
-                if email and not sb_patch_lead(url, key, lid, {"email": email}):
+                email, prov = await self._enrich_lead_email(url, key, lead)
+                if email and not sb_patch_lead(url, key, lid, {"email": email, "email_provenance": prov}):
                     logger.warning("could not persist enriched email for %s", lead.get("name"))
+                if email:
+                    provenance = prov or provenance
         if not email:
             return "no_email"
-        if not _is_valid_lead_email(email):
+        if not _is_valid_lead_email(email, allow_consumer=(provenance == "consumer")):
             logger.info("skip junk email %s for %s", email, lead.get("name") or "")
             return "invalid_email"
         # SMTP failure (e.g. Gmail 550 daily limit): don't re-hammer this
