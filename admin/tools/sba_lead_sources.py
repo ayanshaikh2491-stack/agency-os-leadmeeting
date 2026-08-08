@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from typing import Any
 
@@ -145,6 +146,7 @@ def _card_from_items(raw: dict) -> list[dict]:
             "href": it.get("href") or "",
             "address": address,
             "phone": phone,
+            "website": it.get("website") or "",
         })
     return cards
 
@@ -373,8 +375,10 @@ async def find_leads(source: str, category: str, city: str, state: str,
             url = _maps_url(category, city, state)
             await chrome.goto(url)
             await chrome.wait("load")
-            # Let the result feed render (lazy-loaded cards).
-            await asyncio.sleep(3)
+            # Let the result feed render (lazy-loaded cards AND their website
+            # buttons appear over several seconds; too short = cards with no
+            # website even though the business has one).
+            await asyncio.sleep(int(os.environ.get("SBA_MAPS_SETTLE_SECONDS", "8")))
             cards = await _scrape_maps_cards(chrome)
             # Card-level: home-service categories show Website button on card;
             # cards without it are high-confidence no-website candidates.
