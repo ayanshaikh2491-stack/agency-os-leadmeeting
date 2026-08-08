@@ -190,7 +190,7 @@ browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
 
 | Commit | What |
 |---|---|
-| `__CEO_CP__` | **CEO checkpointing: Supabase-backed cross-session memory + real conversation_id** (get_checkpointer("Agency","ceo"), fallback MemorySaver; tests 7 passed) |
+| `6bd88f5` | **CEO checkpointing: Supabase-backed cross-session memory + real conversation_id** (get_checkpointer("Agency","ceo"), fallback MemorySaver; tests 7 passed) |
 | `a8466f0` | loop engineering: verifier agent + safety policy (doctor 100/L3) (current) |
 | `aee18a7` | docs: STATE.md update after prefix fix deploy |
 | `979ef71` | **generic first-party prefix fix (enrichment yield)** |
