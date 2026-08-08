@@ -71,6 +71,26 @@
 
 ---
 
+## Two-Account Migration (IN PROGRESS — 15:55 UTC)
+
+**Why:** EC2 #1 (t3.small, 2GB) is at 81% disk (31G/38G), RAM tight (1.2G/1.9G used).
+Supabase stack (13 containers, ~11GB docker images, ~400MB RAM) + Rallly (2 containers) are the heaviest.
+
+**New AWS account:** `301556368065` (Umer, IN) — profile `aws2`, logged in via `aws login` (root), region us-east-1, billing view HEALTHY. Free tier (15 Jul 2025+ rule): **t3.small (2GB) IS free-tier eligible** + $100 sign-up credit. Old account `default` (176980002493, t3.small 2GB, 40GB) untouched + `~/.aws/credentials.bak`.
+
+**BLOCKER: EC2 service not activated yet** (`OptInRequired` on describe-instances/regions/AMI — signup complete but AWS service activation pending, 15min-24h). Retry `deploy/_aws_newacct_check.ps1` until it clears.
+
+**Migration plan (when EC2 activates):**
+1. Launch t3.small (2GB) Ubuntu 24.04, 40GB gp3, key `ec2-key.pem` in account `aws2`.
+2. Run `deploy/migrate_supabase.sh <old_ip>` on new instance → installs docker, rsyncs supabase+rallly configs, pg_dump from old, restores, starts both.
+3. Point backend to new Supabase URL in `/home/ubuntu/sba-backend/.env` (SUPABASE_URL/KEY), restart `sba.service`.
+4. Stop + remove supabase/rallly containers + volumes on OLD EC2 → frees ~11GB disk + ~400MB RAM.
+5. Verify: `/api/health`, autopilot pass, Supabase count (671 leads), Rallly login.
+
+**Supabase data locations (OLD EC2):** DB bind mount `/home/ubuntu/supabase/docker/volumes/db/data` (NOT a docker volume), config volume `supabase_db-config`, deno cache `supabase_deno-cache`. Rallly: `/home/ubuntu/rallly`, volume `rallly_db-data`, postgres on 5450, app on 3001. Backend env: `SUPABASE_URL=http://localhost:8000` (kong), `SUPABASE_SERVICE_KEY` live.
+
+---
+
 ## Agency Agents Status (EC2: 18.213.66.136, t3.small)
 
 **Framework: LangGraph** (crewai REMOVED `81cc807` — `crewai-repo/` deleted, .gitignore updated).
@@ -80,7 +100,7 @@ systemd daemon — the others are on-demand (API-driven, no scheduler daemon).
 | Agent | Code | LangGraph? | API routes | Live status |
 |---|---|---|---|---|
 | **SBA autopilot** | `sba_autopilot.py` | `langgraph_sba.py` (SBAGraphState) | `/api/sba/*` | ✅ **running 24/7** (systemd `sba-autopilot.service`), ~20min cadence, NRestarts=0 |
-| **CEO agent** | `ceo.py` → `AgencyCEO` | ✅ `build_ceo_graph()` (call_llm→run_tools→finalize) | `/api/ceo/chat`, `/handoff/receive`, `parallel-blast`, `review-output`, `route-error`, `generate-report` | ✅ graph builds OK, 4 nodes; on-demand (no daemon) |
+| **CEO agent** | `ceo.py` → `AgencyCEO` | ✅ `build_ceo_graph()` (call_llm→run_tools→finalize) | `/api/ceo/chat`, `/handoff/receive`, `parallel-blast`, `review-output`, `route-error`, `generate-report` | ✅ graph builds OK, 4 nodes; **now Supabase-checkpointed** (`get_checkpointer("Agency","ceo")` fallback MemorySaver) + real `conversation_id` threading; on-demand (no daemon) |
 | **Content agent** | `content_agent.py` → `AgencyContentAgent` | – (class-based) | `/api/content/init`, `/discover-brand`, `/status/{ws}` | ✅ importable + store present (`data/workspace_content_agents/ws_test.json`); on-demand |
 | **SEO agent** | `seo_skills.py`, `seo_store.py` + `tools/seo_tools.py` | – | `/api/seo/chat`, `/audit`, `/audits` | ✅ importable; on-demand |
 | **Social agent** | `social_skills.py` + `tools/social_tools.py` | – | `/api/social/chat`, `/calendar`, `/hashtags` | ✅ tokens store (`data/social_tokens/` 1/default/test); on-demand |
@@ -170,6 +190,7 @@ browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
 
 | Commit | What |
 |---|---|
+| `__CEO_CP__` | **CEO checkpointing: Supabase-backed cross-session memory + real conversation_id** (get_checkpointer("Agency","ceo"), fallback MemorySaver; tests 7 passed) |
 | `a8466f0` | loop engineering: verifier agent + safety policy (doctor 100/L3) (current) |
 | `aee18a7` | docs: STATE.md update after prefix fix deploy |
 | `979ef71` | **generic first-party prefix fix (enrichment yield)** |

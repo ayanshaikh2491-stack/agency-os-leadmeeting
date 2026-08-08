@@ -23,6 +23,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
+from admin.agency.agent_persistence import get_checkpointer
 from admin.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1507,12 +1508,17 @@ async def finalize(state: CEOGraphState) -> dict:
 # ── Build Graph ──────────────────────────────────────────────────────────────
 
 
-def build_ceo_graph() -> StateGraph:
+def build_ceo_graph(checkpointer: Any = None) -> StateGraph:
     """Build the compiled LangGraph state graph for the Agency CEO.
 
     Graph structure:
       call_llm -> route_from_llm -> run_tools -> call_llm (loop)
                                         \\-> finalize -> END
+
+    ``checkpointer`` defaults to ``get_checkpointer("Agency", "ceo")`` so the
+    CEO gets the same Supabase-backed cross-session persistence as the other
+    workspace agents (falls back to in-memory MemorySaver when Supabase is not
+    configured).
     """
     workflow = StateGraph(CEOGraphState)
 
@@ -1535,7 +1541,7 @@ def build_ceo_graph() -> StateGraph:
     workflow.add_edge("run_tools", "call_llm")
     workflow.add_edge("finalize", END)
 
-    checkpointer = MemorySaver()
+    checkpointer = checkpointer or get_checkpointer("Agency", "ceo")
     return workflow.compile(checkpointer=checkpointer)
 
 
@@ -1555,11 +1561,16 @@ class AgencyCEO:
         *,
         user_role: str = "the agency owner",
         conversation_history: list[dict[str, str]] | None = None,
+        conversation_id: str | None = None,
     ) -> tuple[str, str, list[dict[str, Any]]]:
         """Chat with the CEO agent.
 
+        ``conversation_id`` continues an existing thread (persisted via the
+        checkpointer); when omitted a stable default session is used.
+
         Returns (response, conversation_id, thinking_phases).
         """
+        thread_id = conversation_id or self._thread_id
         workspace_context = _build_workspace_context()
         handoff_context = _build_handoff_context()
         review_context = _build_review_context()
@@ -1579,7 +1590,7 @@ class AgencyCEO:
         try:
             result = await self.graph.ainvoke(
                 initial_state,
-                config={"configurable": {"thread_id": self._thread_id}},
+                config={"configurable": {"thread_id": thread_id}},
             )
         except Exception:
             logger.exception("CEO LangGraph execution failed")
@@ -1602,7 +1613,7 @@ class AgencyCEO:
             else:
                 final_output = "CEO analysis complete. Aap kya next step chahte hain?"
 
-        return final_output, "ceo-session-1", thinking_phases
+        return final_output, thread_id, thinking_phases
 
     # ── Direct API methods (for route handlers) ─────────────────────────────
 

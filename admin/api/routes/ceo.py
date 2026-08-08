@@ -94,6 +94,7 @@ async def chat_with_ceo(body: ChatRequest):
     response, conv_id, phases = await _ceo.chat(
         message=body.message,
         user_role="the agency owner",
+        conversation_id=body.conversation_id,
     )
     return ChatResponse(
         response=response,
