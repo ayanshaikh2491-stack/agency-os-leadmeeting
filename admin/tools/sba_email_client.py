@@ -43,11 +43,70 @@ IMAP_HOST = os.environ.get("SBA_IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(os.environ.get("SBA_IMAP_PORT", "993"))
 
 
-class SBAEmailClient:
-    """Send emails as owner, check replies, auto-enrich with LLM."""
+def build_workspace_email_client(workspace_name: str = "agency") -> SBAEmailClient:
+    """Pick the right inbox for a workspace.
 
-    def __init__(self) -> None:
-        self._enabled = bool(OWNER_EMAIL and OWNER_EMAIL_PASSWORD)
+    - ``agency``: env creds (SBA_OWNER_EMAIL / SBA_OWNER_EMAIL_PASSWORD).
+    - client workspace: its OWN ``smtp_email`` + ``smtp_password`` from the
+      workspace config. If the client has no creds yet, email is DISABLED so
+      we never accidentally send from the agency inbox on a client's behalf.
+    """
+    if not workspace_name or workspace_name == "agency":
+        return SBAEmailClient()
+    try:
+        from admin.agency import sba_biztypes as biztypes
+        cfg = biztypes.get_workspace_config(workspace_name)
+    except Exception:  # noqa: BLE001
+        logger.warning("workspace config missing for %r, email disabled", workspace_name)
+        return SBAEmailClient(email="", password="")
+    ws_email = (str(cfg.get("smtp_email") or "").strip()
+                or str(cfg.get("owner_email") or "").strip())
+    ws_pass = str(cfg.get("smtp_password") or "").strip()
+    if not (ws_email and ws_pass):
+        logger.warning(
+            "Workspace %r has no smtp_email/smtp_password yet — SBA email disabled "
+            "so it never uses the agency inbox.", workspace_name
+        )
+        return SBAEmailClient(email="", password="")
+    return SBAEmailClient(
+        email=ws_email,
+        password=ws_pass,
+        name=str(cfg.get("owner_email") or "").strip() or ws_email,
+        smtp_host=str(cfg.get("smtp_host") or "").strip(),
+        smtp_port=str(cfg.get("smtp_port") or "").strip(),
+        imap_host=str(cfg.get("imap_host") or "").strip(),
+        imap_port=str(cfg.get("imap_port") or "").strip(),
+    )
+
+
+class SBAEmailClient:
+    """Send emails as owner, check replies, auto-enrich with LLM.
+
+    Credentials can come from env (agency default) or per-workspace via
+    constructor args (client workspaces use THEIR OWN email + app password,
+    never the agency inbox). Pass ``email=""`` to force a disabled client.
+    """
+
+    def __init__(self, email: str | None = None, password: str | None = None,
+                 name: str | None = None, smtp_host: str | None = None,
+                 smtp_port: int | str | None = None, imap_host: str | None = None,
+                 imap_port: int | str | None = None) -> None:
+        # Instance creds win; otherwise fall back to env defaults (agency).
+        # Note: explicit "" (not None) means "force disabled", never fall back.
+        self.email = (OWNER_EMAIL if email is None else email or "").strip()
+        self.password = OWNER_EMAIL_PASSWORD if password is None else password
+        self.name = (name or OWNER_NAME or "").strip()
+        self.smtp_host = (smtp_host or SMTP_HOST or "").strip()
+        self.imap_host = (imap_host or IMAP_HOST or "").strip()
+        try:
+            self.smtp_port = int(smtp_port) if smtp_port else SMTP_PORT
+        except (TypeError, ValueError):
+            self.smtp_port = SMTP_PORT
+        try:
+            self.imap_port = int(imap_port) if imap_port else IMAP_PORT
+        except (TypeError, ValueError):
+            self.imap_port = IMAP_PORT
+        self._enabled = bool(self.email and self.password)
         if not self._enabled:
             logger.warning(
                 "SBA email disabled. Set SBA_OWNER_EMAIL and SBA_OWNER_EMAIL_PASSWORD (app password)."
@@ -79,7 +138,7 @@ class SBAEmailClient:
             return False
 
         msg = MIMEMultipart("alternative")
-        msg["From"] = f"{OWNER_NAME} <{OWNER_EMAIL}>"
+        msg["From"] = f"{self.name} <{self.email}>"
         msg["To"] = to_email
         msg["Subject"] = subject
 
@@ -90,10 +149,10 @@ class SBAEmailClient:
             loop = asyncio.get_running_loop()
 
             def _send() -> None:
-                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
                     server.starttls()
-                    server.login(OWNER_EMAIL, OWNER_EMAIL_PASSWORD)
-                    server.sendmail(OWNER_EMAIL, [to_email], msg.as_string())
+                    server.login(self.email, self.password)
+                    server.sendmail(self.email, [to_email], msg.as_string())
                     if cc_owner:
                         # BCC to owner
                         bcc_msg = MIMEText(
@@ -101,10 +160,10 @@ class SBAEmailClient:
                             "plain",
                             "utf-8",
                         )
-                        bcc_msg["From"] = f"SBA <{OWNER_EMAIL}>"
-                        bcc_msg["To"] = OWNER_EMAIL
+                        bcc_msg["From"] = f"SBA <{self.email}>"
+                        bcc_msg["To"] = self.email
                         bcc_msg["Subject"] = f"[SBA] Sent to {to_email}: {subject}"
-                        server.sendmail(OWNER_EMAIL, [OWNER_EMAIL], bcc_msg.as_string())
+                        server.sendmail(self.email, [self.email], bcc_msg.as_string())
 
             await loop.run_in_executor(None, _send)
             logger.info("Email sent to %s: %s", to_email, subject)
@@ -130,8 +189,8 @@ class SBAEmailClient:
 
             def _fetch() -> list[dict[str, Any]]:
                 result: list[dict[str, Any]] = []
-                mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-                mail.login(OWNER_EMAIL, OWNER_EMAIL_PASSWORD)
+                mail = imaplib.IMAP4_SSL(self.imap_host, self.imap_port)
+                mail.login(self.email, self.password)
                 mail.select("INBOX")
 
                 # Search for unseen emails (or recent replies)

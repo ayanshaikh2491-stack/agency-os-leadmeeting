@@ -38,8 +38,10 @@ class SBAMeetingManager:
       - Sends a confirmation email to the lead
     """
 
-    def __init__(self) -> None:
-        self._email = SBAEmailClient()
+    def __init__(self, email_client: SBAEmailClient | None = None) -> None:
+        # Use the workspace's own inbox (client email identity), not a fresh
+        # env-based client, so meeting confirmations come from the right owner.
+        self._email = email_client or SBAEmailClient()
 
     async def create_meeting(
         self,

@@ -591,13 +591,13 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
             }
             if tool_name in SBA_NEW_TOOLS:
                 try:
-                    from admin.tools.sba_email_client import SBAEmailClient
+                    from admin.tools.sba_email_client import build_workspace_email_client
                     from admin.tools.sba_meeting import SBAMeetingManager
                     from admin.tools.sba_translate import SBATranslationEngine
 
                     async def _dispatch_new_tool(name: str, args: dict) -> str:
                         if name == "send_lead_email":
-                            c = SBAEmailClient()
+                            c = build_workspace_email_client(workspace)
                             sent = await c.send_email(
                                 to_email=args.get("to_email", ""),
                                 subject=args.get("subject", ""),
@@ -605,11 +605,11 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                             )
                             return json.dumps({"sent": sent})
                         elif name == "check_lead_replies":
-                            c = SBAEmailClient()
+                            c = build_workspace_email_client(workspace)
                             replies = await c.check_replies(mark_read=args.get("mark_read", True))
                             return json.dumps(replies, default=str, indent=2)[:4000]
                         elif name == "create_meeting":
-                            m = SBAMeetingManager()
+                            m = SBAMeetingManager(email_client=build_workspace_email_client(workspace))
                             meeting = await m.create_meeting(
                                 lead_id=args["lead_id"],
                                 lead_name=args["lead_name"],

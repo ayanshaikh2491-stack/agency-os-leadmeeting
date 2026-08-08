@@ -48,6 +48,7 @@ if not _claim_lock():
     sys.exit(0)
 
 import admin.agency.sba_pipeline as pipe  # noqa: E402
+from admin.agency.sba_autopilot import _is_valid_lead_email  # noqa: E402
 from admin.tools.sba_lead_sources import find_leads  # noqa: E402
 from admin.tools.lead_enrichment import find_lead_email  # noqa: E402
 
@@ -198,10 +199,16 @@ async def main() -> None:
                               False, lead.get("id"))
         email = (res or {}).get("email") or ""
         prov = (res or {}).get("provenance") or ""
-        if email:
+        # Same gate the autopilot uses: junk prefixes (feedback@, hi@, ...),
+        # junk/aggregator/template domains (ground.news, mystore.com, ...),
+        # malformed tokens are rejected; consumer mailboxes only when the
+        # enrichment proved the address came from the business's own page.
+        if email and _is_valid_lead_email(email, allow_consumer=(prov == "consumer")):
             ok = pipe.sb_patch_lead(url, key, str(lead.get("id") or ""),
                                     {"email": email, "email_provenance": prov})
             log("EMAIL", name, "->", email, f"(provenance={prov}, patched={ok})")
+        elif email:
+            log("SKIP junk email:", name, "->", email, f"(provenance={prov})")
         else:
             log("no email:", name, f"(domains={res.get('domains', [])[:1]})")
 

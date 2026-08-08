@@ -34,7 +34,7 @@ from admin.agency.sba_pipeline import (  # noqa: E402
     sb_patch_lead,
     supabase_config,
 )
-from admin.tools.sba_email_client import OWNER_EMAIL, SBAEmailClient  # noqa: E402
+from admin.tools.sba_email_client import OWNER_EMAIL, SBAEmailClient, build_workspace_email_client  # noqa: E402
 from admin.tools.sba_email_draft import draft_email  # noqa: E402
 from admin.tools.sba_meeting import SBAMeetingManager  # noqa: E402
 from admin.tools.sba_time import (  # noqa: E402
@@ -140,6 +140,11 @@ _JUNK_EMAIL_DOMAINS = {
     "districtgov.org", "bizjournals.com", "chamberofcommerce.com",
     "company.com", "yourdomain.com", "sentry.io", "wixpress.com",
     "godaddy.com", "domainsbyproxy.com", "googleusercontent.com",
+    # News aggregators / template placeholder domains that homepage-check can
+    # mistake for a business (a news article or a builder template mentions the
+    # name, so enrichment crawls it and finds an editorial/template mailbox).
+    "ground.news", "mystore.com", "wixsite.com", "myshopify.com",
+    "squarespace.com", "godaddysites.com", "weebly.com", "wordpress.com",
 }
 # Consumer / free mailboxes (gmail, yahoo, ...). Many local small businesses
 # run their business mailbox on these. They are only acceptable as a send
@@ -170,7 +175,8 @@ _JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
                         "privacy@", "legal@", "addressadmissions@",
                         "recreationdepartment@", "parkingservices@",
                         "mychartsupport@", "subscriptionsupport@",
-                        "guest@", "stop@", "care@", "service@", "name@")
+                        "guest@", "stop@", "care@", "service@", "name@",
+                        "feedback@", "hi@")
 # Local parts that scream "automated/aggregator", not a human decision maker
 # (ad-alerts@, notifications@, alert@, ...).
 _JUNK_LOCAL_PAT = re.compile(
@@ -317,10 +323,12 @@ class SBAAutopilot:
                  meeting_manager: SBAMeetingManager | None = None,
                  workspace_name: str = "agency",
                  owner_email: str | None = None) -> None:
-        self.email = email_client or SBAEmailClient()
-        self.meetings = meeting_manager or SBAMeetingManager()
         self.workspace_name = workspace_name or "agency"
-        # Per-workspace state: rotation, strategy file, journal, owner email.
+        self.email = email_client
+        self.meetings = meeting_manager
+        # Per-workspace state: rotation, strategy file, journal, owner email,
+        # and email identity (each client uses ITS OWN inbox + app password,
+        # never the agency's).
         try:
             from admin.agency import sba_biztypes as biztypes
             cfg = biztypes.get_workspace_config(self.workspace_name)
@@ -329,6 +337,7 @@ class SBAAutopilot:
             self._strategy_path = biztypes.strategy_path(self.workspace_name)
             self._journal_path = biztypes.journal_path(self.workspace_name)
             self._owner_email = owner_email or cfg.get("owner_email") or ""
+            self._email_cfg = cfg
         except Exception:  # noqa: BLE001
             logger.warning("biztypes config failed for %r, using defaults", self.workspace_name)
             self._rotation = list(_rotation_targets())
@@ -336,12 +345,27 @@ class SBAAutopilot:
             self._strategy_path = strat.STRATEGY_FILE
             self._journal_path = reason.REASON_LOG
             self._owner_email = owner_email or ""
+            self._email_cfg = {}
+        self._build_email_client()
+        self.meetings = meeting_manager or SBAMeetingManager(email_client=self.email)
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
         self._enriched_at: dict[str, float] = _load_enrich_state()
         self._enrichments_this_pass = 0
         self._last_notified_lead_id: str | None = None
+
+    def _build_email_client(self) -> None:
+        """Pick the right inbox for this workspace (see build_workspace_email_client).
+
+        - agency: env creds (SBA_OWNER_EMAIL / SBA_OWNER_EMAIL_PASSWORD).
+        - client workspace: its OWN smtp_email + smtp_password from config.
+          If the client has no creds configured yet, email is DISABLED so we
+          never accidentally send from the agency inbox on a client's behalf.
+        - explicit email_client (tests/CLI) always wins.
+        """
+        if self.email is None:
+            self.email = build_workspace_email_client(self.workspace_name)
 
     def _load_rotation_idx(self) -> int:
         try:

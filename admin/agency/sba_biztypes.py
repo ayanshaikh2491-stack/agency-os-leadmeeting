@@ -30,7 +30,13 @@ CONFIG_FILE = os.environ.get(
 )
 
 # Keys callers may persist per workspace.
-PERSISTED_KEYS = ("enabled", "owner_email", "industry", "category", "rotation", "angle")
+PERSISTED_KEYS = (
+    "enabled", "owner_email", "industry", "category", "rotation", "angle",
+    # Per-workspace email identity: each client uses ITS OWN inbox, never the
+    # agency's. smtp_email defaults to owner_email when not set explicitly.
+    "smtp_email", "smtp_password", "smtp_host", "smtp_port",
+    "imap_host", "imap_port",
+)
 
 # Businesses that sell direct (D2C / ecommerce / product / software): no local
 # cold-email lead generation needed.
@@ -218,6 +224,13 @@ def get_workspace_config(workspace_name: str) -> dict[str, Any]:
         "category": str(category),
         "rotation": rotation,
         "angle": str(angle),
+        # Per-workspace SMTP/IMAP identity (client's own app password).
+        "smtp_email": str(persisted.get("smtp_email", "")),
+        "smtp_password": str(persisted.get("smtp_password", "")),
+        "smtp_host": str(persisted.get("smtp_host", "")),
+        "smtp_port": str(persisted.get("smtp_port", "")),
+        "imap_host": str(persisted.get("imap_host", "")),
+        "imap_port": str(persisted.get("imap_port", "")),
     }
 
 
@@ -274,6 +287,8 @@ def list_sba_workspaces() -> list[dict[str, Any]]:
                     "owner_email": str(entry.get("owner_email", "")),
                     "rotation": entry.get("rotation", []),
                     "angle": str(entry.get("angle", "")),
+                    # SBA-autopilot reads the full per-workspace config itself
+                    # (incl. smtp creds) via get_workspace_config().
                 }
             )
         return out
