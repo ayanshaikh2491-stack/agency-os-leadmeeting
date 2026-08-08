@@ -27,6 +27,46 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+# Hard ceiling for one enrichment call. The autopilot wraps find_lead_email in
+# asyncio.wait_for(ENRICH_TIMEOUT_SECONDS=45s), but a thread can't be cancelled:
+# the crawl would keep burning CPU/bandwidth after the wrapper times out. This
+# budget is the *internal* deadline: every Bing query, homepage check and page
+# crawl shrinks its own request timeout as the budget drains, and aborts early.
+# Kept below the wrapper so enrichment returns "" (no email) instead of the
+# pass logging a timeout for a domain that just drip-feeds bytes.
+ENRICH_BUDGET_SECONDS = float(os.environ.get("SBA_ENRICH_BUDGET_SECONDS", "38"))
+# Connect timeout is capped hard (3.05s) so a dead/unroutable host can't eat
+# the budget; the read timeout shrinks with the remaining budget.
+_CONNECT_TIMEOUT = 3.05
+
+
+# Requests applies a single timeout to *each* read chunk, not the whole
+# request, so a slow site can hang for minutes. The deadline helpers below
+# make every call self-terminate within the overall budget.
+def _now() -> float:
+    return time.monotonic()
+
+
+def _expired(deadline: float | None) -> bool:
+    return bool(deadline) and _now() >= deadline
+
+
+def _remaining(deadline: float | None, cap: float) -> float:
+    """Per-request timeout = min(cap, budget left), 0 once exhausted."""
+    if not deadline:
+        return cap
+    left = deadline - _now()
+    if left <= 0.2:
+        return 0.0
+    return min(cap, left - 0.1)
+
+
+def _sleep(seconds: float, deadline: float | None) -> None:
+    """Sleep without overshooting the enrichment deadline."""
+    if seconds <= 0 or _expired(deadline):
+        return
+    time.sleep(min(seconds, _remaining(deadline, seconds)))
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -291,17 +331,21 @@ def _text_matches_tokens(text: str, tokens: list[str], phrase: str = "") -> bool
     return phrase in nt
 
 
-def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
-    """Bing RSS search. Returns [{url, title, desc}]."""
+def bing_search(query: str, count: int = 10, deadline: float | None = None) -> list[dict[str, str]]:
+    """Bing RSS search. Returns [{url, title, desc}]. Self-terminates within
+    the enrichment budget (each attempt shrinks its request timeout)."""
     for attempt in range(3):
+        t = _remaining(deadline, 15)
+        if t <= 0:
+            break
         try:
             r = SESSION.get(
                 "https://www.bing.com/search",
                 params={"format": "rss", "q": query, "count": count},
-                timeout=15,
+                timeout=(min(_CONNECT_TIMEOUT, t), t),
             )
             if r.status_code != 200:
-                time.sleep(2)
+                _sleep(2, deadline)
                 continue
             soup = BeautifulSoup(r.text, "xml")
             out = []
@@ -312,7 +356,7 @@ def bing_search(query: str, count: int = 10) -> list[dict[str, str]]:
                 out.append({"url": link, "title": title, "desc": desc})
             return out
         except requests.RequestException:
-            time.sleep(2)
+            _sleep(2, deadline)
     return []
 
 
@@ -326,7 +370,8 @@ def _extract_emails_from_text(text: str | None, allow_consumer: bool = False) ->
     return found
 
 
-def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int = 10) -> bool:
+def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int = 10,
+                    deadline: float | None = None) -> bool:
     """True if the domain's homepage mentions the business name.
 
     This is the anti-junk gate: grubhub.com/wikihow.com/midtownatl.com never
@@ -351,8 +396,12 @@ def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int
         return False  # nothing to match against -> never trust a random domain
     phrase = _name_phrase(name)
     for scheme in ("https", "http"):
+        t = _remaining(deadline, timeout)
+        if t <= 0:
+            return False
         try:
-            r = SESSION.get(f"{scheme}://{domain}/", timeout=timeout, allow_redirects=True)
+            r = SESSION.get(f"{scheme}://{domain}/", timeout=(min(_CONNECT_TIMEOUT, t), t),
+                            allow_redirects=True)
             if r.status_code != 200:
                 continue
             soup = BeautifulSoup(r.text, "html.parser")
@@ -372,18 +421,25 @@ def _homepage_check(domain: str, tokens: list[str], name: str = "", timeout: int
             return False
         except requests.RequestException:
             continue
-        time.sleep(0.3)
+        _sleep(0.3, deadline)
     return False
 
 
-def _crawl_domain(domain: str, timeout: int = 12, allow_consumer: bool = False) -> set[str]:
-    """Fetch homepage + contact/about pages and extract emails."""
+def _crawl_domain(domain: str, timeout: int = 12, allow_consumer: bool = False,
+                  deadline: float | None = None) -> set[str]:
+    """Fetch homepage + contact/about pages and extract emails. Stops at the
+    first page that yields a valid email and at the enrichment deadline."""
     found = set()
     for p in ("/", "/contact", "/contact-us", "/about", "/about-us"):
+        if _expired(deadline):
+            break
         for scheme in ("https", "http"):
+            t = _remaining(deadline, timeout)
+            if t <= 0:
+                break
             u = f"{scheme}://{domain}{p}"
             try:
-                r = SESSION.get(u, timeout=timeout, allow_redirects=True)
+                r = SESSION.get(u, timeout=(min(_CONNECT_TIMEOUT, t), t), allow_redirects=True)
                 if r.status_code != 200:
                     continue
                 found |= _extract_emails_from_text(r.text, allow_consumer=allow_consumer)
@@ -397,7 +453,7 @@ def _crawl_domain(domain: str, timeout: int = 12, allow_consumer: bool = False) 
                 break
             except requests.RequestException:
                 continue
-        time.sleep(0.4)
+        _sleep(0.4, deadline)
     return found
 
 
@@ -426,6 +482,11 @@ def find_lead_email(
 
     tokens = _name_tokens(name)
 
+    # One internal deadline for the whole enrichment. Every nested request
+    # (Bing, homepage check, page crawl) shrinks its own timeout from this,
+    # so a slow domain can never eat the entire autopilot pass.
+    deadline = _now() + ENRICH_BUDGET_SECONDS
+
     emails: set[str] = set()
     crawled: list[str] = []
     search_sources: list[str] = []
@@ -436,14 +497,14 @@ def find_lead_email(
     #    homepage is verified to mention the business name below.
     own_domain = _clean_domain(website or "")
     if own_domain and own_domain not in SKIP_DOMAINS:
-        found = _crawl_domain(own_domain, allow_consumer=True)
+        found = _crawl_domain(own_domain, allow_consumer=True, deadline=deadline)
         if found:
             emails |= found
             crawled.append(own_domain)
         search_sources.append(website)
 
     # 2) Bing search with homepage-name verification.
-    if not emails:
+    if not emails and not _expired(deadline):
         queries = []
         if city and category:
             queries.append(f'"{name}" {city} {category}')
@@ -451,9 +512,13 @@ def find_lead_email(
             queries.append(f'"{name}" {city}')
         queries.append(f'"{name}" email')
         for q in queries[:3]:
-            results = bing_search(q)
-            time.sleep(1.0)
+            if _expired(deadline):
+                break
+            results = bing_search(q, deadline=deadline)
+            _sleep(1.0, deadline)
             for res in results:
+                if _expired(deadline):
+                    break
                 url = res.get("url", "")
                 dom = _clean_domain(url)
                 if not dom or dom in SKIP_DOMAINS or dom in crawled:
@@ -461,9 +526,9 @@ def find_lead_email(
                 # Anti-junk gate: only crawl domains that plausibly ARE the
                 # business (homepage mentions the name). This is what kills
                 # grubhub.com, wikihow.com, midtownatl.com, pluto.tv, etc.
-                if not _homepage_check(dom, tokens, name):
+                if not _homepage_check(dom, tokens, name, deadline=deadline):
                     continue
-                found = _crawl_domain(dom, allow_consumer=True)
+                found = _crawl_domain(dom, allow_consumer=True, deadline=deadline)
                 if found:
                     emails |= found
                     crawled.append(dom)
