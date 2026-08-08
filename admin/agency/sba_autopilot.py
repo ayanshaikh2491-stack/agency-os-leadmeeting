@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import logging
 import os
 import random
@@ -66,9 +67,41 @@ _ROTATION_STATE_FILE = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                  ".sba_rotation_state"),
 )
+# Same persistence pattern for enrichment retries: the 24h throttle in
+# _email_lead only works if the per-lead last-try timestamp survives restarts.
+# A fresh instance every pass (run_all_once) would otherwise re-hammer the
+# same stuck lead every ~20 min and starve every other lead of enrichment.
+_ENRICH_STATE_FILE = os.environ.get(
+    "SBA_ENRICH_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                 ".sba_enrichment_state"),
+)
+# Per-lead enrichment ceiling: 45s keeps one slow domain from eating the pass.
+ENRICH_TIMEOUT_SECONDS = int(os.environ.get("SBA_ENRICH_TIMEOUT_SECONDS", "45"))
 # Don't re-hammer a recipient for 24h after an SMTP failure (Gmail 550
 # daily-limit resets next day; retrying every 15 min just burns the limit).
 EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(24 * 3600)))
+
+
+def _load_enrich_state() -> dict[str, float]:
+    """Load the persisted per-lead enrichment last-try timestamps."""
+    try:
+        with open(_ENRICH_STATE_FILE, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        return {str(k): float(v) for k, v in raw.items() if v}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_enrich_state(state: dict[str, float]) -> None:
+    """Atomically persist the enrichment retry state (best-effort)."""
+    try:
+        tmp = f"{_ENRICH_STATE_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, _ENRICH_STATE_FILE)
+    except OSError:
+        logger.warning("could not persist enrichment state", exc_info=True)
 
 # ── Email sanity ─────────────────────────────────────────────────────────
 # Only send cold emails to real-looking business addresses. The browser
@@ -306,7 +339,7 @@ class SBAAutopilot:
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
-        self._enriched_at: dict[str, float] = {}
+        self._enriched_at: dict[str, float] = _load_enrich_state()
         self._enrichments_this_pass = 0
         self._last_notified_lead_id: str | None = None
 
@@ -485,7 +518,7 @@ class SBAAutopilot:
                     False,  # we PATCH below so failure is logged consistently
                     lead.get("id"),
                 ),
-                timeout=120,
+                timeout=ENRICH_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
             logger.info("enrichment timed out for %s", name)
@@ -519,6 +552,7 @@ class SBAAutopilot:
             last_try = self._enriched_at.get(lid, 0.0)
             if time.time() - last_try > 24 * 3600:
                 self._enriched_at[lid] = time.time()
+                _save_enrich_state(self._enriched_at)
                 self._enrichments_this_pass += 1
                 email, prov = await self._enrich_lead_email(url, key, lead)
                 if email and not sb_patch_lead(url, key, lid, {"email": email, "email_provenance": prov}):

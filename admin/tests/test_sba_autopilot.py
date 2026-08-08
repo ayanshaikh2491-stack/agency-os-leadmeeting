@@ -14,6 +14,14 @@ def _no_real_llm(monkeypatch):
     monkeypatch.setattr("admin.agency.sba_reason.verify_email", _ok)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_enrich_state(monkeypatch, tmp_path):
+    """Each test gets a fresh persisted enrichment-retry state so the 24h
+    cooldown never leaks across tests (or into the repo's real state file)."""
+    import admin.agency.sba_autopilot as mod
+    monkeypatch.setattr(mod, "_ENRICH_STATE_FILE", str(tmp_path / "enrich_state.json"))
+
+
 class FakeEmailClient:
     def __init__(self):
         self.enabled = True
@@ -268,8 +276,10 @@ def _business_hours(monkeypatch):
 
 
 def _no_new_leads(monkeypatch):
+    async def _no_leads(*a, **k):
+        return []
     monkeypatch.setattr(
-        "admin.tools.sba_lead_sources.find_leads_all", lambda *a, **k: []
+        "admin.tools.sba_lead_sources.find_leads_all", _no_leads
     )
 
 
@@ -375,12 +385,14 @@ async def test_consumer_email_from_verified_page_sends(monkeypatch):
     assert email.sent[0]["to"] == "triangleroofingnola@gmail.com"
 
     # Same address but enrichment could NOT prove first-party -> skipped.
-    # Fresh instance so the 24h enrichment cooldown doesn't skip the second run.
+    # Fresh instance + fresh lead id so the persisted 24h enrichment cooldown
+    # (state file survives restarts now) doesn't skip the second run.
     email2 = FakeEmailClient()
     ap2 = mod.SBAAutopilot(email_client=email2)
     async def fake_enrich_junk(u, k, l):
         return "triangleroofingnola@gmail.com", ""
     monkeypatch.setattr(ap2, "_enrich_lead_email", fake_enrich_junk)
+    lead["id"] = "2"  # different lead: cooldown keyed per lead id
     stats = await ap2.run_once()
     assert stats["emails_sent"] == 0
     assert stats["invalid_email"] == 1
