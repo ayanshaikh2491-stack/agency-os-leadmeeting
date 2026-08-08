@@ -31,3 +31,24 @@ agent_gpu_job_*.json
 docs/superpowers/
 # Local secrets  
 .env  
+
+# Scratch / one-off debug scripts (repo root) — never commit these
+/_*.py
+/_*.txt
+/_*.json
+/_*.js
+/_*.ps1
+/_*.cmd
+/_*.service
+/_*.yml
+/_*.yaml
+/_*.env
+/_*.sql
+/_*.html
+/_*.tmp
+/_*.png
+/_pw/
+
+# Runtime state / generated output
+/.sba_rotation_state
+/generated_sites/
