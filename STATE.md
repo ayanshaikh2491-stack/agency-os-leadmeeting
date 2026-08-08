@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 17:56 IST (12:26 UTC)
+**Last updated:** 2026-08-08 19:25 IST (13:55 UTC)
 
 ---
 
@@ -15,7 +15,7 @@
 2. **Website backfill COMPLETE** — DONE
    - Backfill finished 10:30 UTC: 670 leads, 487 no-website, 63 with email.
    - Only orphaned chrome (port 9252) remains; harmless.
-3. **Enrichment yield fix DEPLOYED (`979ef71`, 12:22 UTC)** — ROOT CAUSE FOUND
+3. **Enrichment yield fix DEPLOYED (`979ef71`, 12:22 UTC)** — ROOT CAUSE FOUND + RE-ENRICH DONE
    - **Bug:** `_JUNK_PREFIXES`/`_JUNK_EMAIL_PREFIXES` unconditionally blocked
      `info@`, `contact@`, `hello@`, `support@`, `admin@`, `office@`... But for a
      local small business those ARE the owner inbox. `allow_consumer` only
@@ -29,22 +29,45 @@
    - Applied in `admin/tools/lead_enrichment.py` (validity + crawl) AND
      `admin/agency/sba_autopilot.py` (send gate) AND `deploy/_backfill_websites.py`.
    - **Proof live:** `info@beyondwow.com` now enriches as `own_domain`
-     (previously empty). Latest pass already shows `invalid_email: 5` (new
-     allowed addresses being re-scored).
-   - Re-enrichment batch running (124 website-having no-email leads, bypasses
-     24h cooldown) to capture the fixed yield.
-4. **LEADS ARE FLOWING** — multi-source, NOT just Google Maps
+     (previously empty).
+4. **Re-enrichment batch COMPLETE (12:39 UTC)** — DONE
+   - 133 website-having no-email leads retried with fixed gate (REST-based,
+     venv, bypassed 24h cooldown).
+   - **RESULT: found=44, skipped=1, failed=0.** All 44 emails patched to
+     Supabase with provenance (mostly `own_domain`/`homepage`, 1 consumer).
+     Examples: info@beyondwow.com, info@coolmenow.com, service@nicksplumbing.com,
+     info@roofsquad.com, contact@dfw-roofinginc.com.
+   - Expected no_email now ~541 (down from 585). Verify via Supabase count.
+5. **LEADS ARE FLOWING** — multi-source, NOT just Google Maps
    - Autopilot `_find_new_leads` → `find_leads_all` loops **5 sources**:
      google_maps, yelp, yellowpages, bing_maps, facebook_pages.
    - DB 671 leads (latest). Enrichment state tracks 156 leads; ~60 tried in 2h.
-5. **Email sends — still 0 today, 3 total historical**
-   - 62 leads deferred to business hours (it is 6:26 AM CDT now; sends start
+6. **Email sends — still 0 today, 3 total historical**
+   - 62 leads deferred to business hours (it is 8:55 AM CDT now; sends start
      ~14:00 UTC = 9 AM CDT, cap 30/day). Watch `emails_sent` after 14:00 UTC.
-   - Once the re-enrichment lands, expect no_email 585 → lower.
-6. **Memory pressure on EC2:** 1.9GiB total, swap active. Do NOT add heavier
+7. **Memory pressure on EC2:** 1.9GiB total, swap active. Do NOT add heavier
    workloads to EC2.
-7. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
+8. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
    backoff is 24h per recipient and is already implemented.
+
+---
+
+## Loop Engineering Setup — DONE (13:50 UTC)
+
+- **7 loop skills installed to system** `C:\Users\TAUSHEF\.jcode\skills\`:
+  `/install-loop`, `/loop-triage`, `/loop-verifier`, `/minimal-fix`,
+  `/loop-budget`, `/loop-constraints`, `/budget-negotiator`
+  (from cobusgreyling/loop-engineering, cloned 12:50 UTC, verified loaded via
+  skill reload — 242 skills).
+- **`loop doctor` on repo:** score **100 / L3** (was L2). Added:
+  - `.claude/agents/loop-verifier.md` (maker/checker split agent)
+  - `docs/safety.md` (path denylist, auto-merge L1/L2/L3 policy, MCP scopes,
+    escalation, budget)
+  - Commit `a8466f0`.
+- **Not enabled (needs human opt-in):** Foundry harness (`--with-foundry`),
+  GitHub issue/PR templates + workflows, MCP usage doc.
+- User workflow: jab bhi `/loop-*` command ya "loop se kaam kar" bole, skills
+  use hoti hain.
 
 ---
 
@@ -59,7 +82,7 @@
 | SBA (sales/business) | running | lead finding + enrichment + cold email + meetings |
 | Ads / Content / SEO / Website / Analytics / Social | deployed | part of deploy bundle, not focus of current work |
 | Email client (`SBAEmailClient`) | enabled: True | creds live on EC2 (.env), code falls back to `TAGS_SMTP_*` |
-| Supabase (docker) | running | 671 leads, 604 no-email, 10 no-website |
+| Supabase (docker) | running | 671 leads, ~541 no-email (after 44 re-enriched), ~480 no-website |
 | Organic engine (7 channels) | deployed | telegram/gbp/facebook browser + api channels |
 
 Deploy: `python deploy/deploy_sba.py` (bundle → scp → extract → py_compile → restart → verify).
@@ -74,6 +97,8 @@ Aug 08 08:53  ImportError build_workspace_email_client / TypeError email_client 
 Aug 08 10:30  backfill DONE: 670 leads, 487 no website, 63 with email (orphaned chrome only)
 Aug 08 12:21  pass 50: emails_sent 0, no_email 587, deferred 62 (US pre-business-hours)
 Aug 08 12:25  pass 51: invalid_email 5 (newly-allowed addresses being rescored), NRestarts=0
+Aug 08 12:39  re-enrichment batch: found=44 emails (own_domain/homepage), patched to Supabase
+Aug 08 13:50  loop engineering setup: skills installed + doctor 100/L3 + verifier agent + safety.md
 ```
 
 - No SMTP errors yet because no sends have happened (`send_failed: 0`).
@@ -86,11 +111,12 @@ Aug 08 12:25  pass 51: invalid_email 5 (newly-allowed addresses being rescored),
 
 ## Current Issue Being Fixed (DO NOT RESCAN THE REPO)
 
-**Problem (fixed `979ef71`, deployed 12:22 UTC):** 604 leads had no email, so
-the pipeline stalled at step 2. Root cause found in the enrichment VALIDITY
-GATE, not the crawl: generic first-party prefixes (info@/contact@/office@)
-were unconditionally rejected even when the address came from the business's
-own verified page. 124 leads HAVE websites; many expose exactly such addresses.
+**Problem (fixed `979ef71`, deployed 12:22 UTC, re-enrichment DONE 12:39 UTC):**
+604 leads had no email, so the pipeline stalled at step 2. Root cause found in
+the enrichment VALIDITY GATE, not the crawl: generic first-party prefixes
+(info@/contact@/office@) were unconditionally rejected even when the address
+came from the business's own verified page. 124 leads HAVE websites; many
+expose exactly such addresses.
 
 **Fix:** prefix lists split into generic (verified-only) vs hard-junk (always),
 in both `lead_enrichment.py` and `sba_autopilot.py`. Provenance
@@ -98,13 +124,14 @@ consumer/own_domain/homepage now implies "verified first-party" and unlocks
 generic prefixes; unverified scrapes still reject them.
 
 **Proof:** `find_lead_email("Beyond Wow Plumbing & Drains", ..., site=beyondwow.com)`
-now returns `info@beyondwow.com` (own_domain). Pass 51 already rescoring.
+now returns `info@beyondwow.com` (own_domain). Re-enrichment of the 133
+website leads found **44 emails**, all patched to Supabase.
 
-**Still open:** (a) re-enrichment batch running for the 124 website leads;
-(b) ~480 leads with no website need Bing-based enrichment (slower, lower
-yield); (c) 403/Cloudflare/JS-rendered sites (papermoonpainting, johnmooreservices,
-texasqualityplumbing) need a headless browser for email extraction — NOT on
-EC2 (memory); (d) sends start ~14:00 UTC — watch `emails_sent` and Gmail 550s.
+**Still open:** (a) ~480 leads with no website need Bing-based enrichment
+(slower, lower yield); (b) 403/Cloudflare/JS-rendered sites
+(papermoonpainting, johnmooreservices, texasqualityplumbing) need a headless
+browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
+— watch `emails_sent` and Gmail 550s.
 
 ---
 
@@ -112,7 +139,9 @@ EC2 (memory); (d) sends start ~14:00 UTC — watch `emails_sent` and Gmail 550s.
 
 | Commit | What |
 |---|---|
-| `979ef71` | **generic first-party prefix fix (enrichment yield)** (current) |
+| `a8466f0` | loop engineering: verifier agent + safety policy (doctor 100/L3) (current) |
+| `aee18a7` | docs: STATE.md update after prefix fix deploy |
+| `979ef71` | **generic first-party prefix fix (enrichment yield)** |
 | `1e5a733` | docs: STATE.md — crash-loop fixed, backfill running, leads flowing |
 | `9e3e83e` | crash-loop fix + junk email gate + workspace email identity |
 | `4c6dc28` | prioritize enrichment-ready leads + backfill phone-match fix |
@@ -132,6 +161,11 @@ EC2 (memory); (d) sends start ~14:00 UTC — watch `emails_sent` and Gmail 550s.
 - 12:25 UTC — pass 51: `invalid_email: 5`, `no_email: 585` (fix live).
 - 12:26 UTC — re-enrichment batch started for 124 website-having no-email
   leads (bypasses 24h cooldown).
+- 12:39 UTC — re-enrichment DONE: **found=44 emails** (skipped=1, failed=0),
+  all patched to Supabase with provenance. no_email ~541.
+- 12:40 UTC — Supabase verify script prepared (ran remotely via venv).
+- 13:50 UTC — loop-engineering setup: 7 skills installed to system, `loop
+  doctor` score 100/L3, verifier agent + safety.md committed (`a8466f0`).
 
 ---
 
