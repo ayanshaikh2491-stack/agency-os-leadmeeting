@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 19:25 IST (13:55 UTC)
+**Last updated:** 2026-08-08 19:40 IST (14:10 UTC)
 
 ---
 
@@ -73,14 +73,45 @@
 
 ## Agency Agents Status (EC2: 18.213.66.136, t3.small)
 
-| Agent / Service | Status | Notes |
+**Framework: LangGraph** (crewai REMOVED `81cc807` — `crewai-repo/` deleted, .gitignore updated).
+All agents expose FastAPI routes under `/api/*`; only SBA autopilot runs 24/7 as a
+systemd daemon — the others are on-demand (API-driven, no scheduler daemon).
+
+| Agent | Code | LangGraph? | API routes | Live status |
+|---|---|---|---|---|
+| **SBA autopilot** | `sba_autopilot.py` | `langgraph_sba.py` (SBAGraphState) | `/api/sba/*` | ✅ **running 24/7** (systemd `sba-autopilot.service`), ~20min cadence, NRestarts=0 |
+| **CEO agent** | `ceo.py` → `AgencyCEO` | ✅ `build_ceo_graph()` (call_llm→run_tools→finalize) | `/api/ceo/chat`, `/handoff/receive`, `parallel-blast`, `review-output`, `route-error`, `generate-report` | ✅ graph builds OK, 4 nodes; on-demand (no daemon) |
+| **Content agent** | `content_agent.py` → `AgencyContentAgent` | – (class-based) | `/api/content/init`, `/discover-brand`, `/status/{ws}` | ✅ importable + store present (`data/workspace_content_agents/ws_test.json`); on-demand |
+| **SEO agent** | `seo_skills.py`, `seo_store.py` + `tools/seo_tools.py` | – | `/api/seo/chat`, `/audit`, `/audits` | ✅ importable; on-demand |
+| **Social agent** | `social_skills.py` + `tools/social_tools.py` | – | `/api/social/chat`, `/calendar`, `/hashtags` | ✅ tokens store (`data/social_tokens/` 1/default/test); on-demand |
+| **Website agent** | `website_skills.py` + `tools/website_tools.py` | – | `/api/website/chat`, `/analyze`, `/performance` | ✅ importable; on-demand |
+| **Ads agent** | `tools/ads_tools.py` + `ads_api_client.py` | – | `/api/ads/status`, `/tools`, `/campaign-strategy` | ✅ importable; on-demand |
+| **Swarm** | `swarm.py` | – | `/api/swarm/agents/add`, `/tasks/assign`, `/run` | ✅ importable; on-demand |
+| **Orchestrator** | `orchestrator.py` | – (functions) | `/api/orch/workspace`, `/workspaces` | ✅ importable; on-demand |
+| **Analytics** | routes only | – | `/api/analytics/status`, `/weekly-report` | ✅ on-demand |
+| **Workflows** | routes only | – | `/api/workflows/*` | ✅ on-demand |
+| **Agent aliases** | `routes/agent_aliases.py` | – | `/api/agents`, `/api/agents/{id}/chat`, `/seo-engine` | ✅ on-demand |
+
+**Running services (systemd):**
+| Service | Status | Notes |
 |---|---|---|
-| `api/health` | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
-| `sba.service` | active | backend API |
-| `sba-autopilot.service` | active | 24/7 loop, ~20 min cadence, NRestarts=0 after 979ef71 (12:22 UTC) |
-| CEO agent | ready | orchestrator up |
-| SBA (sales/business) | running | lead finding + enrichment + cold email + meetings |
-| Ads / Content / SEO / Website / Analytics / Social | deployed | part of deploy bundle, not focus of current work |
+| `sba.service` | active | backend API (all /api routes) |
+| `sba-autopilot.service` | active | 24/7 SBA loop, ~20 min cadence, NRestarts=0 |
+| `sba-chrome.service` | active | Chrome daemon for browser automation (1d19h uptime) |
+
+**Other systemd agents:** NONE — no daemon runs CEO/content/SEO/social/website/ads.
+They are API-on-demand only. A scheduler daemon is a future option (currently on-demand is the design).
+
+**Email sends LIVE (13:19-13:20 UTC, first real sends!):** 12 emails sent to
+re-enriched leads (info@flamingolandscapes.com, info@electricianatl.com,
+info@primeroofrepairtampa.com, rainierroofingllc@hotmail.com, yosef@orlandoevergreen.com,
+info@idealgardensorl.com, wayne@wayneslawnservice.com, info@hancocklandscape.com,
+taylorlandscapingky@gmail.com, info@myersla.com, bladerunners1999@aol.com, +1).
+Pass 13:25 summary: `emails_sent: 12, send_failed: 0, no_email: 540, deferred: 98`.
+Pass 14:02: `emails_sent: 0` (cap reached for the day? watch). `reply_understood`
+event seen 13:43 (a reply was processed).
+
+| API health | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
 | Email client (`SBAEmailClient`) | enabled: True | creds live on EC2 (.env), code falls back to `TAGS_SMTP_*` |
 | Supabase (docker) | running | 671 leads, ~541 no-email (after 44 re-enriched), ~480 no-website |
 | Organic engine (7 channels) | deployed | telegram/gbp/facebook browser + api channels |
