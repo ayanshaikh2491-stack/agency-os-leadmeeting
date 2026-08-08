@@ -3,33 +3,39 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 13:05 IST (07:35 UTC)
+**Last updated:** 2026-08-08 15:10 IST (09:40 UTC)
 
 ---
 
 ## High Priority Tasks
 
-1. **Get enrichment to actually fill emails** (blocking everything)
-   - 643 leads have NO email, only 2 have one, `emails_sent: 0`.
-   - Root cause was FIXED + deployed (`0711677`): per-pass instance reset the
-     24h enrichment cooldown, so the same stuck lead was retried every pass.
-   - Now state persists in `.sba_enrichment_state`; timeout cut 120s → 45s.
-   - **Next action:** verify emails get found + `emails_sent` goes > 0. Watch
-     enrichment lines in journal (new lead ids each pass = healthy).
-2. **Curt Hinkle DDS enrichment wedged every pass** — FIXED (`0c1352c`, deployed 07:19 UTC)
-   - Slow/drip-feeding domains ate the whole pass: no internal time budget,
-     requests read-timeout is per-chunk (can hang minutes), and Bing retries
-     alone could run ~150s. Enrichment now self-terminates within a 38s budget
-     (under the 45s wrapper): per-request timeouts shrink with the remaining
-     budget, connect capped at 3.05s.
-   - **Next action:** next pass should show far fewer/no "enrichment timed out"
-     lines; watch `no_email` shrink as enrichment actually completes.
-3. **Lead finding returned 0 new leads for 3+ passes** (hvac Kansas City target)
-   - May be a dedupe/rotation cycle, or the browser source is wedged. Check
-     `new_leads_found` over the next few passes; if still 0, restart chrome/CDP.
-4. **Memory pressure on EC2:** 1.9GiB total, ~618MiB available. OOM killed the
-   box once (Aug 5). Swap (10G) is active. Do NOT add heavier workloads to EC2.
-5. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
+1. **Autopilot crash-loop FIXED (`9e3e83e`, deployed 08:53-08:57 UTC)** — DONE
+   - Root cause: EC2 had STALE copies of `sba_email_client.py` (missing
+     `build_workspace_email_client`), `sba_meeting.py` (missing `email_client`
+     kwarg), `sba_biztypes.py` + `sba.py` (workspace email identity changes).
+     systemd restarted 19x with ImportError / TypeError.
+   - Fixed: scp'd all 4 files, import check OK, restarted. `NRestarts=0`, pid
+     alive, fresh pass at 09:02 + 09:39 UTC both complete normally.
+2. **Junk email gate DEPLOYED** — fake/aggregator emails now rejected
+   - `_JUNK_EMAIL_PREFIXES`: feedback@, hi@. `_JUNK_EMAIL_DOMAINS`: ground.news,
+     mystore.com, wixsite.com, myshopify.com, squarespace.com, godaddysites.com,
+     weebly.com, wordpress.com. Backfill gate uses `_is_valid_lead_email`
+     (`allow_consumer` only when provenance == consumer). Junk rows cleaned.
+3. **Website backfill RUNNING (relaunched 09:05 UTC, pid 2367341)**
+   - 668 leads loaded, 521 no-website, 60 unique (cat,city,state) targets, top
+     30 processed. Website capture works (SAMPLE shows real domains). Google
+     throttling causes transient CDP errors → retry + yelp fallback built in.
+   - Email enrichment phase runs after scrape (~31 website+no-email leads).
+4. **LEADS ARE FLOWING** — Google Maps sourcing active
+   - DB 668 → 670 leads. 09:39 pass judged 4 auto-repair Houston leads
+     (J&T Automotive 85, King of rim repair 85, Firestone 0, Helfman Ford 10).
+     Newest lead rows timestamp 09:39 UTC. `new_leads_found=0` in pass_summary
+     is misleading (judged existing + newly-scraped leads, count is 0 metric bug).
+5. **Email count 31** (28 clean + backfill). Emails still not SENT — sends are
+   gated behind email enrichment + business-hours; keep watching `emails_sent`.
+6. **Memory pressure on EC2:** 1.9GiB total, swap active. Do NOT add heavier
+   workloads to EC2.
+7. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
    backoff is 24h per recipient and is already implemented.
 
 ---
@@ -40,7 +46,7 @@
 |---|---|---|
 | `api/health` | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
 | `sba.service` | active | backend API |
-| `sba-autopilot.service` | active | 24/7 loop, ~20 min cadence, worker disabled |
+| `sba-autopilot.service` | active | 24/7 loop, ~20 min cadence, NRestarts=0 after crash-loop fix (09:53 UTC) |
 | CEO agent | ready | orchestrator up |
 | SBA (sales/business) | running | lead finding + enrichment + cold email + meetings |
 | Ads / Content / SEO / Website / Analytics / Social | deployed | part of deploy bundle, not focus of current work |
@@ -56,20 +62,16 @@ Verify after deploy: `autopilot/status` endpoint, `journalctl -u sba-autopilot.s
 ## Current Error Logs (recent, journalctl sba-autopilot)
 
 ```
-Aug 08 06:00  enrichment timed out for Curt Hinkle DDS        <- pre-fix, same lead every pass
-Aug 08 06:03  autopilot pass: emails_sent 0, no_email 639     <- starvation
-Aug 08 06:26  autopilot pass: emails_sent 0, no_email 641
-Aug 08 06:46  autopilot pass: emails_sent 0, no_email 641
-Aug 08 07:04  enrichment timed out for Curt Hinkle DDS        <- state-persist fix, once/24h now
-Aug 08 07:05  enrichment timed out for Houston Landscape Pros <- wedged ~45s
-Aug 08 07:06  autopilot pass: emails_sent 0, no_email 643
-07:19 UTC     deployed 0c1352c (internal 38s budget)          <- expect timeouts to stop here
+Aug 08 08:53  ImportError: cannot import name 'build_workspace_email_client'  <- crash-loop, FIXED
+Aug 08 08:53  SBAMeetingManager.__init__() got an unexpected keyword arg 'email_client'  <- stale sba_meeting.py, FIXED
+Aug 08 08:57  restarted with all 4 files deployed; NRestarts=0 since
+Aug 08 09:02  pass_summary: emails_sent 0, no_email 619 (29 deferred to business hours)
+Aug 08 09:39  pass_summary: emails_sent 0, no_email 618, 4 leads judged (auto repair Houston)
 ```
 
 - No SMTP errors yet because no sends have happened (`send_failed: 0`).
-- `0 new leads found` is suspicious — see High Priority #3.
-- Post-`0c1352c` passes pending (next ~20 min cycle); verify no new
-  "enrichment timed out" lines and enrichment now returns "".
+- Leads ARE being judged each pass (Google Maps rotation active).
+- Backfill chrome CDP errors are transient (Google throttle) — retries handle.
 
 ---
 
@@ -122,7 +124,9 @@ one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
 
 | Commit | What |
 |---|---|
-| `0c1352c` | **enrichment internal 38s budget + shrinking timeouts** (current fix) |
+| `9e3e83e` | **crash-loop fix + junk email gate + workspace email identity** (current) |
+| `4c6dc28` | prioritize enrichment-ready leads + backfill phone-match fix |
+| `0c1352c` | enrichment internal 38s budget + shrinking timeouts |
 | `0711677` | enrichment state persistence + 45s wrapper timeout |
 | `87ff421` | leads `website` column migration (PGRST204 fix) |
 | `aa38243` | email client `TAGS_SMTP_*` env fallback |
@@ -132,9 +136,13 @@ one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
 ## Run Log
 
 - 07:02 UTC — deployed `0711677`, autopilot restarted (new PID).
-- 07:06 UTC — pass shows `no_email: 643`; enrichment now hitting different leads.
-- 07:19 UTC — deployed `0c1352c` (internal 38s budget); next passes should have
-  no "enrichment timed out" lines.
+- 07:19 UTC — deployed `0c1352c` (internal 38s budget).
+- 08:53 UTC — deployed `sba_email_client.py` fix (crash-loop import error).
+- 08:57 UTC — deployed `sba_meeting.py`, `sba_biztypes.py`, `sba.py`; restarted
+  autopilot; NRestarts=0 since.
+- 09:02 UTC — clean pass (no_email 619, 29 deferred). Commit `9e3e83e`.
+- 09:05 UTC — backfill relaunched with junk gate (pid 2367341), 668 leads.
+- 09:39 UTC — pass judged 4 auto-repair Houston leads; DB 670 total, 31 emails.
 
 ---
 
