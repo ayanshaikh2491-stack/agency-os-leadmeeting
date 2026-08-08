@@ -25,11 +25,20 @@ logger = logging.getLogger(__name__)
 
 # ── Email config from env ───────────────────────────────────────────────
 
-OWNER_EMAIL = os.environ.get("SBA_OWNER_EMAIL", "")
-OWNER_EMAIL_PASSWORD = os.environ.get("SBA_OWNER_EMAIL_PASSWORD", "")  # App Password
+# SBA_OWNER_EMAIL is the canonical name; fall back to TAGS_SMTP_EMAIL so
+# .env files that predate the SBA pipeline (or use the older utility name)
+# still work without re-typing the app password.
+OWNER_EMAIL = (
+    os.environ.get("SBA_OWNER_EMAIL", "")
+    or os.environ.get("TAGS_SMTP_EMAIL", "")
+)
+OWNER_EMAIL_PASSWORD = (  # App Password
+    os.environ.get("SBA_OWNER_EMAIL_PASSWORD", "")
+    or os.environ.get("TAGS_SMTP_PASSWORD", "")
+)
 OWNER_NAME = os.environ.get("SBA_OWNER_NAME", "Ayan")
-SMTP_HOST = os.environ.get("SBA_SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SBA_SMTP_PORT", "587"))
+SMTP_HOST = os.environ.get("SBA_SMTP_HOST", os.environ.get("TAGS_SMTP_HOST", "smtp.gmail.com"))
+SMTP_PORT = int(os.environ.get("SBA_SMTP_PORT", os.environ.get("TAGS_SMTP_PORT", "587")))
 IMAP_HOST = os.environ.get("SBA_IMAP_HOST", "imap.gmail.com")
 IMAP_PORT = int(os.environ.get("SBA_IMAP_PORT", "993"))
 
