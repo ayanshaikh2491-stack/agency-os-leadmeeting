@@ -54,3 +54,5 @@ docs/superpowers/
 /.sba_enrichment_state
 /generated_sites/
 crewai-repo/  
+deploy/pocketbase/ 
+deploy/gw.log

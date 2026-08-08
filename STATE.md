@@ -3,7 +3,38 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 19:40 IST (14:10 UTC)
+**Last updated:** 2026-08-08 22:40 IST (17:10 UTC)
+
+---
+
+## PocketBase Supabase Replacement — LOCAL GATEWAY GREEN (17:10 UTC)
+
+- **Why:** EC2 (2GB RAM) chokes on Supabase (13 containers, ~290MB RAM,
+  ~11GB disk). User chose **PocketBase** as lightweight open-source replacement.
+- **PocketBase v0.39.10** running locally at `127.0.0.1:8090`, data dir
+  `deploy/pocketbase/win/pb_data`. Admin: `admin@tagsagency.local` /
+  `pb-admin-2026-x9` (created via `superuser update` with NO quotes — cmd
+  quoting bug had previously embedded literal quotes in the password).
+- **`deploy/pb_gateway.py`** (FastAPI, port 8050): Supabase-compat gateway.
+  Backend needs ZERO code changes: `/rest/v1/{table}` + `apikey`/`Authorization`
+  headers + `Content-Profile` → `{profile}__{table}` collections + PostgREST
+  operators (eq/neq/gt/gte/lt/lte/ilike/like/is/in) + order/limit + upsert
+  (`on_conflict` + merge-duplicates) + auto-creates/extends collections.
+- **ROOT CAUSE of filter bug (fixed 17:06 UTC):** `_build_filter` iterated
+  `query.multi_items()` values with `for v in vals` — but `vals` is a STRING,
+  so it split `eq.wwzqdh2v6c5wis7` into characters. Every filter silently
+  became empty (GET returned all rows, PATCH matched nothing, upserts
+  duplicated). Fix: `items = vals if isinstance(vals, list) else [vals]`.
+- **`deploy/_pb_gw_test.py` — ALL PASS:** health, POST lead, GET leads,
+  PATCH by `id=eq.` (filter now applies), agent_memory upsert (no dupes),
+  GET memory with `agent_name=eq.seo&memory_key=eq.k1`, checkpoint upsert,
+  DELETE 204, wrong-key 401.
+- **IMPORTANT PocketBase v0.39 quirk:** collection create/patch uses
+  **`fields`** key, NOT `schema` (PATCHing with `schema` silently wipes all
+  fields). Gateway + `deploy/_pb_init.py` both use `fields`.
+- **Next:** deploy PocketBase + gateway to EC2 (or new t3.small during AWS
+  migration), `pg_dump` Supabase → import, point backend `.env` at gateway,
+  kill Supabase containers (~290MB RAM freed).
 
 ---
 
