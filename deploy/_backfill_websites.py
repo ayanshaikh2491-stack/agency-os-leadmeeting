@@ -203,7 +203,9 @@ async def main() -> None:
         # junk/aggregator/template domains (ground.news, mystore.com, ...),
         # malformed tokens are rejected; consumer mailboxes only when the
         # enrichment proved the address came from the business's own page.
-        if email and _is_valid_lead_email(email, allow_consumer=(prov == "consumer")):
+        if email and _is_valid_lead_email(
+            email, allow_consumer=(prov in ("consumer", "own_domain", "homepage"))
+        ):
             ok = pipe.sb_patch_lead(url, key, str(lead.get("id") or ""),
                                     {"email": email, "email_provenance": prov})
             log("EMAIL", name, "->", email, f"(provenance={prov}, patched={ok})")

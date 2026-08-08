@@ -145,6 +145,9 @@ _JUNK_EMAIL_DOMAINS = {
     # name, so enrichment crawls it and finds an editorial/template mailbox).
     "ground.news", "mystore.com", "wixsite.com", "myshopify.com",
     "squarespace.com", "godaddysites.com", "weebly.com", "wordpress.com",
+    # Template placeholder domains (user@domain.com, john@doe.com) that a
+    # homepage crawl can mistake for a business mailbox.
+    "domain.com", "doe.com", "your-domain.com", "somedomain.com",
 }
 # Consumer / free mailboxes (gmail, yahoo, ...). Many local small businesses
 # run their business mailbox on these. They are only acceptable as a send
@@ -166,17 +169,31 @@ _CONSUMER_DOMAINS = {
 }
 # Domains that look like the *first party* but actually are just a big
 # conglomerate/parent brand — not the local decision maker either.
-_JUNK_EMAIL_PREFIXES = ("support@", "press@", "info@", "contact@", "admin@",
-                        "noreply@", "no-reply@", "hello@", "help@", "sales@",
-                        "billing@", "careers@", "jobs@", "hr@", "pr@",
-                        "media@", "newsletter@", "unsubscribe@", "editor@",
-                        "tips@", "newsroom@", "submissions@", "stories@",
-                        "advertise@", "partners@", "founders@", "team@",
-                        "privacy@", "legal@", "addressadmissions@",
-                        "recreationdepartment@", "parkingservices@",
-                        "mychartsupport@", "subscriptionsupport@",
-                        "guest@", "stop@", "care@", "service@", "name@",
-                        "feedback@", "hi@")
+# Prefixes that NEVER name a human decision maker — rejected even when the
+# address came from the business's own verified page (noreply@/unsubscribe@/
+# careers@ can never be a cold-email target).
+_HARD_JUNK_EMAIL_PREFIXES = (
+    "press@", "noreply@", "no-reply@", "careers@",
+    "jobs@", "hr@", "pr@", "media@", "newsletter@", "unsubscribe@",
+    "editor@", "tips@", "newsroom@", "submissions@", "stories@",
+    "advertise@", "partners@", "founders@", "team@",
+    "privacy@", "legal@", "addressadmissions@",
+    "recreationdepartment@", "parkingservices@",
+    "mychartsupport@", "subscriptionsupport@",
+    "guest@", "stop@", "care@", "name@",
+    "feedback@", "hi@", "user@", "billing@", "mailer@", "bounce@",
+    "postmaster@", "webmaster@", "abuse@", "automated@",
+)
+# Generic front-desk prefixes. For a local small business info@/contact@/hello@
+# IS the owner's inbox, so these are allowed ONLY when the caller proved the
+# address came from the business's own verified page (email_provenance is
+# consumer/own_domain/homepage — set by enrichment). In an unverified context
+# (a scraper's listing info@) they stay junk.
+_GENERIC_EMAIL_PREFIXES = (
+    "info@", "contact@", "hello@", "help@", "sales@", "admin@",
+    "service@", "office@", "dispatch@", "bookings@", "support@",
+    "enquiries@", "inquiries@", "reservations@", "scheduling@", "mail@",
+)
 # Local parts that scream "automated/aggregator", not a human decision maker
 # (ad-alerts@, notifications@, alert@, ...).
 _JUNK_LOCAL_PAT = re.compile(
@@ -302,8 +319,13 @@ def _is_valid_lead_email(email: str, allow_consumer: bool = False) -> bool:
             pass
         else:
             return False
-    # Generic first-party catch-all prefixes are not a human decision maker.
-    for prefix in _JUNK_EMAIL_PREFIXES:
+    if not allow_consumer:
+        # Generic front-desk prefixes (info@, contact@, ...) are fine on the
+        # business's OWN verified page, but junk in an unverified scrape.
+        for prefix in _GENERIC_EMAIL_PREFIXES:
+            if e.startswith(prefix):
+                return False
+    for prefix in _HARD_JUNK_EMAIL_PREFIXES:
         if e.startswith(prefix):
             return False
     if _JUNK_LOCAL_PAT.search(local):
@@ -552,9 +574,12 @@ class SBAAutopilot:
             return "", ""
         email = (res or {}).get("email") or ""
         provenance = (res or {}).get("provenance") or ""
-        # Enrichment only collects consumer mailboxes from the business's own
-        # verified page, so a consumer address it returns is trusted.
-        if email and _is_valid_lead_email(email, allow_consumer=(provenance == "consumer")):
+        # Enrichment only collects mailboxes from the business's own verified
+        # page, so a first-party address it returns is trusted.
+        if email and _is_valid_lead_email(
+            email,
+            allow_consumer=(provenance in ("consumer", "own_domain", "homepage")),
+        ):
             logger.info("enriched %s -> %s (provenance=%s, sources=%s)",
                         name, email, provenance, res.get("domains"))
             self._email_retry_until.pop(email, None)
@@ -585,7 +610,10 @@ class SBAAutopilot:
                     provenance = prov or provenance
         if not email:
             return "no_email"
-        if not _is_valid_lead_email(email, allow_consumer=(provenance == "consumer")):
+        if not _is_valid_lead_email(
+            email,
+            allow_consumer=(provenance in ("consumer", "own_domain", "homepage")),
+        ):
             logger.info("skip junk email %s for %s", email, lead.get("name") or "")
             return "invalid_email"
         # SMTP failure (e.g. Gmail 550 daily limit): don't re-hammer this

@@ -90,13 +90,27 @@ _BAD_EMAIL_PAT = re.compile(
     r"u003e|u003c|%3e|%3c|&gt;|&lt;)",
     re.I,
 )
-_JUNK_PREFIXES = (
-    "support@", "press@", "info@", "contact@", "admin@", "noreply@",
-    "no-reply@", "hello@", "help@", "sales@", "billing@", "careers@",
-    "jobs@", "hr@", "pr@", "media@", "newsletter@", "unsubscribe@",
+# Prefixes that NEVER name a human decision maker — rejected even when the
+# address was found on the business's own verified page (noreply@/unsubscribe@/
+# careers@ can never be a cold-email target).
+_HARD_JUNK_PREFIXES = (
+    "press@", "media@", "pr@", "careers@", "jobs@", "hr@", "noreply@",
+    "no-reply@", "donotreply@", "unsubscribe@", "newsletter@", "mailer@",
+    "bounce@", "postmaster@", "webmaster@", "abuse@", "automated@",
     "editor@", "tips@", "newsroom@", "submissions@", "stories@",
     "advertise@", "partners@", "founders@", "team@", "privacy@", "legal@",
-    "guest@", "stop@", "care@", "service@", "name@",
+    "addressadmissions@", "recreationdepartment@", "parkingservices@",
+    "mychartsupport@", "subscriptionsupport@", "guest@", "stop@", "care@",
+    "billing@", "name@", "feedback@", "hi@", "user@",
+)
+# Generic front-desk prefixes. For a local small business info@/contact@/hello@
+# IS the owner's inbox, so these are allowed ONLY when the caller proved the
+# address came from the business's own verified page (allow_consumer=True). In
+# an unverified context (a scraper listing's info@) they stay junk.
+_GENERIC_PREFIXES = (
+    "support@", "info@", "contact@", "admin@", "hello@", "help@",
+    "sales@", "service@", "office@", "dispatch@", "bookings@",
+    "enquiries@", "inquiries@", "reservations@", "scheduling@", "mail@",
 )
 # Local parts that scream "automated/aggregator", not a human decision maker
 # (ad-alerts@, notifications@, alert@, ...).
@@ -265,9 +279,15 @@ def _is_valid_email(email: str, allow_consumer: bool = False) -> bool:
             pass
         else:
             return False
-    for prefix in _JUNK_PREFIXES:
+    for prefix in _HARD_JUNK_PREFIXES:
         if e.startswith(prefix):
             return False
+    # Generic front-desk prefixes are fine on the business's OWN verified page
+    # (allow_consumer=True), but are junk in an unverified scrape.
+    if not allow_consumer:
+        for prefix in _GENERIC_PREFIXES:
+            if e.startswith(prefix):
+                return False
     if _JUNK_LOCAL_PAT.search(local):
         return False
     return True
