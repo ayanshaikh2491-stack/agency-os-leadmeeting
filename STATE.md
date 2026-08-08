@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 12:50 IST (07:20 UTC)
+**Last updated:** 2026-08-08 13:05 IST (07:35 UTC)
 
 ---
 
@@ -135,3 +135,48 @@ one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
 - 07:06 UTC — pass shows `no_email: 643`; enrichment now hitting different leads.
 - 07:19 UTC — deployed `0c1352c` (internal 38s budget); next passes should have
   no "enrichment timed out" lines.
+
+---
+
+## SBA Workspace Isolation Audit (2026-08-08, code + live EC2)
+
+**Question:** har client workspace ek alag (isolated) kaise hai?
+
+**How isolation works (code, `admin/agency/sba_autopilot.py` + `sba_biztypes.py`):**
+Each workspace gets its own `SBAAutopilot` instance (`run_all_once` loops
+`list_sba_workspaces()`). Isolation key = `workspace_name` column on leads.
+
+| Isolation domain | Mechanism | Verdict |
+|---|---|---|
+| Lead pool | `run_once` filters `workspace_name == self.workspace_name` before emailing; dedupe (name+phone) also workspace-scoped | ✅ isolated |
+| New leads tagged | every saved row gets `workspace_name: self.workspace_name` | ✅ |
+| Rotation cursor | per-workspace file `sba_rotation_{ws}.state` | ✅ |
+| Outreach angle/strategy | per-workspace `sba_strategy_{ws}.json` | ✅ |
+| Reasoning journal | per-workspace `sba_reasoning_{ws}.log` | ✅ |
+| Owner email | `owner_email` from config; owner notifications + `_is_owner` use workspace owner (fallback agency OWNER_EMAIL) | ✅ |
+| Reply handling | replies matched against THIS workspace's lead list only (email match); owner commands resolve only within workspace leads | ✅ |
+| Meetings | created only from workspace-filtered leads; stored with `lead_id` (indirect scoping via lead) | ✅ (minor: meeting rows carry no `workspace_name` themselves) |
+
+**Live status (EC2):**
+- `sba_workspaces.json` does NOT exist on EC2 → `list_sba_workspaces()` runs
+  **only the `agency` workspace** (it auto-injects agency when config missing).
+- Supabase: **664/664 leads are `workspace_name = agency`**. No client workspace
+  is SBA-enabled yet.
+- `api/health` `workspace_count: 2` counts the platform workspaces table (CEO
+  workspaces), NOT SBA-enabled workspaces — don't confuse the two.
+
+**Low-risk shared resources (note, not bugs):**
+- **One shared Gmail inbox** for all workspaces (SMTP/IMAP creds are global).
+  `check_replies(mark_read=True)` runs per workspace pass; with 2+ workspaces a
+  reply could be consumed by whichever pass runs first. Today harmless (agency
+  only), but a future per-workspace inbox or a `seen`-flag filter would harden it.
+- **Enrichment cooldown file** `.sba_enrichment_state` is one shared file keyed
+  by globally-unique lead id → no cross-contamination.
+- **`client_id` on saved leads is hardcoded** to `00000000-...-0001` for all
+  workspaces, but it is never read for filtering (isolation is by
+  `workspace_name`) — dead metadata, low priority to fix.
+
+**To enable a client workspace:** create `sba_workspaces.json` on EC2
+(`{"<ws>": {"enabled": true, "owner_email": "...", "category": "..."}}`) or call
+`set_workspace_config()`; next autopilot restart picks it up with its own
+rotation/strategy/journal/owner and its own lead pool.
