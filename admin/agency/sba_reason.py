@@ -146,15 +146,31 @@ async def understand_reply(text: str) -> dict[str, Any]:
 
 
 def prioritize(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Order leads by agent score (unknown score treated as 50) so the best
-    prospects get emailed first within the daily cap."""
+    """Order leads so the pass spends its caps on the best prospects first.
+
+    The agent score decides within a tier. Tier bumps (added to the score):
+      +2000  already has an email -> ready to send now (daily send cap is
+             scarce, so sendable leads beat leads that still need enrichment)
+      +1000  has a website but no email -> enrichment-ready: the homepage can
+             be crawled for a real mailbox, so they yield emails far more often
+             than no-website leads (Bing-only). Without this bump the 12/pass
+             enrichment budget burns through 600+ no-website leads first and
+             the good leads wait ~17h for their turn.
+    """
     def _score(lead: dict[str, Any]) -> float:
         raw = lead.get("raw") or {}
         s = raw.get("lead_score")
         try:
-            return float(s) if s is not None else 50.0
+            base = float(s) if s is not None else 50.0
         except (TypeError, ValueError):
-            return 50.0
+            base = 50.0
+        email = (lead.get("email") or "").strip()
+        website = (lead.get("website") or "").strip()
+        if email:
+            return base + 2000.0
+        if website:
+            return base + 1000.0
+        return base
 
     return sorted(leads, key=lambda l: -_score(l))
 
