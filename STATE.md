@@ -3,36 +3,44 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 15:10 IST (09:40 UTC)
+**Last updated:** 2026-08-08 17:56 IST (12:26 UTC)
 
 ---
 
 ## High Priority Tasks
 
-1. **Autopilot crash-loop FIXED (`9e3e83e`, deployed 08:53-08:57 UTC)** — DONE
-   - Root cause: EC2 had STALE copies of `sba_email_client.py` (missing
-     `build_workspace_email_client`), `sba_meeting.py` (missing `email_client`
-     kwarg), `sba_biztypes.py` + `sba.py` (workspace email identity changes).
-     systemd restarted 19x with ImportError / TypeError.
-   - Fixed: scp'd all 4 files, import check OK, restarted. `NRestarts=0`, pid
-     alive, fresh pass at 09:02 + 09:39 UTC both complete normally.
-2. **Junk email gate DEPLOYED** — fake/aggregator emails now rejected
-   - `_JUNK_EMAIL_PREFIXES`: feedback@, hi@. `_JUNK_EMAIL_DOMAINS`: ground.news,
-     mystore.com, wixsite.com, myshopify.com, squarespace.com, godaddysites.com,
-     weebly.com, wordpress.com. Backfill gate uses `_is_valid_lead_email`
-     (`allow_consumer` only when provenance == consumer). Junk rows cleaned.
-3. **Website backfill RUNNING (relaunched 09:05 UTC, pid 2367341)**
-   - 668 leads loaded, 521 no-website, 60 unique (cat,city,state) targets, top
-     30 processed. Website capture works (SAMPLE shows real domains). Google
-     throttling causes transient CDP errors → retry + yelp fallback built in.
-   - Email enrichment phase runs after scrape (~31 website+no-email leads).
-4. **LEADS ARE FLOWING** — Google Maps sourcing active
-   - DB 668 → 670 leads. 09:39 pass judged 4 auto-repair Houston leads
-     (J&T Automotive 85, King of rim repair 85, Firestone 0, Helfman Ford 10).
-     Newest lead rows timestamp 09:39 UTC. `new_leads_found=0` in pass_summary
-     is misleading (judged existing + newly-scraped leads, count is 0 metric bug).
-5. **Email count 31** (28 clean + backfill). Emails still not SENT — sends are
-   gated behind email enrichment + business-hours; keep watching `emails_sent`.
+1. **Autopilot healthy — 50+ passes, NRestarts=0** — DONE
+   - Deployed `979ef71` (12:22 UTC): generic first-party email prefix fix (see #3).
+   - Restart clean (12:22:48 UTC), fresh pass at 12:25 UTC complete normally.
+2. **Website backfill COMPLETE** — DONE
+   - Backfill finished 10:30 UTC: 670 leads, 487 no-website, 63 with email.
+   - Only orphaned chrome (port 9252) remains; harmless.
+3. **Enrichment yield fix DEPLOYED (`979ef71`, 12:22 UTC)** — ROOT CAUSE FOUND
+   - **Bug:** `_JUNK_PREFIXES`/`_JUNK_EMAIL_PREFIXES` unconditionally blocked
+     `info@`, `contact@`, `hello@`, `support@`, `admin@`, `office@`... But for a
+     local small business those ARE the owner inbox. `allow_consumer` only
+     relaxed the DOMAIN check, not the PREFIX check, so `info@beyondwow.com`
+     (found on the business's own verified page) was rejected as junk.
+   - **Fix:** split prefixes into `_GENERIC_*` (info/contact/hello/office/
+     support/admin/sales/service/...) allowed ONLY when provenance proves the
+     address came from the business's own verified page
+     (consumer/own_domain/homepage), and `_HARD_JUNK_*` (noreply/unsubscribe/
+     careers/press/billing/mailer/bounce/...) always rejected.
+   - Applied in `admin/tools/lead_enrichment.py` (validity + crawl) AND
+     `admin/agency/sba_autopilot.py` (send gate) AND `deploy/_backfill_websites.py`.
+   - **Proof live:** `info@beyondwow.com` now enriches as `own_domain`
+     (previously empty). Latest pass already shows `invalid_email: 5` (new
+     allowed addresses being re-scored).
+   - Re-enrichment batch running (124 website-having no-email leads, bypasses
+     24h cooldown) to capture the fixed yield.
+4. **LEADS ARE FLOWING** — multi-source, NOT just Google Maps
+   - Autopilot `_find_new_leads` → `find_leads_all` loops **5 sources**:
+     google_maps, yelp, yellowpages, bing_maps, facebook_pages.
+   - DB 671 leads (latest). Enrichment state tracks 156 leads; ~60 tried in 2h.
+5. **Email sends — still 0 today, 3 total historical**
+   - 62 leads deferred to business hours (it is 6:26 AM CDT now; sends start
+     ~14:00 UTC = 9 AM CDT, cap 30/day). Watch `emails_sent` after 14:00 UTC.
+   - Once the re-enrichment lands, expect no_email 585 → lower.
 6. **Memory pressure on EC2:** 1.9GiB total, swap active. Do NOT add heavier
    workloads to EC2.
 7. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
@@ -46,12 +54,12 @@
 |---|---|---|
 | `api/health` | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
 | `sba.service` | active | backend API |
-| `sba-autopilot.service` | active | 24/7 loop, ~20 min cadence, NRestarts=0 after crash-loop fix (09:53 UTC) |
+| `sba-autopilot.service` | active | 24/7 loop, ~20 min cadence, NRestarts=0 after 979ef71 (12:22 UTC) |
 | CEO agent | ready | orchestrator up |
 | SBA (sales/business) | running | lead finding + enrichment + cold email + meetings |
 | Ads / Content / SEO / Website / Analytics / Social | deployed | part of deploy bundle, not focus of current work |
 | Email client (`SBAEmailClient`) | enabled: True | creds live on EC2 (.env), code falls back to `TAGS_SMTP_*` |
-| Supabase (docker) | running | `leads.website` column added via migration |
+| Supabase (docker) | running | 671 leads, 604 no-email, 10 no-website |
 | Organic engine (7 channels) | deployed | telegram/gbp/facebook browser + api channels |
 
 Deploy: `python deploy/deploy_sba.py` (bundle → scp → extract → py_compile → restart → verify).
@@ -62,61 +70,41 @@ Verify after deploy: `autopilot/status` endpoint, `journalctl -u sba-autopilot.s
 ## Current Error Logs (recent, journalctl sba-autopilot)
 
 ```
-Aug 08 08:53  ImportError: cannot import name 'build_workspace_email_client'  <- crash-loop, FIXED
-Aug 08 08:53  SBAMeetingManager.__init__() got an unexpected keyword arg 'email_client'  <- stale sba_meeting.py, FIXED
-Aug 08 08:57  restarted with all 4 files deployed; NRestarts=0 since
-Aug 08 09:02  pass_summary: emails_sent 0, no_email 619 (29 deferred to business hours)
-Aug 08 09:39  pass_summary: emails_sent 0, no_email 618, 4 leads judged (auto repair Houston)
+Aug 08 08:53  ImportError build_workspace_email_client / TypeError email_client  <- crash-loop, FIXED 9e3e83e
+Aug 08 10:30  backfill DONE: 670 leads, 487 no website, 63 with email (orphaned chrome only)
+Aug 08 12:21  pass 50: emails_sent 0, no_email 587, deferred 62 (US pre-business-hours)
+Aug 08 12:25  pass 51: invalid_email 5 (newly-allowed addresses being rescored), NRestarts=0
 ```
 
 - No SMTP errors yet because no sends have happened (`send_failed: 0`).
 - Leads ARE being judged each pass (Google Maps rotation active).
-- Backfill chrome CDP errors are transient (Google throttle) — retries handle.
+- `meetings` + `email_sends` tables do NOT exist in Supabase (PGRST205 when
+  probed) — meetings are stored locally in `sba_store` SQLite in-memory; a
+  Supabase meetings table may be a future hardening step.
 
 ---
 
 ## Current Issue Being Fixed (DO NOT RESCAN THE REPO)
 
-**Problem:** 640+ leads have no email, so no cold emails are being sent and the
-lead-to-meeting pipeline is stalled at step 2.
+**Problem (fixed `979ef71`, deployed 12:22 UTC):** 604 leads had no email, so
+the pipeline stalled at step 2. Root cause found in the enrichment VALIDITY
+GATE, not the crawl: generic first-party prefixes (info@/contact@/office@)
+were unconditionally rejected even when the address came from the business's
+own verified page. 124 leads HAVE websites; many expose exactly such addresses.
 
-**Root cause (FOUND):** `SBAWorkspaceRunner.run_all_once()` creates a fresh
-`SBAAutopilot` per pass. The 24h enrichment cooldown (`_enriched_at`) lived
-only in memory, so it reset every pass. Result: the same un-enrichable lead
-(Curt Hinkle DDS) got retried every ~20 min, and the 12-slot per-pass
-enrichment budget was burned on it, starving the other 640 leads.
+**Fix:** prefix lists split into generic (verified-only) vs hard-junk (always),
+in both `lead_enrichment.py` and `sba_autopilot.py`. Provenance
+consumer/own_domain/homepage now implies "verified first-party" and unlocks
+generic prefixes; unverified scrapes still reject them.
 
-**Fix (commit `0711677`, deployed 07:02 UTC):**
-- `_enriched_at` now loads from / saves to `.sba_enrichment_state` (same
-  pattern as `.sba_rotation_state`), so cooldown survives restarts.
-- Per-lead enrichment ceiling 120s → 45s (`ENRICH_TIMEOUT_SECONDS`).
-- Test infra: fixed stale async `find_leads_all` stub, isolated per-test state.
-- 94 SBA tests pass (12 autopilot + 82 others).
+**Proof:** `find_lead_email("Beyond Wow Plumbing & Drains", ..., site=beyondwow.com)`
+now returns `info@beyondwow.com` (own_domain). Pass 51 already rescoring.
 
-**Proof it's working:** state file now tracks multiple leads per pass
-(ids 468, 481, 488, 493 seen), not just Curt Hinkle.
-
-**Still open:** enrichment finds emails slowly (Bing + site crawls). Until
-`emails_sent > 0`, keep watching. If enrichment returns too little, next lever
-is raising `SBA_MAX_ENRICH_PER_PASS` (currently 12) or adding more email
-sources to `admin/tools/lead_enrichment.py`.
-
-## Current Issue Being Fixed (second round — DO NOT RESCAN THE REPO)
-
-**Problem (fixed `0c1352c`, deployed 07:19 UTC):** even after the cooldown fix,
-`enrichment timed out` lines kept appearing (Curt Hinkle DDS, Houston Landscape
-Pros). Root cause: `find_lead_email` had NO internal time budget. Worst case
-per call: Bing 3 queries × 3 attempts × (15s + 2s) ≈ 150s, then per candidate
-domain `_homepage_check` (2 × 10s) + `_crawl_domain` (5 pages × 2 schemes ×
-12s) ≈ 140s. And `requests` read timeout is per-chunk, so a drip-feeding site
-can hold one request for minutes — the 45s `asyncio.wait_for` cannot cancel a
-thread, so the crawl kept running after the wrapper gave up.
-
-**Fix:** `ENRICH_BUDGET_SECONDS` (38s, configurable, under the 45s wrapper) +
-`_now/_expired/_remaining/_sleep` deadline helpers. Every request uses
-`(min(3.05, remaining), remaining)` timeouts; loops abort the instant the
-budget is exhausted. Verified: all requests hanging until their read timeout →
-one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
+**Still open:** (a) re-enrichment batch running for the 124 website leads;
+(b) ~480 leads with no website need Bing-based enrichment (slower, lower
+yield); (c) 403/Cloudflare/JS-rendered sites (papermoonpainting, johnmooreservices,
+texasqualityplumbing) need a headless browser for email extraction — NOT on
+EC2 (memory); (d) sends start ~14:00 UTC — watch `emails_sent` and Gmail 550s.
 
 ---
 
@@ -124,7 +112,9 @@ one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
 
 | Commit | What |
 |---|---|
-| `9e3e83e` | **crash-loop fix + junk email gate + workspace email identity** (current) |
+| `979ef71` | **generic first-party prefix fix (enrichment yield)** (current) |
+| `1e5a733` | docs: STATE.md — crash-loop fixed, backfill running, leads flowing |
+| `9e3e83e` | crash-loop fix + junk email gate + workspace email identity |
 | `4c6dc28` | prioritize enrichment-ready leads + backfill phone-match fix |
 | `0c1352c` | enrichment internal 38s budget + shrinking timeouts |
 | `0711677` | enrichment state persistence + 45s wrapper timeout |
@@ -135,14 +125,13 @@ one enrichment finishes in 3.9s with a 4s budget; 12/12 autopilot tests pass.
 
 ## Run Log
 
-- 07:02 UTC — deployed `0711677`, autopilot restarted (new PID).
-- 07:19 UTC — deployed `0c1352c` (internal 38s budget).
-- 08:53 UTC — deployed `sba_email_client.py` fix (crash-loop import error).
-- 08:57 UTC — deployed `sba_meeting.py`, `sba_biztypes.py`, `sba.py`; restarted
-  autopilot; NRestarts=0 since.
-- 09:02 UTC — clean pass (no_email 619, 29 deferred). Commit `9e3e83e`.
 - 09:05 UTC — backfill relaunched with junk gate (pid 2367341), 668 leads.
-- 09:39 UTC — pass judged 4 auto-repair Houston leads; DB 670 total, 31 emails.
+- 10:30 UTC — backfill DONE: 670 leads, 63 with email. Only orphaned chrome.
+- 12:22 UTC — deployed `979ef71` (generic prefix fix), autopilot restarted
+  clean, NRestarts=0.
+- 12:25 UTC — pass 51: `invalid_email: 5`, `no_email: 585` (fix live).
+- 12:26 UTC — re-enrichment batch started for 124 website-having no-email
+  leads (bypasses 24h cooldown).
 
 ---
 
@@ -168,7 +157,7 @@ Each workspace gets its own `SBAAutopilot` instance (`run_all_once` loops
 **Live status (EC2):**
 - `sba_workspaces.json` does NOT exist on EC2 → `list_sba_workspaces()` runs
   **only the `agency` workspace** (it auto-injects agency when config missing).
-- Supabase: **664/664 leads are `workspace_name = agency`**. No client workspace
+- Supabase: **all leads are `workspace_name = agency`**. No client workspace
   is SBA-enabled yet.
 - `api/health` `workspace_count: 2` counts the platform workspaces table (CEO
   workspaces), NOT SBA-enabled workspaces — don't confuse the two.
