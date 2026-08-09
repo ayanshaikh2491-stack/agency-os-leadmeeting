@@ -40,10 +40,26 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI(title="PocketBase Supabase Gateway")
 
+
+def _read_env_key(path: str, name: str) -> str | None:
+    """Read a KEY=VALUE pair from a dotenv-style file (no deps)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 PB_URL = os.getenv("PB_URL", "http://127.0.0.1:8090")
 PB_ADMIN_EMAIL = os.getenv("PB_ADMIN_EMAIL", "admin@tagsagency.local")
 PB_ADMIN_PASS = os.getenv("PB_ADMIN_PASS", "pb-admin-2026-x9")
-SERVICE_KEY = os.getenv("SERVICE_KEY", "sb-service-key-local")
+SERVICE_KEY = os.getenv("SERVICE_KEY") or _read_env_key(
+    os.getenv("PB_ENV_FILE", "/home/ubuntu/sba-backend/.env"), "SUPABASE_SERVICE_KEY"
+) or "sb-service-key-local"
 
 # Common columns across agent tables (always present on collections we own).
 _COMMON_FIELDS = [
@@ -109,7 +125,8 @@ def _ensure_collection(name: str, body_keys: list[str] | None = None):
     """Create (or extend) a collection so all payload columns exist."""
     wanted = list(_COMMON_FIELDS)
     for k in body_keys or []:
-        if k not in wanted:
+        # "id" is a PocketBase system field; never add it as a data field.
+        if k not in wanted and k != "id":
             wanted.append(k)
 
     if not _collection_exists(name):
@@ -235,7 +252,11 @@ def _build_fields(query) -> str:
 
 def _list_records(collection: str, query) -> list:
     filter_s = _build_filter(query)
-    params = {"page": "1", "perPage": str(_build_perpage(query))}
+    try:
+        page = int(query.get("page") or "1")
+    except ValueError:
+        page = 1
+    params = {"page": str(page), "perPage": str(_build_perpage(query))}
     if filter_s:
         params["filter"] = filter_s
     sort = _build_sort(query)
@@ -268,6 +289,20 @@ def _record_out(rec: dict | None) -> dict | None:
     out = dict(rec)
     out.pop("collectionId", None)
     out.pop("collectionName", None)
+    return out
+
+
+def _is_pb_id(v) -> bool:
+    """PocketBase ids are exactly 15 chars [a-z0-9]. UUIDs/ints are not."""
+    return isinstance(v, str) and len(v) == 15 and v.isalnum() and v.islower()
+
+
+def _sanitize_payload(payload: dict) -> dict:
+    """Move a non-PocketBase 'id' (Supabase UUID/int) to 'legacy_id' so
+    PocketBase generates its own id instead of 400ing."""
+    out = dict(payload)
+    if "id" in out and not _is_pb_id(out["id"]):
+        out["legacy_id"] = out.pop("id")
     return out
 
 
@@ -316,7 +351,8 @@ async def rest_v1(table: str, request: Request):
 
     # ── POST: create (or upsert when on_conflict + merge-duplicates) ──
     if request.method == "POST":
-        _ensure_collection(collection, list(body.keys()))
+        payload = _sanitize_payload(dict(body))
+        _ensure_collection(collection, list(payload.keys()))
         ts = _now_iso()
         if on_conflict and "merge-duplicates" in prefer:
             conflict_q = []
@@ -332,7 +368,7 @@ async def rest_v1(table: str, request: Request):
                     existing = data.get("items", []) if isinstance(data, dict) else []
                     if existing:
                         rec = existing[0]
-                        merged = {**rec, **body, "updated_at": ts}
+                        merged = _sanitize_payload({**rec, **body, "updated_at": ts})
                         merged.pop("id", None)
                         merged.pop("created", None)
                         merged.pop("updated", None)
@@ -340,7 +376,6 @@ async def rest_v1(table: str, request: Request):
                         return JSONResponse([_record_out(upd)])
                 except Exception:  # noqa: BLE001
                     pass  # fall through to create
-        payload = dict(body)
         payload.setdefault("created_at", ts)
         payload.setdefault("updated_at", ts)
         try:
@@ -353,13 +388,14 @@ async def rest_v1(table: str, request: Request):
 
     # ── PATCH: update by filter ──
     if request.method == "PATCH":
-        _ensure_collection(collection, list(body.keys()))
+        payload = _sanitize_payload(dict(body))
+        payload.pop("id", None)
+        _ensure_collection(collection, list(payload.keys()))
         try:
             targets = _find_by_filter(collection, request.query_params)
             updated = []
             ts = _now_iso()
             for rec in targets:
-                payload = dict(body)
                 payload["updated_at"] = ts
                 upd = _pb("PATCH", f"/api/collections/{urllib.parse.quote(collection)}/records/{rec['id']}", payload)
                 updated.append(_record_out(upd))

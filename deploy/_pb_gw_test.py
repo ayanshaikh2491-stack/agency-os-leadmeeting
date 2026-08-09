@@ -1,10 +1,13 @@
-"""End-to-end test: backend-style Supabase calls through the gateway."""
+"""End-to-end test: backend-style Supabase calls through the gateway.
+Usage: GW_BASE=http://127.0.0.1:8095 GW_KEY=<service-key> python _pb_gw_test.py
+"""
 import json
+import os
 import urllib.request
 import urllib.error
 
-BASE = "http://127.0.0.1:8050"
-KEY = "sb-service-key-local"
+BASE = os.getenv("GW_BASE", "http://127.0.0.1:8050")
+KEY = os.getenv("GW_KEY", "sb-service-key-local")
 
 def call(method, path, body=None, profile=None):
     headers = {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
@@ -43,6 +46,25 @@ if isinstance(b, list) and b:
 else:
     ok = False
 if not lead_id:
+    ok = False
+
+# 2b. POST lead carrying a Supabase UUID id -> must NOT 500 (legacy_id remap)
+s, b = call("POST", "/rest/v1/leads", {
+    "id": "b0f3c1e2-0000-4000-8000-000000000001",
+    "name": "Id Test", "email": "id@example.com",
+})
+print("POST lead w/ UUID id:", s, json.dumps(b)[:200] if b else b)
+if s not in (200, 201) or not (isinstance(b, list) and b and b[0].get("legacy_id") == "b0f3c1e2-0000-4000-8000-000000000001"):
+    print("  -> FAIL: expected legacy_id remap, got", s, b)
+    ok = False
+
+# 2c. POST lead carrying an integer id -> must NOT 500 (legacy_id remap)
+s, b = call("POST", "/rest/v1/leads", {
+    "id": 42, "name": "Int Id Test", "email": "intid@example.com",
+})
+print("POST lead w/ int id:", s, json.dumps(b)[:200] if b else b)
+if s not in (200, 201) or not (isinstance(b, list) and b and b[0].get("legacy_id") == 42):
+    print("  -> FAIL: expected int legacy_id remap, got", s, b)
     ok = False
 
 # 3. GET leads (like load_leads: select=*&order=created_at.asc)

@@ -3,38 +3,41 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-08 22:40 IST (17:10 UTC)
+**Last updated:** 2026-08-09 15:25 IST (15:25 UTC)
 
 ---
 
-## PocketBase Supabase Replacement — LOCAL GATEWAY GREEN (17:10 UTC)
+## PocketBase Supabase Replacement — PRODUCTION GREEN (15:25 UTC)
 
 - **Why:** EC2 (2GB RAM) chokes on Supabase (13 containers, ~290MB RAM,
   ~11GB disk). User chose **PocketBase** as lightweight open-source replacement.
-- **PocketBase v0.39.10** running locally at `127.0.0.1:8090`, data dir
-  `deploy/pocketbase/win/pb_data`. Admin: `admin@tagsagency.local` /
-  `pb-admin-2026-x9` (created via `superuser update` with NO quotes — cmd
-  quoting bug had previously embedded literal quotes in the password).
-- **`deploy/pb_gateway.py`** (FastAPI, port 8050): Supabase-compat gateway.
-  Backend needs ZERO code changes: `/rest/v1/{table}` + `apikey`/`Authorization`
-  headers + `Content-Profile` → `{profile}__{table}` collections + PostgREST
-  operators (eq/neq/gt/gte/lt/lte/ilike/like/is/in) + order/limit + upsert
-  (`on_conflict` + merge-duplicates) + auto-creates/extends collections.
-- **ROOT CAUSE of filter bug (fixed 17:06 UTC):** `_build_filter` iterated
-  `query.multi_items()` values with `for v in vals` — but `vals` is a STRING,
-  so it split `eq.wwzqdh2v6c5wis7` into characters. Every filter silently
-  became empty (GET returned all rows, PATCH matched nothing, upserts
-  duplicated). Fix: `items = vals if isinstance(vals, list) else [vals]`.
-- **`deploy/_pb_gw_test.py` — ALL PASS:** health, POST lead, GET leads,
-  PATCH by `id=eq.` (filter now applies), agent_memory upsert (no dupes),
-  GET memory with `agent_name=eq.seo&memory_key=eq.k1`, checkpoint upsert,
-  DELETE 204, wrong-key 401.
+- **PocketBase v0.39.10** running on EC2 at `127.0.0.1:8090` (systemd
+  `sba-pb.service`), data dir `/home/ubuntu/pocketbase/pb_data`. Admin:
+  `admin@tagsagency.local` / `pb-admin-2026-x9`.
+- **`deploy/pb_gateway.py`** (FastAPI, **port 8095**, systemd `sba-gateway.service`):
+  Supabase-compat gateway. Backend needs ZERO code changes: `/rest/v1/{table}` +
+  `apikey`/`Authorization` headers + `Content-Profile` → `{profile}__{table}`
+  collections + PostgREST operators (eq/neq/gt/gte/lt/lte/ilike/like/is/in) +
+  order/limit + upsert (`on_conflict` + merge-duplicates) + auto-creates/extends
+  collections. **Legacy Supabase id remap:** non-PocketBase `id` values (UUID /
+  int) are moved to `legacy_id` so PocketBase generates its own ≤15-char id.
+  **Pagination fixed:** `page` query param is now honored (was always 1, which
+  broke dedup/idempotent imports and backend pagination).
+- **Data parity verified (15:12 UTC):** leads 784 (= 783 Supabase + 1 probe),
+  agents 10, workspaces 2, goals 2, clients 1, org_charts 1, ws_agency__leads
+  325, ws_agency__website_builds 5, ws_agency__website_docs 10,
+  ws_agency__website_build_log 10. **Importer `deploy/_pb_import.py` is
+  idempotent** (skips rows whose `legacy_id` already exists).
+- **Autopilot now on gateway (15:11 UTC restart):** new leads POST via
+  gateway (`201 Created`, verified 15:17:31), enrichment + email flows hit
+  `127.0.0.1:8095`, gateway 500 count = 0.
+- **Supabase docker stack STOPPED (15:23 UTC):** `docker compose stop` in
+  `/home/ubuntu/supabase/docker`. Containers/volumes preserved for rollback —
+  restart with `docker compose start`. Backend `.env` now points at
+  `SUPABASE_URL=http://127.0.0.1:8095`.
 - **IMPORTANT PocketBase v0.39 quirk:** collection create/patch uses
   **`fields`** key, NOT `schema` (PATCHing with `schema` silently wipes all
   fields). Gateway + `deploy/_pb_init.py` both use `fields`.
-- **Next:** deploy PocketBase + gateway to EC2 (or new t3.small during AWS
-  migration), `pg_dump` Supabase → import, point backend `.env` at gateway,
-  kill Supabase containers (~290MB RAM freed).
 
 ---
 
