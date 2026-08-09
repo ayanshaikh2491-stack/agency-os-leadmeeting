@@ -48,6 +48,17 @@ from admin.tools.sba_time import (  # noqa: E402
 
 logger = logging.getLogger("sba.autopilot")
 
+
+def _s(v) -> str:
+    """Coerce a DB value to a stripped string. PocketBase's json fields can
+    return digit-only values as int (e.g. 3464049915); every .strip() call on
+    a loaded field must go through here so the loop never crashes."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v).strip()
+
 INTERVAL_MINUTES = int(os.environ.get("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 DAILY_EMAIL_CAP = int(os.environ.get("SBA_DAILY_EMAIL_CAP", "30"))
 # Hard ceiling for one full pass. A wedged CDP/Supabase call (seen: 9h hang)
@@ -441,8 +452,8 @@ class SBAAutopilot:
             for l in existing:
                 if (l.get("workspace_name") or "agency") != self.workspace_name:
                     continue
-                n = (l.get("name") or "").strip().lower()
-                p = (l.get("phone") or "").strip()
+                n = _s(l.get("name")).lower()
+                p = _s(l.get("phone"))
                 if n and p:
                     existing_by_key[(n, p)] = l
 
@@ -450,8 +461,8 @@ class SBAAutopilot:
             refreshed = 0
             rows: list[dict] = []
             for lead in leads:
-                n = (lead.get("name") or "").strip().lower()
-                p = (lead.get("phone") or "").strip()
+                n = _s(lead.get("name")).lower()
+                p = _s(lead.get("phone"))
                 # Defensive: scrapers filter these, but never save a lead
                 # without a phone or with a generic UI label as a name.
                 if not n or not p:
@@ -462,8 +473,8 @@ class SBAAutopilot:
                     # Backfill: old leads were scraped before the maps card
                     # captured websites. Now that we see the website, patch it
                     # so enrichment can find the business email.
-                    new_site = (lead.get("website") or "").strip()
-                    if new_site and not (old.get("website") or "").strip():
+                    new_site = _s(lead.get("website"))
+                    if new_site and not _s(old.get("website")):
                         if sb_patch_lead(url, key, str(old.get("id") or ""), {
                             "website": new_site,
                             "has_website": True,
@@ -527,7 +538,7 @@ class SBAAutopilot:
                 res = pipe.save_lead(url, key, row)
                 if res is not None:
                     added += 1
-                    existing_by_key[((row.get("name") or "").strip().lower(), (row.get("phone") or "").strip())] = row
+                    existing_by_key[(_s(row.get("name")).lower(), _s(row.get("phone")))] = row
             logger.info("autopilot: found %d new leads, refreshed %d websites from %d scraped (%s in %s)",
                         added, refreshed, len(leads), category, city)
             return added
@@ -543,7 +554,7 @@ class SBAAutopilot:
         business name, so grubhub.com/wikihow.com-type junk never gets saved.
         Returns (email, provenance); both '' when nothing trustworthy was found.
         """
-        name = (lead.get("name") or "").strip()
+        name = _s(lead.get("name"))
         if not name:
             return "", ""
         city_state = lead.get("city_state") or lead.get("context", {}).get("city_state") or ""
@@ -588,8 +599,8 @@ class SBAAutopilot:
 
     async def _email_lead(self, url: str, key: str, lead: dict, angle: str | None = None) -> str:
         """Send a professional cold email if lead is in business hours."""
-        email = (lead.get("email") or "").strip()
-        provenance = (lead.get("email_provenance") or "").strip()
+        email = _s(lead.get("email"))
+        provenance = _s(lead.get("email_provenance"))
         status = lead.get("status") or "new"
         if status in ("contacted", "meeting", "replied", "owner_confirm"):
             return "already_contacted"

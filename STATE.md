@@ -31,17 +31,38 @@
   instead of ~636). **Fix:** `_build_limit` — no `limit` → page through ALL
   PocketBase pages (perPage 200), `limit=N` → up to N rows; `_find_by_filter`
   (PATCH/DELETE targets) also pages now. **Verified live:** gateway returns
-  814 rows; pass 16:17 `no_email: 636, deferred: 21, invalid: 5, errors 0`
+  785 rows; pass 16:17 `no_email: 636, deferred: 21, invalid: 5, errors 0`
   (matches Supabase-era pool). Deploy note: service imports
   `/home/ubuntu/sba-backend/pb_gateway.py` (root), NOT `deploy/pb_gateway.py`.
+- **INT-PHONE BUG found + fixed (16:50 UTC) — CRITICAL:** PB `json` field type
+  normalizes digit-only strings to int (`"3464049915"` → `3464049915`). 489 of
+  814 imported leads had int phones at rest (export had all 783 as strings).
+  First full-pool pass (16:16) crashed dedupe: `'int' object has no attribute
+  'strip'` (autopilot `.strip()` on int phone). **Triple fix:**
+  (1) gateway `_record_out` coerces known string columns back to str on EVERY
+  read (`_STRING_FIELDS`), (2) gateway now CREATES these columns as `text` not
+  `json` (`_field_type`), (3) autopilot `_s()` helper wraps all loaded-field
+  `.strip()` calls. Verified live: gateway returns 0 non-str phones; pass
+  16:50 `no_email: 635, deferred: 22, invalid: 5, errors 0`. At-rest ints
+  left as-is (harmless — every read goes through the gateway).
+- **29 DUPLICATE LEADS removed (16:47 UTC):** pagination bug (only 50-row
+  dedupe) let the autopilot re-add 29 already-imported leads between 15:17 and
+  15:56 (same name+phone, no legacy_id). Deleted via gateway `id=eq.` DELETE,
+  kept the legacy_id originals. Backup: `/home/ubuntu/dup_backup_20260809.json`
+  (58 records = 29 dup pairs). Live count now **785** (783 import + 2
+  non-legacy). **Collection name note:** real data lives in collection `leads`
+  (public, no prefix). `leads__leads` is a junk collection with 2 probe rows
+  (`probe-$(date +%s)`, `ec2-id-test`) — harmless, ignore it.
 - **Data parity verified (15:12 UTC):** leads 784 (= 783 Supabase + 1 probe),
   agents 10, workspaces 2, goals 2, clients 1, org_charts 1, ws_agency__leads
   325, ws_agency__website_builds 5, ws_agency__website_docs 10,
   ws_agency__website_build_log 10. **Importer `deploy/_pb_import.py` is
   idempotent** (skips rows whose `legacy_id` already exists). Live count now
-  **814 leads** (804 + 10 from pass 15:56) — autopilot writes flow through the
-  gateway. `leads__leads` (2 probe rows) + `ws_agency__agent_memory` +
-  `ws_agency__agent_checkpoints` (CEO persistence) all present.
+  **785 leads** (783 import + 2 non-legacy; 29 pagination-era dups removed
+  16:47, backup `/home/ubuntu/dup_backup_20260809.json`). Autopilot writes
+  flow through the gateway. Data lives in collection **`leads`** (public);
+  `leads__leads` (2 probe rows) is junk, ignore it. `ws_agency__agent_memory`
+  + `ws_agency__agent_checkpoints` (CEO persistence) present.
 - **Autopilot now on gateway (15:11 UTC restart):** new leads POST via
   gateway (`201 Created`, verified 15:17:31), enrichment + email flows hit
   `127.0.0.1:8095`, gateway 500 count = 0.
@@ -65,6 +86,8 @@
    - Restart clean (12:22:48 UTC), fresh pass at 12:25 UTC complete normally.
    - After PB migration (15:11 UTC): passes continue normally on the gateway;
      pass 16:17 `no_email: 636, deferred: 21, invalid: 5, errors 0`.
+   - Int-phone crash (16:16) fixed 16:50 (gateway coercion + autopilot `_s`);
+     pass 16:50 clean `no_email: 635, deferred: 22, invalid: 5, errors 0`.
 2. **Website backfill COMPLETE** — DONE
    - Backfill finished 10:30 UTC: 670 leads, 487 no-website, 63 with email.
    - Only orphaned chrome (port 9252) remains; harmless.
@@ -187,7 +210,7 @@ event seen 13:43 (a reply was processed).
 
 | API health | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
 | Email client (`SBAEmailClient`) | enabled: True | creds live on EC2 (.env), code falls back to `TAGS_SMTP_*` |
-| Database | **PocketBase** (gateway 8095) | 814 leads (live), ~636 no-email, CEO persistence in `ws_agency__agent_checkpoints` |
+| Database | **PocketBase** (gateway 8095) | 785 leads (live), ~635 no-email, CEO persistence in `ws_agency__agent_checkpoints` |
 | Organic engine (7 channels) | deployed | telegram/gbp/facebook browser + api channels |
 
 Deploy: `python deploy/deploy_sba.py` (bundle → scp → extract → py_compile → restart → verify).
@@ -205,8 +228,15 @@ Aug 08 12:25  pass 51: invalid_email 5 (newly-allowed addresses being rescored),
 Aug 08 12:39  re-enrichment batch: found=44 emails (own_domain/homepage), patched to Supabase
 Aug 08 13:50  loop engineering setup: skills installed + doctor 100/L3 + verifier agent + safety.md
 Aug 09 16:20  PAGINATION FIXED: gateway _build_limit pages ALL PocketBase pages
-              (no limit → all 814 rows; limit=N → up to N). Autopilot sees full
+              (no limit → all rows; limit=N → up to N). Autopilot sees full
               pool again: pass 16:17 no_email 636 / deferred 21 / invalid 5 / errors 0.
+Aug 09 16:16  INT-PHONE BUG: full-pool dedupe crashed ('int' object has no
+              attribute 'strip') — PB json fields coerce digit-only phones to int.
+Aug 09 16:50  FIXED: gateway _record_out coerces string cols to str on read +
+              _field_type creates text not json + autopilot _s() helper.
+              Pass 16:50 clean: no_email 635 / deferred 22 / invalid 5 / errors 0.
+Aug 09 16:47  29 duplicate leads removed (pagination-era re-adds), backup saved
+              /home/ubuntu/dup_backup_20260809.json. Live count 785.
 Aug 09 15:39  Supabase stack stopped + removed (8 images gone): ~8.5GB disk freed
               (31G→23G, 81%→60%), ~290MB RAM. Data volumes preserved for rollback.
 Aug 09 15:35  PocketBase bound to systemd (pocketbase.service), bind 0.0.0.0→127.0.0.1,
@@ -301,8 +331,14 @@ and Gmail 550s once sends resume.
   ~8.5GB disk freed (31G→23G, 81%→60%), ~290MB RAM. Volumes preserved.
 - 16:01 UTC — gateway pagination fix (`_build_limit` pages all PB pages; no
   limit → all rows). Deployed to root `/home/ubuntu/sba-backend/pb_gateway.py`.
-- 16:17 UTC — verified live: gateway serves 814 rows; pass 16:17
-  `no_email: 636, deferred: 21, invalid: 5, errors 0`. PAGINATION FIXED.
+- 16:16 UTC — first full-pool pass crashed dedupe: `'int' object has no
+  attribute 'strip'` (PB json fields coerce digit-only phones to int).
+- 16:47 UTC — 29 pagination-era duplicate leads removed via gateway DELETE
+  (backup `/home/ubuntu/dup_backup_20260809.json`); live count 785.
+- 16:50 UTC — INT-PHONE FIX live: gateway `_record_out` coerces string cols
+  to str, `_field_type` creates text not json, autopilot `_s()` helper.
+  Verified: 0 non-str phones; pass 16:50 `no_email: 635, deferred: 22,
+  invalid: 5, errors 0`. NRestarts=0.
 
 ---
 

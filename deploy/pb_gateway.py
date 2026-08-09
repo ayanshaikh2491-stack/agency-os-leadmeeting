@@ -71,6 +71,29 @@ _COMMON_FIELDS = [
     "client_id", "has_website", "created_at", "updated_at",
 ]
 
+# Columns that are conceptually strings. PocketBase's `json` field type
+# normalizes values (e.g. "3464049915" -> int 3464049915), which silently
+# corrupts string columns. Create these as `text` so values stay strings,
+# and coerce them back to str on read (belt and suspenders for collections
+# that were auto-created as json before this fix).
+_STRING_FIELDS = {
+    "agent_name", "thread_id", "checkpoint_id", "task_id",
+    "memory_key", "data_key", "role", "content",
+    "parent_checkpoint_id", "name", "email", "status", "phone",
+    "category", "website", "workspace_name", "city_state", "address",
+    "href", "text", "mode", "website_status", "email_provenance",
+    "client_id", "created_at", "updated_at",
+}
+_BOOL_FIELDS = {"has_website", "required"}
+
+
+def _field_type(name: str) -> str:
+    if name in _STRING_FIELDS:
+        return "text"
+    if name in _BOOL_FIELDS:
+        return "bool"
+    return "json"
+
 _token: dict = {"value": None, "exp": 0}
 
 
@@ -132,7 +155,7 @@ def _ensure_collection(name: str, body_keys: list[str] | None = None):
     if not _collection_exists(name):
         fields = []
         for f in wanted:
-            fields.append(_field_spec(f, "json"))
+            fields.append(_field_spec(f, _field_type(f)))
         _pb("POST", "/api/collections", {
             "name": name, "type": "base", "fields": fields,
             "indexes": [], "listRule": "", "viewRule": "", "createRule": "",
@@ -151,7 +174,7 @@ def _ensure_collection(name: str, body_keys: list[str] | None = None):
         return
     fields = list(col.get("fields", []))
     for f in missing:
-        fields.append(_field_spec(f, "json"))
+        fields.append(_field_spec(f, _field_type(f)))
     _pb("PATCH", f"/api/collections/{urllib.parse.quote(name)}", {
         "name": name, "type": "base", "fields": fields, "indexes": col.get("indexes", []),
         "listRule": "", "viewRule": "", "createRule": "", "updateRule": "", "deleteRule": "",
@@ -333,6 +356,17 @@ def _record_out(rec: dict | None) -> dict | None:
     out = dict(rec)
     out.pop("collectionId", None)
     out.pop("collectionName", None)
+    # Coerce known string columns back to str. PocketBase's `json` field type
+    # normalizes digit-only values to int (e.g. "3464049915" -> 3464049915),
+    # which crashes backend code that calls .strip() on them. Collections
+    # created before the typed-fields fix still store these as json, so fix
+    # them here on every read.
+    for k in _STRING_FIELDS:
+        if k in out and out[k] is not None and not isinstance(out[k], str):
+            if isinstance(out[k], bool):
+                out[k] = str(out[k]).lower()
+            else:
+                out[k] = str(out[k])
     return out
 
 

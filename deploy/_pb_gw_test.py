@@ -85,6 +85,20 @@ print("GET leads limit=1000:", s, "count=", len(b) if isinstance(b, list) else b
 if not (isinstance(b, list) and len(b) >= 3):
     ok = False
 
+# 3d. String columns must come back as str (PocketBase json fields coerce
+# digit-only values to int; gateway must coerce back on read)
+s, b = call("GET", "/rest/v1/leads?select=name,phone,email,website&limit=1000")
+bad = 0
+if isinstance(b, list):
+    for r in b:
+        for k in ("name", "phone", "email", "website"):
+            v = r.get(k)
+            if v is not None and not isinstance(v, str):
+                bad += 1
+print("GET leads string coercion:", s, "non-str fields=", bad)
+if bad:
+    ok = False
+
 # 4. PATCH lead (like sb_patch_lead: ?id=eq.{sid})
 if lead_id:
     s, b = call("PATCH", f"/rest/v1/leads?id=eq.{lead_id}", {"status": "contacted"})
