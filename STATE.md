@@ -12,7 +12,8 @@
 - **Why:** EC2 (2GB RAM) chokes on Supabase (13 containers, ~290MB RAM,
   ~11GB disk). User chose **PocketBase** as lightweight open-source replacement.
 - **PocketBase v0.39.10** running on EC2 at `127.0.0.1:8090` (systemd
-  `sba-pb.service`), data dir `/home/ubuntu/pocketbase/pb_data`. Admin:
+  `pocketbase.service`, enabled for reboot, localhost-bound), data dir
+  `/home/ubuntu/pocketbase/pb_data`. Admin:
   `admin@tagsagency.local` / `pb-admin-2026-x9`.
 - **`deploy/pb_gateway.py`** (FastAPI, **port 8095**, systemd `sba-gateway.service`):
   Supabase-compat gateway. Backend needs ZERO code changes: `/rest/v1/{table}` +
