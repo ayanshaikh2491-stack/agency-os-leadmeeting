@@ -47,6 +47,27 @@ def _agent_q(agent: str) -> str:
     return "agent_name=eq." + urllib.parse.quote(agent)
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively convert non-JSON values (deque, tuple, set) to JSON-safe ones.
+
+    langgraph >= 1.0 passes pending writes whose values can be ``deque``s
+    (e.g. interrupt payloads); PocketBase/JSON storage can't serialize them.
+    """
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    try:
+        import collections
+        if isinstance(value, collections.deque):
+            return [_json_safe(v) for v in value]
+    except ImportError:  # pragma: no cover - collections always exists
+        pass
+    return value
+
+
 # ── Memory (key/value) ────────────────────────────────────────────────────
 
 def save_memory(workspace: str, agent: str, key: str, value: Any) -> dict[str, Any] | None:
@@ -324,7 +345,7 @@ class SupabaseSaver(_BaseCheckpointSaver):
                     "thread_id": thread_id,
                     "checkpoint_id": checkpoint_id,
                     "task_id": task_id,
-                    "writes": writes,
+                    "writes": _json_safe(writes),
                 },
                 on_conflict="agent_name,thread_id,checkpoint_id,task_id",
                 profile=schema_for(self.workspace),
@@ -347,7 +368,13 @@ class SupabaseSaver(_BaseCheckpointSaver):
             out: list[Any] = []
             for r in rows:
                 w = r.get("writes")
-                out.extend(w if isinstance(w, list) else [w])
+                items = w if isinstance(w, list) else [w]
+                for it in items:
+                    # langgraph >= 1.0 expects PendingWrite = (task_id, channel, value)
+                    if isinstance(it, (list, tuple)) and len(it) == 2:
+                        out.append(("", it[0], it[1]))
+                    else:
+                        out.append(it)
             return out
         except Exception as e:  # noqa: BLE001
             logger.warning("agent_persistence: storage_get_writes failed: %s", e)
@@ -395,13 +422,21 @@ class SupabaseSaver(_BaseCheckpointSaver):
         metadata: dict[str, Any],
         new_versions: dict[str, Any],
     ) -> dict[str, Any]:
-        from langgraph.checkpoint.base import empty_checkpoint_id, uuid_type
-
         thread_id, _ = self._config_ids(config)
-        checkpoint_id = (metadata or {}).get("checkpoint_id") or str(uuid_type())
+
+        # langgraph < 1.0 exposed empty_checkpoint_id / uuid_type; newer
+        # versions removed them in favor of uuid6 / plain uuids. Import them
+        # when available and fall back to a plain uuid otherwise.
+        try:
+            from langgraph.checkpoint.base import empty_checkpoint_id, uuid_type
+            ckpt_id = (metadata or {}).get("checkpoint_id") or str(uuid_type())
+        except ImportError:  # langgraph-checkpoint >= 4
+            import uuid as _uuid
+            empty_checkpoint_id = ""
+            ckpt_id = (metadata or {}).get("checkpoint_id") or str(_uuid.uuid4())
         parent = (config.get("configurable", {}) or {}).get("checkpoint_id") or empty_checkpoint_id
-        self._storage_put(thread_id, checkpoint_id, checkpoint, metadata, parent)
-        return {"configurable": {"thread_id": thread_id, "checkpoint_id": checkpoint_id}}
+        self._storage_put(thread_id, ckpt_id, checkpoint, metadata, parent)
+        return {"configurable": {"thread_id": thread_id, "checkpoint_id": ckpt_id}}
 
     def put_writes(
         self,
@@ -417,6 +452,7 @@ class SupabaseSaver(_BaseCheckpointSaver):
         self,
         config: dict[str, Any] | None = None,
         *,
+        filter: dict[str, Any] | None = None,  # noqa: A002 - langgraph v4 signature
         limit: int | None = None,
         before: dict[str, Any] | None = None,
     ) -> Iterator[Any]:
@@ -457,8 +493,8 @@ class SupabaseSaver(_BaseCheckpointSaver):
     async def aput_writes(self, config, writes, task_id, task_path=""):
         return self.put_writes(config, writes, task_id, task_path)
 
-    async def alist(self, config=None, *, limit=None, before=None):
-        return self.list(config, limit=limit, before=before)
+    async def alist(self, config=None, *, filter=None, limit=None, before=None):  # noqa: A002
+        return self.list(config, filter=filter, limit=limit, before=before)
 
 
 def get_checkpointer(workspace_name: str = "Default", agent_name: str = "agent") -> Any:
