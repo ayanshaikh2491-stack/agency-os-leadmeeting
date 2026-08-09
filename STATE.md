@@ -3,11 +3,11 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-09 15:25 IST (15:25 UTC)
+**Last updated:** 2026-08-09 16:20 IST (16:20 UTC)
 
 ---
 
-## PocketBase Supabase Replacement — PRODUCTION GREEN (15:25 UTC)
+## PocketBase Supabase Replacement — PRODUCTION GREEN + PAGINATION FIXED (16:20 UTC)
 
 - **Why:** EC2 (2GB RAM) chokes on Supabase (13 containers, ~290MB RAM,
   ~11GB disk). User chose **PocketBase** as lightweight open-source replacement.
@@ -24,18 +24,34 @@
   int) are moved to `legacy_id` so PocketBase generates its own ≤15-char id.
   **Pagination fixed:** `page` query param is now honored (was always 1, which
   broke dedup/idempotent imports and backend pagination).
+- **PAGINATION v2 (16:01 UTC) — limit semantics fixed:** PostgREST returns ALL
+  rows when no `limit` param is given; the gateway defaulted to 50 (cap 200).
+  Backend `load_leads` sends `/rest/v1/leads?select=*&order=created_at.asc`
+  with NO limit, so autopilot only ever saw 50 leads (`no_email: 36` per pass
+  instead of ~636). **Fix:** `_build_limit` — no `limit` → page through ALL
+  PocketBase pages (perPage 200), `limit=N` → up to N rows; `_find_by_filter`
+  (PATCH/DELETE targets) also pages now. **Verified live:** gateway returns
+  814 rows; pass 16:17 `no_email: 636, deferred: 21, invalid: 5, errors 0`
+  (matches Supabase-era pool). Deploy note: service imports
+  `/home/ubuntu/sba-backend/pb_gateway.py` (root), NOT `deploy/pb_gateway.py`.
 - **Data parity verified (15:12 UTC):** leads 784 (= 783 Supabase + 1 probe),
   agents 10, workspaces 2, goals 2, clients 1, org_charts 1, ws_agency__leads
   325, ws_agency__website_builds 5, ws_agency__website_docs 10,
   ws_agency__website_build_log 10. **Importer `deploy/_pb_import.py` is
-  idempotent** (skips rows whose `legacy_id` already exists).
+  idempotent** (skips rows whose `legacy_id` already exists). Live count now
+  **814 leads** (804 + 10 from pass 15:56) — autopilot writes flow through the
+  gateway. `leads__leads` (2 probe rows) + `ws_agency__agent_memory` +
+  `ws_agency__agent_checkpoints` (CEO persistence) all present.
 - **Autopilot now on gateway (15:11 UTC restart):** new leads POST via
   gateway (`201 Created`, verified 15:17:31), enrichment + email flows hit
   `127.0.0.1:8095`, gateway 500 count = 0.
-- **Supabase docker stack STOPPED (15:23 UTC):** `docker compose stop` in
-  `/home/ubuntu/supabase/docker`. Containers/volumes preserved for rollback —
-  restart with `docker compose start`. Backend `.env` now points at
-  `SUPABASE_URL=http://127.0.0.1:8095`.
+- **Supabase docker stack REMOVED (15:39 UTC):** `docker compose down` +
+  image removal in `/home/ubuntu/supabase/docker`. **Freed ~8.5GB disk**
+  (31G→23G used, 81%→60%; 8 supabase images ~9GB + 11 containers removed)
+  and **~290MB RAM** (swap pressure 1.6Gi→1.5Gi). Data volumes (67MB, DB
+  data) preserved for rollback — `docker compose up -d` recreates the stack.
+  Backend `.env` now points at `SUPABASE_URL=http://127.0.0.1:8095`. Remaining
+  docker: rallly images only (2.6GB).
 - **IMPORTANT PocketBase v0.39 quirk:** collection create/patch uses
   **`fields`** key, NOT `schema` (PATCHing with `schema` silently wipes all
   fields). Gateway + `deploy/_pb_init.py` both use `fields`.
@@ -44,9 +60,11 @@
 
 ## High Priority Tasks
 
-1. **Autopilot healthy — 50+ passes, NRestarts=0** — DONE
+1. **Autopilot healthy — 80+ passes, NRestarts=0** — DONE
    - Deployed `979ef71` (12:22 UTC): generic first-party email prefix fix (see #3).
    - Restart clean (12:22:48 UTC), fresh pass at 12:25 UTC complete normally.
+   - After PB migration (15:11 UTC): passes continue normally on the gateway;
+     pass 16:17 `no_email: 636, deferred: 21, invalid: 5, errors 0`.
 2. **Website backfill COMPLETE** — DONE
    - Backfill finished 10:30 UTC: 670 leads, 487 no-website, 63 with email.
    - Only orphaned chrome (port 9252) remains; harmless.
@@ -72,16 +90,19 @@
      Supabase with provenance (mostly `own_domain`/`homepage`, 1 consumer).
      Examples: info@beyondwow.com, info@coolmenow.com, service@nicksplumbing.com,
      info@roofsquad.com, contact@dfw-roofinginc.com.
-   - Expected no_email now ~541 (down from 585). Verify via Supabase count.
+   - no_email now verified in PocketBase (pass 16:17): **636** (was ~541 in
+     Supabase; the +95 delta is freshly-scraped leads without email yet).
 5. **LEADS ARE FLOWING** — multi-source, NOT just Google Maps
    - Autopilot `_find_new_leads` → `find_leads_all` loops **5 sources**:
      google_maps, yelp, yellowpages, bing_maps, facebook_pages.
    - DB 671 leads (latest). Enrichment state tracks 156 leads; ~60 tried in 2h.
-6. **Email sends — still 0 today, 3 total historical**
-   - 62 leads deferred to business hours (it is 8:55 AM CDT now; sends start
-     ~14:00 UTC = 9 AM CDT, cap 30/day). Watch `emails_sent` after 14:00 UTC.
-7. **Memory pressure on EC2:** 1.9GiB total, swap active. Do NOT add heavier
-   workloads to EC2.
+6. **Email sends — watch `emails_sent` after 14:00 UTC (in progress)**
+   - Cap 30/day. Pass 14:02-14:55 showed `emails_sent: 0` (daily cap reached
+     from earlier sends?); post-migration passes 15:17-16:17 also `0` with
+     `deferred: 21` (business-hours gating). Watch next passes.
+7. **Memory pressure on EC2:** 1.9GiB total. After Supabase removal (15:39 UTC)
+   ~290MB RAM + ~8.5GB disk freed; swap pressure 1.6Gi→1.5Gi. PocketBase stack
+   (backend + gateway + PB) ≈ 100MB. Do NOT add heavier workloads to EC2.
 8. **Email send cap / Gmail daily limit** — once sends start, watch for 550s;
    backoff is 24h per recipient and is already implemented.
 
@@ -106,23 +127,19 @@
 
 ---
 
-## Two-Account Migration (IN PROGRESS — 15:55 UTC)
+## Two-Account Migration — SUPERSEDED (Supabase removed 15:39 UTC)
 
-**Why:** EC2 #1 (t3.small, 2GB) is at 81% disk (31G/38G), RAM tight (1.2G/1.9G used).
-Supabase stack (13 containers, ~11GB docker images, ~400MB RAM) + Rallly (2 containers) are the heaviest.
+**The original plan** (launch new t3.small in account `aws2` + migrate Supabase)
+is **no longer needed**: Supabase docker was removed from EC2 #1 entirely and
+replaced with PocketBase (≈100MB vs ≈400MB), freeing ~8.5GB disk (23G/38G used,
+60%) and ~290MB RAM. Rallly remains on EC2 #1.
 
-**New AWS account:** `301556368065` (Umer, IN) — profile `aws2`, logged in via `aws login` (root), region us-east-1, billing view HEALTHY. Free tier (15 Jul 2025+ rule): **t3.small (2GB) IS free-tier eligible** + $100 sign-up credit. Old account `default` (176980002493, t3.small 2GB, 40GB) untouched + `~/.aws/credentials.bak`.
-
-**BLOCKER: EC2 service not activated yet** (`OptInRequired` on describe-instances/regions/AMI — signup complete but AWS service activation pending, 15min-24h). Retry `deploy/_aws_newacct_check.ps1` until it clears.
-
-**Migration plan (when EC2 activates):**
-1. Launch t3.small (2GB) Ubuntu 24.04, 40GB gp3, key `ec2-key.pem` in account `aws2`.
-2. Run `deploy/migrate_supabase.sh <old_ip>` on new instance → installs docker, rsyncs supabase+rallly configs, pg_dump from old, restores, starts both.
-3. Point backend to new Supabase URL in `/home/ubuntu/sba-backend/.env` (SUPABASE_URL/KEY), restart `sba.service`.
-4. Stop + remove supabase/rallly containers + volumes on OLD EC2 → frees ~11GB disk + ~400MB RAM.
-5. Verify: `/api/health`, autopilot pass, Supabase count (671 leads), Rallly login.
-
-**Supabase data locations (OLD EC2):** DB bind mount `/home/ubuntu/supabase/docker/volumes/db/data` (NOT a docker volume), config volume `supabase_db-config`, deno cache `supabase_deno-cache`. Rallly: `/home/ubuntu/rallly`, volume `rallly_db-data`, postgres on 5450, app on 3001. Backend env: `SUPABASE_URL=http://localhost:8000` (kong), `SUPABASE_SERVICE_KEY` live.
+**Stale notes kept for reference:**
+- New AWS account `301556368065` (Umer, IN) — profile `aws2`, region us-east-1,
+  billing view HEALTHY. Free tier: t3.small eligible + $100 credit. Old account
+  `default` (176980002493) untouched + `~/.aws/credentials.bak`.
+- EC2 service activation was pending (`OptInRequired`) — no longer needed.
+- Rallly on EC2 #1: `/home/ubuntu/rallly`, postgres 5450, app 3001 — untouched.
 
 ---
 
@@ -151,8 +168,10 @@ systemd daemon — the others are on-demand (API-driven, no scheduler daemon).
 | Service | Status | Notes |
 |---|---|---|
 | `sba.service` | active | backend API (all /api routes) |
-| `sba-autopilot.service` | active | 24/7 SBA loop, ~20 min cadence, NRestarts=0 |
-| `sba-chrome.service` | active | Chrome daemon for browser automation (1d19h uptime) |
+| `sba-autopilot.service` | active | 24/7 SBA loop, ~15 min cadence, NRestarts=0 |
+| `sba-chrome.service` | active | Chrome daemon for browser automation |
+| `sba-gateway.service` | active | PB Supabase-compat gateway (8095) |
+| `pocketbase.service` | active | PocketBase (8090), localhost-bound, enabled
 
 **Other systemd agents:** NONE — no daemon runs CEO/content/SEO/social/website/ads.
 They are API-on-demand only. A scheduler daemon is a future option (currently on-demand is the design).
@@ -168,7 +187,7 @@ event seen 13:43 (a reply was processed).
 
 | API health | ok | version 0.1.0, `ceo_ready: true`, workspace_count: 2 |
 | Email client (`SBAEmailClient`) | enabled: True | creds live on EC2 (.env), code falls back to `TAGS_SMTP_*` |
-| Supabase (docker) | running | 671 leads, ~541 no-email (after 44 re-enriched), ~480 no-website |
+| Database | **PocketBase** (gateway 8095) | 814 leads (live), ~636 no-email, CEO persistence in `ws_agency__agent_checkpoints` |
 | Organic engine (7 channels) | deployed | telegram/gbp/facebook browser + api channels |
 
 Deploy: `python deploy/deploy_sba.py` (bundle → scp → extract → py_compile → restart → verify).
@@ -185,19 +204,36 @@ Aug 08 12:21  pass 50: emails_sent 0, no_email 587, deferred 62 (US pre-business
 Aug 08 12:25  pass 51: invalid_email 5 (newly-allowed addresses being rescored), NRestarts=0
 Aug 08 12:39  re-enrichment batch: found=44 emails (own_domain/homepage), patched to Supabase
 Aug 08 13:50  loop engineering setup: skills installed + doctor 100/L3 + verifier agent + safety.md
+Aug 09 16:20  PAGINATION FIXED: gateway _build_limit pages ALL PocketBase pages
+              (no limit → all 814 rows; limit=N → up to N). Autopilot sees full
+              pool again: pass 16:17 no_email 636 / deferred 21 / invalid 5 / errors 0.
+Aug 09 15:39  Supabase stack stopped + removed (8 images gone): ~8.5GB disk freed
+              (31G→23G, 81%→60%), ~290MB RAM. Data volumes preserved for rollback.
+Aug 09 15:35  PocketBase bound to systemd (pocketbase.service), bind 0.0.0.0→127.0.0.1,
+              enabled for reboot. Migration verified: PB counts match Supabase
+              (784 vs 783 = probe +1); autopilot POSTing through gateway (201).
 ```
 
 - No SMTP errors yet because no sends have happened (`send_failed: 0`).
 - Leads ARE being judged each pass (Google Maps rotation active).
-- `meetings` + `email_sends` tables do NOT exist in Supabase (PGRST205 when
-  probed) — meetings are stored locally in `sba_store` SQLite in-memory; a
-  Supabase meetings table may be a future hardening step.
+- `meetings` + `email_sends` tables do NOT exist in PocketBase either (same as
+  Supabase) — meetings are stored locally in `sba_store` SQLite in-memory; a
+  DB meetings table may be a future hardening step.
 
 ---
 
 ## Current Issue Being Fixed (DO NOT RESCAN THE REPO)
 
-**Problem (fixed `979ef71`, deployed 12:22 UTC, re-enrichment DONE 12:39 UTC):**
+**Supabase→PocketBase migration is COMPLETE (15:11-16:17 UTC, branch
+`feat/sba-lead-to-meeting-pipeline`).** Backend + autopilot run on the gateway
+(8095) → PocketBase (8090). Data parity verified, autopilot writes flow, CEO
+persistence collections present. The old "enrichment prefix fix" issue below is
+historical — keep the fix notes but it is closed.
+
+**Latest fix (16:01 UTC): gateway limit semantics** — see PocketBase section
+(PAGINATION v2). Verified: 814 leads served, pass 16:17 `no_email: 636`.
+
+**Historical — enrichment prefix fix (fixed `979ef71`, deployed 12:22 UTC, re-enrichment DONE 12:39 UTC):**
 604 leads had no email, so the pipeline stalled at step 2. Root cause found in
 the enrichment VALIDITY GATE, not the crawl: generic first-party prefixes
 (info@/contact@/office@) were unconditionally rejected even when the address
@@ -211,13 +247,13 @@ generic prefixes; unverified scrapes still reject them.
 
 **Proof:** `find_lead_email("Beyond Wow Plumbing & Drains", ..., site=beyondwow.com)`
 now returns `info@beyondwow.com` (own_domain). Re-enrichment of the 133
-website leads found **44 emails**, all patched to Supabase.
+website leads found **44 emails**, all patched (to Supabase then migrated to PB).
 
 **Still open:** (a) ~480 leads with no website need Bing-based enrichment
 (slower, lower yield); (b) 403/Cloudflare/JS-rendered sites
 (papermoonpainting, johnmooreservices, texasqualityplumbing) need a headless
-browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
-— watch `emails_sent` and Gmail 550s.
+browser for email extraction — NOT on EC2 (memory); (c) watch `emails_sent`
+and Gmail 550s once sends resume.
 
 ---
 
@@ -225,6 +261,8 @@ browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
 
 | Commit | What |
 |---|---|
+| `522031b` | docs: STATE.md — PocketBase bound to systemd service, PRODUCTION GREEN |
+| `48242d3` | **feat(pocketbase): gateway GREEN on EC2 — id remap + pagination fix, autopilot on 8095, Supabase stopped** |
 | `6bd88f5` | **CEO checkpointing: Supabase-backed cross-session memory + real conversation_id** (get_checkpointer("Agency","ceo"), fallback MemorySaver; tests 7 passed) |
 | `a8466f0` | loop engineering: verifier agent + safety policy (doctor 100/L3) (current) |
 | `aee18a7` | docs: STATE.md update after prefix fix deploy |
@@ -253,6 +291,18 @@ browser for email extraction — NOT on EC2 (memory); (c) sends start ~14:00 UTC
 - 12:40 UTC — Supabase verify script prepared (ran remotely via venv).
 - 13:50 UTC — loop-engineering setup: 7 skills installed to system, `loop
   doctor` score 100/L3, verifier agent + safety.md committed (`a8466f0`).
+- 15:11 UTC — autopilot restarted on PocketBase gateway (8095); new leads
+  POSTing `201 Created`; enrichment + email flows hit `127.0.0.1:8095`.
+- 15:12 UTC — data parity verified: 784 leads (783 Supabase + 1 probe), agents
+  10, workspaces 2; importer idempotent.
+- 15:35 UTC — PocketBase bound to systemd (`pocketbase.service`), bind
+  `0.0.0.0:8090` → `127.0.0.1:8090`, enabled for reboot.
+- 15:39 UTC — Supabase stack stopped + removed (8 images ~9GB, 11 containers):
+  ~8.5GB disk freed (31G→23G, 81%→60%), ~290MB RAM. Volumes preserved.
+- 16:01 UTC — gateway pagination fix (`_build_limit` pages all PB pages; no
+  limit → all rows). Deployed to root `/home/ubuntu/sba-backend/pb_gateway.py`.
+- 16:17 UTC — verified live: gateway serves 814 rows; pass 16:17
+  `no_email: 636, deferred: 21, invalid: 5, errors 0`. PAGINATION FIXED.
 
 ---
 

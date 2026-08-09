@@ -235,12 +235,67 @@ def _build_sort(query) -> str:
     return ",".join(out)
 
 
-def _build_perpage(query) -> int:
+def _build_limit(query) -> int | None:
+    """PostgREST semantics: no `limit` param => None (return ALL rows).
+    `limit=N` => at most N rows. Invalid values fall back to all rows."""
+    raw = query.get("limit")
+    if not raw:
+        return None
     try:
-        limit = int(query.get("limit") or "50")
+        return max(int(raw), 1)
     except ValueError:
-        limit = 50
-    return min(max(limit, 1), 200)
+        return None
+
+
+def _fetch_page(collection: str, page: int, per: int, filter_s: str, sort: str, fields: str) -> list:
+    params = {"page": str(page), "perPage": str(per)}
+    if filter_s:
+        params["filter"] = filter_s
+    if sort:
+        params["sort"] = sort
+    if fields:
+        params["fields"] = fields
+    qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+    data = _pb("GET", f"/api/collections/{urllib.parse.quote(collection)}/records?{qs}")
+    return data.get("items", []) if isinstance(data, dict) else []
+
+
+def _list_records(collection: str, query) -> list:
+    """List records honoring PostgREST `limit` semantics: no limit => ALL rows
+    (page through PocketBase, whose perPage caps at 200)."""
+    filter_s = _build_filter(query)
+    try:
+        page = int(query.get("page") or "1")
+    except ValueError:
+        page = 1
+    limit = _build_limit(query)
+    sort = _build_sort(query)
+    fields = _build_fields(query)
+    out: list = []
+    if limit is None:
+        cur = page
+        while True:
+            rows = _fetch_page(collection, cur, 200, filter_s, sort, fields)
+            if not rows:
+                break
+            out.extend(rows)
+            cur += 1
+            if len(rows) < 200:
+                break
+    else:
+        remaining = limit
+        cur = page
+        while remaining > 0:
+            per = min(200, remaining)
+            rows = _fetch_page(collection, cur, per, filter_s, sort, fields)
+            if not rows:
+                break
+            out.extend(rows)
+            remaining -= len(rows)
+            cur += 1
+            if len(rows) < per:
+                break
+    return out
 
 
 def _build_fields(query) -> str:
@@ -250,36 +305,25 @@ def _build_fields(query) -> str:
     return ",".join(x.strip() for x in sel.split(",") if x.strip())
 
 
-def _list_records(collection: str, query) -> list:
-    filter_s = _build_filter(query)
-    try:
-        page = int(query.get("page") or "1")
-    except ValueError:
-        page = 1
-    params = {"page": str(page), "perPage": str(_build_perpage(query))}
-    if filter_s:
-        params["filter"] = filter_s
-    sort = _build_sort(query)
-    if sort:
-        params["sort"] = sort
-    fields = _build_fields(query)
-    if fields:
-        params["fields"] = fields
-    qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    data = _pb("GET", f"/api/collections/{urllib.parse.quote(collection)}/records?{qs}")
-    return data.get("items", []) if isinstance(data, dict) else []
-
-
 def _find_by_filter(collection: str, query) -> list:
-    """Return records matching PostgREST filter query (no pagination)."""
+    """Return ALL records matching PostgREST filter query (pages through
+    PocketBase, whose perPage caps at 200)."""
     filter_s = _build_filter(query)
     if not filter_s:
         return []
-    params = {"page": "1", "perPage": "200", "filter": filter_s}
-    qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    print(f"[gw] find filter={filter_s!r}", flush=True)
-    data = _pb("GET", f"/api/collections/{urllib.parse.quote(collection)}/records?{qs}")
-    return data.get("items", []) if isinstance(data, dict) else []
+    out: list = []
+    cur = 1
+    while True:
+        params = {"page": str(cur), "perPage": "200", "filter": filter_s}
+        qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        print(f"[gw] find filter={filter_s!r} page={cur}", flush=True)
+        data = _pb("GET", f"/api/collections/{urllib.parse.quote(collection)}/records?{qs}")
+        items = data.get("items", []) if isinstance(data, dict) else []
+        out.extend(items)
+        if len(items) < 200:
+            break
+        cur += 1
+    return out
 
 
 def _record_out(rec: dict | None) -> dict | None:

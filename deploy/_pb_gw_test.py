@@ -67,10 +67,22 @@ if s not in (200, 201) or not (isinstance(b, list) and b and b[0].get("legacy_id
     print("  -> FAIL: expected int legacy_id remap, got", s, b)
     ok = False
 
-# 3. GET leads (like load_leads: select=*&order=created_at.asc)
+# 3. GET leads (like load_leads: select=*&order=created_at.asc) — NO limit => ALL rows
 s, b = call("GET", "/rest/v1/leads?select=*&order=created_at.asc")
-print("GET leads:", s, "count=", len(b) if isinstance(b, list) else b)
+print("GET leads (no limit):", s, "count=", len(b) if isinstance(b, list) else b)
 if not (isinstance(b, list) and len(b) >= 1):
+    ok = False
+
+# 3b. GET leads with explicit limit=2 -> at most 2 rows (PostgREST semantics)
+s, b = call("GET", "/rest/v1/leads?select=id&limit=2")
+print("GET leads limit=2:", s, "count=", len(b) if isinstance(b, list) else b)
+if not (isinstance(b, list) and len(b) == 2):
+    ok = False
+
+# 3c. GET leads with limit=1000 -> must return all rows (cap is gone; pages internally)
+s, b = call("GET", "/rest/v1/leads?select=id&limit=1000")
+print("GET leads limit=1000:", s, "count=", len(b) if isinstance(b, list) else b)
+if not (isinstance(b, list) and len(b) >= 3):
     ok = False
 
 # 4. PATCH lead (like sb_patch_lead: ?id=eq.{sid})
