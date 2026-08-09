@@ -3,9 +3,44 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-09 16:20 IST (16:20 UTC)
+**Last updated:** 2026-08-09 19:30 IST (19:30 UTC)
 
 ---
+
+## AGENTS REPAIRED + FULL MEMORY STACK (19:30 UTC)
+
+- **Root cause:** `agent_persistence.py` (SupabaseSaver) imported
+  `empty_checkpoint_id` / `uuid_type` from `langgraph.checkpoint.base`, both
+  removed in langgraph-checkpoint 4.x (installed: langgraph 1.2.9). Every
+  LangGraph agent (seo, ads, analytics, social, website, memory) crashed with
+  ImportError -> "temporarily unavailable" on chat. `content-creator` worked
+  only because it didn't hit the shared checkpointer.
+- **Fix (commit `30a72b1`, deployed via scp + sba.service restart):**
+  1. `put()` falls back to `str(uuid.uuid4())` checkpoint ids when
+     `uuid_type` is unavailable, and `""` for parent when no parent exists.
+  2. `list`/`alist` accept langgraph v4's `filter` kwarg.
+  3. Pending writes are JSON-sanitized (`deque`/`tuple` -> lists) before
+     storage; reads normalize 2-tuples to PendingWrite `(task_id, channel,
+     value)`.
+  4. Backend pytest `test_agent_persistence.py` 12/12 green; EC2 end-to-end
+     graph test PASS (checkpoint resumes across runs, memory save/get OK).
+- **PB collections created (all agent tables now exist per workspace):**
+  `ws_agency__agent_messages`, `ws_agency__agent_data`,
+  `ws_agency__agent_checkpoint_writes` (cloned schema/rules from
+  `ws_agency__agent_checkpoints`) + same 3 for `ws_agency_workspace__`.
+  Previously only `agent_memory` + `agent_checkpoints` existed.
+- **Verified live (backend :8000, all 7 agents):** content-creator, seo-engine,
+  ads-runner, analytics-bot, social-manager, website-builder, memory-agent all
+  reply. `/api/agents` lists exactly 7. All 11 SBA-page endpoints return 200
+  through the Vercel proxy (`agency-frontend-seven.vercel.app`). Frontend
+  `npm run build` passes (41/41 pages). Note: gateway :8095 only serves
+  `/rest/v1/*` + `/api/health`; `/api/agents` etc. live on backend :8000.
+- Remaining minor: `/api/sba/agents` + `/api/sba/platforms` are 404 (no such
+  routes; the SBA page doesn't call them) — harmless.
+
+---
+
+
 
 ## PocketBase Supabase Replacement — PRODUCTION GREEN + PAGINATION FIXED (16:20 UTC)
 
