@@ -22,32 +22,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 # Frontend worker slugs -> workspace agent_type (admin/workspace/manager.py).
-# Roles without a dedicated workspace agent fall back to SBA (general agency work).
+# Only agents with a real production implementation are registered here.
 AGENT_SLUG_MAP: dict[str, str] = {
-    "intake-researcher": "sba",
     "content-creator": "content",
     "seo-engine": "seo",
     "website-builder": "website",
     "ads-runner": "ads",
     "analytics-bot": "analytics",
     "social-manager": "social",
-    "sales-closer": "sba",
-    "client-success": "sba",
-    "review-qc": "sba",
     "memory-agent": "memory",
 }
 
 AGENT_META: dict[str, dict[str, str]] = {
-    "intake-researcher": {"name": "Intake Researcher", "role": "lead-intake"},
     "content-creator": {"name": "Content Creator", "role": "content"},
     "seo-engine": {"name": "SEO Engine", "role": "seo"},
     "website-builder": {"name": "Website Agent", "role": "website"},
     "ads-runner": {"name": "Ads Runner", "role": "ads"},
     "analytics-bot": {"name": "Analytics Bot", "role": "analytics"},
     "social-manager": {"name": "Social Manager", "role": "social"},
-    "sales-closer": {"name": "Sales Closer", "role": "sales"},
-    "client-success": {"name": "Client Success", "role": "client-success"},
-    "review-qc": {"name": "Review & QC", "role": "review-qc"},
     "memory-agent": {"name": "Memory Agent", "role": "memory"},
 }
 

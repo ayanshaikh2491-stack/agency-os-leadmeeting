@@ -77,10 +77,6 @@ _AGENT_STATUS_KEYS = {
     "content-creator": "content",
     "ads-runner": "ads",
     "analytics-bot": "analytics",
-    "client-success": "client_success",
-    "intake-researcher": "intake",
-    "review-qc": "review",
-    "sales-closer": "sales",
 }
 
 
