@@ -274,6 +274,17 @@ def _slugify(name: str) -> str:
     return slug or "website"
 
 
+def _product_to_tuple(p: dict) -> tuple:
+    """Convert a store product dict to the (name, description, price, image) card tuple."""
+    price = str(p.get("price") or "").strip()
+    return (
+        str(p.get("name") or "Untitled Product"),
+        str(p.get("description") or ""),
+        price,
+        str(p.get("image_url") or ""),
+    )
+
+
 def _escape_html(text: Any) -> str:
     """Escape text for safe HTML embedding (XSS-safe)."""
     return (
@@ -309,6 +320,40 @@ def _html_section(sec: str, ctx: dict) -> str:
         return "".join(out)
 
     svc_cards = cards(services)
+
+    def product_cards(items, raw_items=None):
+        """Image-aware product cards for the shop section (HTML framework)."""
+        raw_by_name = {str(r.get("name") or ""): r for r in (raw_items or [])}
+        out = []
+        for it in items:
+            head = esc(it[0])
+            sub = esc(it[1]) if len(it) > 1 else ""
+            price = esc(it[2]) if len(it) > 2 else ""
+            raw = raw_by_name.get(it[0]) or {}
+            img = esc(raw.get("image_url") or "")
+            img_html = (
+                f'<img class="product-img" src="{img}" alt="{head}" loading="lazy"/>'
+                if img
+                else f'<div class="product-ph" style="background:{c["primary"]}22">{head[:1]}</div>'
+            )
+            price_html = f'<span class="price">{price}</span>' if price else ""
+            try:
+                stock = int(raw.get("stock") or 0)
+            except (TypeError, ValueError):
+                stock = 0
+            if stock > 0:
+                stock_html = '<span class="stock">In stock</span>'
+            elif raw.get("stock") is not None and str(raw.get("stock")) != "":
+                stock_html = '<span class="stock out">Out of stock</span>'
+            else:
+                stock_html = ""
+            out.append(
+                f'<div class="card product-card">{img_html}<h3>{head}</h3>'
+                f"<p>{sub}</p>{price_html}{stock_html}</div>"
+            )
+        return "".join(out)
+
+    products_raw = data.get("products_raw") or []
     if sec == "hero":
         subtitle = f'<p class="sub">{tagline}</p>' if tagline else ""
         hero_copy = esc(data.get("hero_copy", "We build modern, fast, and secure websites that help your business grow."))
@@ -361,8 +406,9 @@ def _html_section(sec: str, ctx: dict) -> str:
         return f'<section class="menu" id="menu"><h2>Our Menu</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
     if sec == "products":
         items = data.get("products") or _SECTION_FALLBACK_CONTENT["products"]
+        body = product_cards(items, products_raw) if products_raw else cards(items, price_index=2)
         return (
-            f'<section class="products" id="products"><h2>Shop</h2><div class="grid">{cards(items, price_index=2)}</div>'
+            f'<section class="products" id="products"><h2>Shop</h2><div class="grid">{body}</div>'
             '<p class="hint">Online checkout coming soon. Call or email to order.</p></section>'
         )
     if sec == "projects":
@@ -481,6 +527,11 @@ nav a:hover, nav a.active {{ color: {c['accent']}; }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
 .card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
 .card.featured {{ border: 2px solid {c['primary']}; }}
+.product-card {{ padding: 1rem; overflow: hidden; }}
+.product-img {{ width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 1rem; }}
+.product-ph {{ width: 100%; height: 200px; border-radius: 8px; margin-bottom: 1rem; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: 800; color: {c['primary']}; }}
+.stock {{ display: inline-block; margin-left: 0.5rem; font-size: 0.8rem; font-weight: 600; color: #16a34a; }}
+.stock.out {{ color: #dc2626; }}
 .card h3 {{ color: {c['primary']}; margin-bottom: 0.5rem; }}
 .price {{ display: inline-block; margin-top: 0.5rem; font-weight: 700; color: {c['accent']}; }}
 .hint {{ margin-top: 1.5rem; color: #666; }}
@@ -522,6 +573,42 @@ def _nextjs_cards(items: list, ctx: dict, *, price_index=None) -> str:
             f'<div className="bg-white rounded-xl p-8 shadow-lg">'
             f'<h3 className="text-lg font-bold mb-2" style={{{{color: "{c["primary"]}"}}}}>{head}</h3>'
             f'<p className="text-gray-600">{sub}</p>{price_el}</div>'
+        )
+    return "\n        ".join(rows)
+
+
+def _nextjs_product_cards(items: list, raw_items: list, ctx: dict) -> str:
+    """JSX product cards with images + stock badges (shop section)."""
+    c = ctx["colors"]
+    raw_by_name = {str(r.get("name") or ""): r for r in raw_items}
+    rows = []
+    for it in items:
+        head = it[0]
+        sub = it[1] if len(it) > 1 else ""
+        price = it[2] if len(it) > 2 else ""
+        raw = raw_by_name.get(it[0]) or {}
+        img = raw.get("image_url") or ""
+        img_el = (
+            f'<img src="{img}" alt="{head}" loading="lazy" className="w-full h-52 object-cover rounded-lg mb-4"/>'
+            if img
+            else f'<div className="w-full h-52 rounded-lg mb-4 flex items-center justify-center text-4xl font-extrabold" style={{{{backgroundColor: "{c["primary"]}22", color: "{c["primary"]}"}}}}>{head[:1]}</div>'
+        )
+        price_el = f'<span className="inline-block mt-2 font-bold" style={{{{color: "{c["accent"]}"}}}}>{price}</span>' if price else ""
+        try:
+            stock = int(raw.get("stock") or 0)
+        except (TypeError, ValueError):
+            stock = 0
+        if stock > 0:
+            stock_el = '<span className="ml-2 text-sm font-semibold text-green-600">In stock</span>'
+        elif raw.get("stock") is not None and str(raw.get("stock")) != "":
+            stock_el = '<span className="ml-2 text-sm font-semibold text-red-600">Out of stock</span>'
+        else:
+            stock_el = ""
+        rows.append(
+            f'<div className="bg-white rounded-xl p-4 shadow-lg">'
+            f'{img_el}'
+            f'<h3 className="text-lg font-bold mb-2" style={{{{color: "{c["primary"]}"}}}}>{head}</h3>'
+            f'<p className="text-gray-600 text-sm">{sub}</p>{price_el}{stock_el}</div>'
         )
     return "\n        ".join(rows)
 
@@ -678,12 +765,14 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
 }}"""
     if sec == "products":
         items = data.get("products") or _SECTION_FALLBACK_CONTENT["products"]
+        raw_items = data.get("products_raw") or []
+        body = _nextjs_product_cards(items, raw_items, ctx) if raw_items else _nextjs_cards(items, ctx, price_index=2)
         return f"""export default function Products() {{
   return (
     <section className="py-20 px-8 text-center" id="products">
       <h2 className="text-4xl font-bold mb-12">Shop</h2>
       <div {grid}>
-        {_nextjs_cards(items, ctx, price_index=2)}
+        {body}
       </div>
       <p className="mt-6 text-gray-500">Online checkout coming soon. Call or email to order.</p>
     </section>
@@ -1089,6 +1178,7 @@ def _build_website_project(
     color_primary: str = "#2563EB",
     framework: str = "nextjs",
     skills: list[str] | None = None,
+    products: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Build a complete website project dict (rel_path -> content). Deterministic, no network, no LLM.
 
@@ -1096,6 +1186,8 @@ def _build_website_project(
       saas, agency, realestate, blog, education, health, event, hotel, construction,
       nonprofit). Each category gets its own multi-page site.
     - `sections` (legacy) forces a single-page build with exactly those sections.
+    - `products` (list of dicts) overrides the shop catalog with real client
+      products: {name, description, price, image_url, stock, sku, category}.
     """
     skills = [s for s in (skills or []) if s]
     title = (title or "").strip() or "My Website"
@@ -1122,6 +1214,18 @@ def _build_website_project(
         "category": category,
         "data": _category_data(category),
     }
+
+    # Real client products (from the store) override the canned catalog.
+    if products:
+        raw = []
+        norm: list[tuple] = []
+        for p in products:
+            if isinstance(p, dict):
+                raw.append(p)
+                norm.append(_product_to_tuple(p))
+        if norm:
+            ctx["data"]["products"] = norm
+            ctx["data"]["products_raw"] = raw
 
     # Page map: route -> {"nav": label, "sections": [...]}
     if isinstance(sections, str):
@@ -1877,6 +1981,7 @@ def build_site(
     business_email: str = "",
     output_dir: str = "",
     skills: list[str] | None = None,
+    products: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Build a complete website project on disk from business info.
 
@@ -1884,7 +1989,8 @@ def build_site(
     Default is a multi-page site picked by `category` (business, portfolio,
     restaurant, ecommerce, saas, agency, realestate, blog, education, health,
     event, hotel, construction, nonprofit). Pass `sections` to force a
-    single-page build with exactly those sections.
+    single-page build with exactly those sections. Pass `products` (list of
+    dicts) to seed the shop with a real client catalog.
     """
     if isinstance(skills, str):
         skills = [s.strip() for s in skills.split(",") if s.strip()]
@@ -1900,6 +2006,7 @@ def build_site(
         color_primary=color_primary,
         framework=framework,
         skills=skills or [],
+        products=products,
     )
     if not output_dir:
         output_dir = os.path.join("generated_sites", _slugify(project["title"]))
@@ -1918,6 +2025,69 @@ def build_site(
         "files_written": written,
         "file_count": len(written),
         "preview_url_hint": preview,
+    }
+
+
+def build_site_from_store(
+    workspace: str = "Default",
+    client: str = "Client",
+    deploy: bool = True,
+) -> dict[str, Any]:
+    """Build (and optionally deploy) a client's storefront from their store.
+
+    Reads the client's products + settings from the store (PocketBase via the
+    gateway) and regenerates their ecommerce site with the real catalog. When
+    `deploy` is True, publishes to Vercel and returns the live URL. This is
+    the Website Agent's store-aware path: client adds a product in the portal,
+    the agent pushes it to the live site.
+    """
+    from admin.store import store_store
+
+    products = store_store.list_products(workspace, client, active_only=True)
+    settings = store_store.get_settings(workspace, client)
+
+    title = (settings.get("store_name") or "").strip() or client
+    result = build_site(
+        title=title,
+        tagline=(settings.get("tagline") or "").strip(),
+        category=(settings.get("category") or "ecommerce").strip() or "ecommerce",
+        style=(settings.get("style") or "modern").strip(),
+        color_primary=(settings.get("color_primary") or "#2563EB").strip(),
+        framework=(settings.get("framework") or "nextjs").strip(),
+        business_email=(settings.get("contact_email") or "").strip(),
+        output_dir=os.path.join("generated_sites", "store_" + _slugify(workspace) + "_" + _slugify(client)),
+        products=products,
+    )
+
+    if not deploy:
+        return {
+            **result,
+            "deployed": False,
+            "product_count": len(products),
+            "sync": {"workspace": workspace, "client": client},
+        }
+
+    deployed = deploy_vercel(
+        project_path=result["output_dir"],
+        project_name=f"store-{_slugify(workspace)}",
+    )
+    site_url = deployed.get("url") or ""
+    if deployed.get("status") == "deployed" and site_url:
+        try:
+            from admin.agency.website_supabase import upsert_website_build, log_website_event
+            upsert_website_build(workspace, client, status="deployed", site_url=site_url,
+                                 current_stage="store-sync", framework=result["framework"])
+            log_website_event(workspace, client, "store_sync",
+                              f"Store synced: {len(products)} products live at {site_url}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("build_site_from_store: persistence log failed: %s", e)
+    return {
+        **result,
+        "deployed": deployed.get("status") == "deployed",
+        "deploy": deployed,
+        "product_count": len(products),
+        "site_url": site_url,
+        "sync": {"workspace": workspace, "client": client},
     }
 
 
