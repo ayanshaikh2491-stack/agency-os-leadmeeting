@@ -289,6 +289,24 @@ def test_update_order_status_sets_shipped_at_on_first_ship():
     assert payload["tracking_number"] == "T1"
 
 
+def test_update_order_status_plain_status_keeps_dispatch_info():
+    """Status-only updates (empty dispatch fields) must NOT wipe tracking."""
+    existing = dict(ORDER_ROW, status="shipped", tracking_number="T9", carrier="DTDC",
+                    dispatch_note="via hub", shipped_at="2026-08-10T00:00:00Z")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_order", return_value=existing), \
+         mock.patch.object(store_store, "_api", return_value=[dict(existing, status="delivered")]) as api_mock:
+        r = store_store.update_order_status("ws_x", "C", "ord1", "delivered",
+                                            extra={"tracking_number": "", "carrier": "", "dispatch_note": ""})
+    # Payload must not contain empty dispatch keys that would erase tracking.
+    payload = api_mock.call_args[0][4]
+    assert "tracking_number" not in payload
+    assert "carrier" not in payload
+    assert "dispatch_note" not in payload
+    assert r["tracking_number"] == "T9"
+    assert r["carrier"] == "DTDC"
+
+
 def test_track_order_match_and_mismatch():
     with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
          mock.patch.object(store_store, "_api", return_value=[dict(ORDER_ROW, tracking_number="T9", carrier="DTDC")]):

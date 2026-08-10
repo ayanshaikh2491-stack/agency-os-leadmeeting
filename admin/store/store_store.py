@@ -599,7 +599,10 @@ def update_order_status(workspace: str, client: str, oid: str, status: str,
     payload: dict[str, Any] = {"status": status}
     if extra:
         for k in ("tracking_number", "carrier", "dispatch_note"):
-            if k in extra and extra[k] is not None:
+            # Only overwrite when the caller actually provides a value.
+            # Empty strings would wipe previously recorded dispatch info
+            # (e.g. advancing shipped -> delivered without re-sending tracking).
+            if k in extra and str(extra[k] or "").strip():
                 payload[k] = str(extra[k]).strip()
     if status == "shipped" and not existing.get("shipped_at"):
         payload["shipped_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
