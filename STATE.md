@@ -3,7 +3,36 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-10 19:28 IST (13:58 UTC)
+**Last updated:** 2026-08-10 20:32 IST (15:02 UTC)
+
+---
+
+## STORE ORDER FLOW — SHOPIFY-LIKE (15:02 UTC)
+
+- **`fd83a12` + frontend `347cfa6` deployed:** order flow upgraded from
+  "name+email order" to a real Shopify-like experience.
+- **Checkout now collects phone + address** (backend already stored them via
+  `customer_phone` / `customer_address`; frontend checkout modal now has the
+  fields).
+- **Order confirmation shows order number** (`ORD-xxxx`) + total on success.
+- **Owner dashboard gets an Orders list** (after store login): order number,
+  customer + phone/address, items, total, status badge, placed date; status
+  filter tabs (All/placed/processing/shipped/delivered/cancelled) + inline
+  status dropdown.
+- **Admin StoreTab gets an Orders table** too (agency sees all client orders,
+  can update status).
+- **Backend:** `PATCH /api/store/orders/{oid}` (status update, validated
+  against lifecycle), `GET /api/store/orders` now optional-auth (owner or
+  agency), `list_orders` limit 200. New `get_order` + `update_order_status`.
+- **Email notifications (best-effort):** `POST /api/store/orders` sends a
+  confirmation email to the customer + a new-order alert to the owner
+  (`settings.contact_email`). Failure never blocks checkout.
+- **Tests:** 14/14 green (5 new order/status tests). Live EC2 verified:
+  `PATCH /orders/{oid}` → 200 processing, invalid status → 400.
+- **Live storefront:** `https://agency-frontend-seven.vercel.app/store/agency`
+  (8 products, TAGS Store, ₹ currency, color #7C3AED).
+- **5 orders already placed live** (test buyers) — revenue stats are REAL
+  (source=orders, from the orders table, NOT SBA lead counts).
 
 ---
 
