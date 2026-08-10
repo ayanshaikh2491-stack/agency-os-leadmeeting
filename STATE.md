@@ -3,7 +3,31 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-10 22:55 IST (17:25 UTC)
+**Last updated:** 2026-08-10 23:30 IST (18:00 UTC)
+
+---
+
+## STORE — OWNER DASHBOARD UX FIXES (18:00 UTC)
+
+- **User feedback:** "frontend mein product add ka option nahi, order track nahi,
+  order labels/dispatch nahi dikh raha". Root cause: wo bina login ke dekh rahe
+  the — Add Product + Orders sirf login ke baad dikhte hain (by design).
+- **Verified live (headless render + login):** visitor view mein Track Order
+  button tha; login (`client@tagsagency.com` / `Client@2026`) ke baad Add
+  Product, Orders (Kaha se: Pune, PIN 411001, Source: Instagram, Shipped +
+  Delhivery DL-778899) sab dikhta hai.
+- **Fixes deployed (`d1a17a4`):**
+  1. **Track Order button ab hamesha header mein** (visitor + owner dono ko) —
+     pehle sirf `!account` (visitor) ko dikhta tha, owner login ke baad gayab.
+  2. **Visitor hint:** products section ke upar "Store owner? Login karke
+     products add/edit kar sakte ho, orders dekho (kaha se aaya, status), aur
+     dispatch/tracking update karo" — taaki bina login wala samjhe ki kya
+     login ke baad milta hai.
+- **Vercel deploy verified live:** storefront chunk mein "Track Order",
+  "Store owner?", "Login karke products add/edit", "Add Product", "Kaha se
+  (Location)", "Status / Dispatch", "Ship it", "Track Order Status", "naya
+  order aaya hai" — sab present.
+- Build 41/41 pass. Playwright dev dependency remove (`dca8554`).
 
 ---
 
