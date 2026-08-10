@@ -3,7 +3,43 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-10 20:32 IST (15:02 UTC)
+**Last updated:** 2026-08-10 22:45 IST (17:15 UTC)
+
+---
+
+## STORE ORDER FLOW — CLIENT VISIBILITY + DISPATCH (17:15 UTC)
+
+- **Client ke paas ab ek jagah hai jahan sab dikhta hai:** client store login
+  (`/store/agency` → "Store Owner Login") ke baad dashboard mein:
+  - **Kitne orders** (header count + status filter tabs All/placed/processing/
+    shipped/delivered/cancelled with per-status counts)
+  - **Kaha se aaya** (Location column: city, state, PIN + Source column:
+    Direct/Instagram/Google/WhatsApp via `detectSource()`)
+  - **Dispatch status** (Status/Dispatch column — status dropdown, carrier +
+    tracking + note, "Ship it" form jab shipped select karo)
+  - **Naya order aaye toh turant dikhe** (red "X naya" badge + green banner +
+    NEW chip on fresh rows, 30s polling, localStorage `last_seen` per store)
+  - **Track Order button** (header) + checkout success pe "Track Order Status"
+    — order# + email se koi bhi status timeline dekh sakta hai
+- **Backend (deployed `d46fe86` + fix `e780305`):** `parse_location()`
+  (city/state/pincode extraction), `source` on place_order, `find_order_by_number`
+  + `track_order` (public, PII-safe summary), `update_order_status` now stores
+  tracking_number/carrier/dispatch_note + `shipped_at` stamp, `sales_stats`
+  includes cities/states/sources breakdown. `GET /api/store/track` public.
+- **Dispatch-info preserve fix (`e780305`):** plain status updates (e.g.
+  shipped→delivered without re-sending dispatch fields) NO LONGER wipe
+  tracking/carrier. Verified live: ship w/ DTDC + tracking, then delivered →
+  tracking intact in list + track endpoint.
+- **Admin StoreTab (`b2cef0f`) complete:** Kaha se + Source + Status/Dispatch
+  columns, new-order badge + 30s polling, dispatch form, "Client ko kya milega"
+  box updated. Build 41/41, pushed to master → Vercel deploy verified live
+  (literal strings present in deployed chunks for both `/admin/agents/website`
+  and `/store/agency`).
+- **Tests: 25/25 green** (added preserve test). Live E2E verified:
+  track match/mismatch (404), dispatch PATCH 200 + shipped_at, invalid status
+  400, status-only PATCH keeps tracking.
+- **Live orders:** 6 orders (ORD-76731817 E2E Test Buyer shipped→delivered w/
+  DTDC D123456789IN as demo dispatch, others placed). Sales ₹11,391.
 
 ---
 
