@@ -13,7 +13,9 @@ Endpoints:
   POST  /api/store/accounts            — create a client account (agency/admin)
   POST  /api/store/client/login        — client login -> signed token
   GET   /api/store/client/me           — current client identity (token)
-  GET   /api/store/sales               — SBA pipeline stats for this workspace
+  GET   /api/store/sales               — real store sales (revenue, orders, units)
+  POST  /api/store/orders              — public checkout: place an order
+  GET   /api/store/orders              — list orders (token required)
 """
 from __future__ import annotations
 
@@ -100,6 +102,14 @@ class AccountRequest(BaseModel):
     email: str
     password: str
     name: str = ""
+
+
+class OrderRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    product_id: str
+    quantity: int = 1
+    customer: dict[str, Any] | None = None
 
 
 def _require_store() -> None:
@@ -250,9 +260,45 @@ async def store_sales(
     workspace: str = Query("Default"),
     client: str = Query("Client"),
 ):
-    """SBA pipeline stats for this workspace (leads, contacted, hot, meetings)."""
+    """Real store sales for this workspace/client (revenue, orders, units).
+
+    Not SBA lead stats — this is actual revenue from orders placed through
+    the client's storefront.
+    """
     _require_store()
-    return store_auth.sales_stats(workspace, client)
+    return store_store.sales_stats(workspace, client)
+
+
+# ── Orders (public checkout + owner list) ───────────────────────────────────
+
+
+@router.post("/orders")
+async def create_order(req: OrderRequest):
+    """Public checkout — a customer places an order for one product.
+
+    No auth needed: anyone can buy from the public storefront. Stock is
+    decremented and the order is recorded for the owner's sales dashboard.
+    """
+    _require_store()
+    result = store_store.place_order(
+        req.workspace, req.client, req.product_id, req.quantity, req.customer,
+    )
+    if result is None:
+        raise HTTPException(status_code=503, detail="Store backend not available")
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.get("/orders")
+async def store_orders(
+    payload: dict = Depends(_auth_workspace),
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """List orders for the logged-in store owner."""
+    _require_store()
+    return store_store.list_orders(payload.get("ws") or workspace, payload.get("client") or client)
 
 
 # ── Sync to live website ─────────────────────────────────────────────────────

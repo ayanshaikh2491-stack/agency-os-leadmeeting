@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 PRODUCTS_TABLE = "store_products"
 SETTINGS_TABLE = "store_settings"
+ORDERS_TABLE = "store_orders"
 
 PRODUCT_FIELDS = {
     "name": "",
@@ -254,3 +255,161 @@ def upsert_settings(workspace: str, client: str, data: dict[str, Any]) -> dict[s
     except Exception as e:  # noqa: BLE001
         logger.warning("store: upsert_settings failed: %s", e)
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ORDERS + SALES (real store revenue — NOT SBA lead stats)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
+    """Coerce an order row into stable shapes for consumers."""
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+    out = dict(row)
+    out["client_name"] = s(out.get("client_name"))
+    out["order_number"] = s(out.get("order_number") or out.get("id") or "")
+    out["customer_name"] = s(out.get("customer_name"))
+    out["customer_email"] = s(out.get("customer_email"))
+    out["customer_phone"] = s(out.get("customer_phone"))
+    out["customer_address"] = s(out.get("customer_address"))
+    out["status"] = s(out.get("status") or "placed")
+    try:
+        out["total"] = float(out.get("total") or 0)
+    except (TypeError, ValueError):
+        out["total"] = 0.0
+    items = out.get("items")
+    if isinstance(items, str):
+        try:
+            import json
+            items = json.loads(items)
+        except Exception:  # noqa: BLE001
+            items = []
+    if not isinstance(items, list):
+        items = []
+    out["items"] = items
+    return out
+
+
+def place_order(workspace: str, client: str, product_id: str, quantity: int,
+                customer: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Place an order for one product (public checkout).
+
+    Validates the product exists + is in stock, decrements stock, and records
+    the order row in the workspace schema. Returns the created order.
+    """
+    cfg = get_config()
+    if not cfg:
+        return None
+    qty = max(1, int(quantity or 1))
+    customer = customer or {}
+    url, key = cfg
+    product = get_product(workspace, client, product_id)
+    if not product:
+        return {"error": "Product not found"}
+    if not product.get("active", True):
+        return {"error": "Product is not available"}
+    try:
+        stock = int(product.get("stock") or 0)
+    except (TypeError, ValueError):
+        stock = 0
+    if stock < qty:
+        return {"error": "Not enough stock"}
+
+    price = 0.0
+    try:
+        price = float(str(product.get("price") or "0").replace("₹", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        price = 0.0
+    total = round(price * qty, 2)
+
+    order_number = "ORD-" + str(int(__import__("time").time() * 1000))[-8:]
+
+    payload = {
+        "client_name": client,
+        "order_number": order_number,
+        "product_id": product_id,
+        "product_name": product.get("name", ""),
+        "quantity": qty,
+        "unit_price": price,
+        "total": total,
+        "items": [{
+            "product_id": product_id,
+            "name": product.get("name", ""),
+            "price": price,
+            "quantity": qty,
+        }],
+        "customer_name": str(customer.get("name") or "").strip(),
+        "customer_email": str(customer.get("email") or "").strip(),
+        "customer_phone": str(customer.get("phone") or "").strip(),
+        "customer_address": str(customer.get("address") or "").strip(),
+        "status": "placed",
+    }
+    try:
+        rows = _api(
+            "POST", url, key,
+            "/rest/v1/" + ORDERS_TABLE,
+            payload,
+            profile=schema_for(workspace),
+        )
+        if not rows:
+            return {"error": "Order create failed"}
+        # Decrement stock
+        try:
+            update_product(workspace, client, product_id, {"stock": max(0, stock - qty)})
+        except Exception:  # noqa: BLE001
+            logger.warning("store: stock decrement failed for %s", product_id)
+        return _norm_order(rows[0])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: place_order failed: %s", e)
+        return {"error": f"Order failed: {e}"}
+
+
+def list_orders(workspace: str, client: str, limit: int = 100) -> list[dict[str, Any]]:
+    """List orders for (workspace, client), newest first."""
+    cfg = get_config()
+    if not cfg:
+        return []
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + ORDERS_TABLE + "?select=*&" + _client_q(client) + "&order=created_at.desc",
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: list_orders failed: %s", e)
+        return []
+    return [_norm_order(r) for r in rows][:limit]
+
+
+def sales_stats(workspace: str, client: str) -> dict[str, Any]:
+    """Real store sales: revenue, order count, units sold, top product.
+
+    This is what the client store dashboard shows — actual orders placed
+    through the storefront, NOT SBA lead pipeline counts.
+    """
+    orders = list_orders(workspace, client)
+    revenue = round(sum(float(o.get("total") or 0) for o in orders), 2)
+    units = 0
+    by_product: dict[str, dict[str, Any]] = {}
+    for o in orders:
+        for item in o.get("items") or []:
+            q = int(item.get("quantity") or 0)
+            units += q
+            pid = str(item.get("product_id") or o.get("product_id") or "?")
+            entry = by_product.setdefault(pid, {"name": item.get("name") or o.get("product_name") or "Product", "units": 0, "revenue": 0.0})
+            entry["units"] += q
+            entry["revenue"] = round(entry["revenue"] + float(item.get("price") or 0) * q, 2)
+    top = None
+    if by_product:
+        top = max(by_product.values(), key=lambda e: e["units"])
+    return {
+        "revenue": revenue,
+        "orders": len(orders),
+        "units": units,
+        "avg_order": round(revenue / len(orders), 2) if orders else 0.0,
+        "top_product": top,
+        "status_breakdown": {s: sum(1 for o in orders if (o.get("status") or "placed") == s) for s in {o.get("status") or "placed" for o in orders}},
+        "source": "orders",
+    }

@@ -83,6 +83,9 @@ _STRING_FIELDS = {
     "category", "website", "workspace_name", "city_state", "address",
     "href", "text", "mode", "website_status", "email_provenance",
     "client_id", "created_at", "updated_at",
+    # Store orders
+    "order_number", "product_id", "product_name",
+    "customer_name", "customer_email", "customer_phone", "customer_address",
 }
 _BOOL_FIELDS = {"has_website", "required"}
 
