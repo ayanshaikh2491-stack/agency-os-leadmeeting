@@ -104,7 +104,7 @@ class AccountRequest(BaseModel):
 
 def _require_store() -> None:
     if not get_config():
-        raise HTTPException(status_code=503, detail="Store backend not configured (SUPABASE_URL/SERVICE_KEY missing)")
+        raise HTTPException(status_code=503, detail="Store backend not configured (POCKETBASE_URL/POCKETBASE_SERVICE_KEY missing)")
 
 
 # ── Status ───────────────────────────────────────────────────────────────────

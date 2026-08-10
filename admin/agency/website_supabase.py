@@ -45,7 +45,7 @@ DOC_TYPES = [
 
 
 def _env(key: str, default: str = "") -> str:
-    val = os.environ.get(key, "")
+    val = os.environ.get(key, "").strip()
     if val:
         return val
     for p in (
@@ -64,10 +64,17 @@ def _env(key: str, default: str = "") -> str:
 
 
 def get_config() -> tuple[str, str] | None:
-    url = _env("SUPABASE_URL", DEFAULT_URL)
-    key = _env("SUPABASE_SERVICE_KEY", "")
+    """Gateway config: PocketBase first, Supabase names as legacy fallback.
+
+    The PocketBase Supabase gateway (`deploy/pb_gateway.py`) speaks the
+    PostgREST dialect, so the store/website bridges hit it through these
+    vars. POCKETBASE_URL / POCKETBASE_SERVICE_KEY are the current names;
+    SUPABASE_URL / SUPABASE_SERVICE_KEY still work for existing deploys.
+    """
+    url = _env("POCKETBASE_URL", _env("SUPABASE_URL", DEFAULT_URL))
+    key = _env("POCKETBASE_SERVICE_KEY", _env("SUPABASE_SERVICE_KEY", ""))
     if not key:
-        logger.warning("website_supabase: SUPABASE_SERVICE_KEY missing, bridge disabled")
+        logger.warning("website_supabase: POCKETBASE_SERVICE_KEY missing, bridge disabled")
         return None
     return url.rstrip("/"), key
 

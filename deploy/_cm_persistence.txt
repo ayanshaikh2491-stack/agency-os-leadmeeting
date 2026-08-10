@@ -1,0 +1,10 @@
+fix(langgraph): repair SupabaseSaver for langgraph 1.x so all agents work
+
+- empty_checkpoint_id / uuid_type were removed in langgraph-checkpoint 4.x
+  and crashed every LangGraph agent (seo, ads, analytics, social, website,
+  memory returned "temporarily unavailable"). Fall back to plain uuid ids.
+- accept the new list/alist `filter` kwarg.
+- sanitize pending writes (deque/tuple -> JSON-safe) and normalize reads to
+  PendingWrite (task_id, channel, value) tuples.
+- verify on EC2: all 7 agents respond, checkpoints resume across runs,
+  memory save/get works through the gateway.

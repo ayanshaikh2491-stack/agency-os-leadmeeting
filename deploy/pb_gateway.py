@@ -54,7 +54,7 @@ def _read_env_key(path: str, name: str) -> str | None:
     return None
 
 
-PB_URL = os.getenv("PB_URL", "http://127.0.0.1:8090")
+PB_URL = os.getenv("PB_URL", "http://127.0.0.1:8090").strip()
 PB_ADMIN_EMAIL = os.getenv("PB_ADMIN_EMAIL", "admin@tagsagency.local")
 PB_ADMIN_PASS = os.getenv("PB_ADMIN_PASS", "pb-admin-2026-x9")
 SERVICE_KEY = os.getenv("SERVICE_KEY") or _read_env_key(

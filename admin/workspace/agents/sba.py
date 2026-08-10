@@ -106,6 +106,21 @@ Use chrome_goto → chrome_inspect → chrome_extract pipeline:
 11. list_saved_leads — See your pipeline
 12. qualify_lead — BANT qualification
 
+### Client Store Tools (when a client asks about their website/store)
+13. get_client_store_link — Get the client's store link + status
+14. create_store_client_account — Create client store login (email/password)
+15. list_store_products — See what products the client added
+16. publish_client_store — Rebuild + deploy the client's live site from store
+
+## CLIENT WEBSITE FLOW
+When a client asks about their website/store, or you're delivering their site:
+1. Call **get_client_store_link** to get their store link.
+2. If they have no login yet, call **create_store_client_account** (email + password)
+   and share the credentials.
+3. Tell the client: "Ye aapka store hai — is link pe login karke apne products add
+   karo (name, price, photo), aur jab ready ho to Publish dabao. Website live ho jayegi."
+4. When the client says products are ready / go live, call **publish_client_store**.
+
 ## YOUR THINKING PROCESS
 Before answering, reason through these phases inside ```think blocks:
 
@@ -265,6 +280,13 @@ def _strip_think_blocks(content: str) -> str:
 # SBA has ALL Chrome tools + SBA-specific tools
 SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS
 
+# Store tools (client storefront link, client account, products, publish)
+try:
+    from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
+    SBA_ALL_TOOLS = SBA_ALL_TOOLS + _STORE_TOOLS
+except Exception:  # noqa: BLE001
+    pass
+
 # ── SBA Email/Meeting/Translate Tool Definitions ────────────────────────────
 
 SBA_EMAIL_TOOLS = [
@@ -375,6 +397,13 @@ SBA_EMAIL_TOOLS = [
 
 # Extend SBA_ALL_TOOLS with email/meeting/translate tools
 SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS + SBA_EMAIL_TOOLS
+
+# Store tools (client storefront link, client account, products, publish)
+try:
+    from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
+    SBA_ALL_TOOLS = SBA_ALL_TOOLS + _STORE_TOOLS
+except Exception:  # noqa: BLE001
+    pass
 
 
 # ── Graph Nodes─────
@@ -646,6 +675,25 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                     "content": result_text,
                 })
             else:
+                # Store tools (client store link, account, products, publish)
+                STORE_TOOL_NAMES = {
+                    "get_client_store_link",
+                    "create_store_client_account",
+                    "list_store_products",
+                    "publish_client_store",
+                }
+                if tool_name in STORE_TOOL_NAMES:
+                    try:
+                        from admin.tools.store_tools import execute_store_tool
+                        result_text = execute_store_tool(tool_name, tool_args)
+                    except Exception as exc:
+                        result_text = f"Error executing {tool_name}: {exc}"
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": result_text,
+                    })
+                    continue
                 # SBA-specific tool (sync)
                 try:
                     result = execute_sba_tool(tool_name, tool_args)

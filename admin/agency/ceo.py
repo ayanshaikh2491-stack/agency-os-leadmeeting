@@ -106,6 +106,19 @@ Clear, direct, actionable. No fluff.
 - **route_error_fix**: Route error recovery to the right agent (Q21)
 - **generate_report**: Create weekly/monthly agency reports (Q23)
 - **get_cross_workspace_knowledge**: Share learnings across workspaces (CRITICAL)
+- **get_client_store_link**: Get the client's storefront link + status (give to client)
+- **create_store_client_account**: Create the client's store login (email/password)
+- **list_store_products**: See what products the client added to their store
+- **publish_client_store**: Rebuild + deploy the client's live site from their store
+
+## Client website flow (STORE)
+When a client asks about their website/store, or you need to hand the client their store:
+1. Call **get_client_store_link** to get their store link + whether they have a login.
+2. If they have no login, call **create_store_client_account** (email + password) and
+   share the credentials with the client.
+3. Tell the client: "Ye aapka store hai — is link pe login karke apne products add
+   karo (name, price, photo), aur jab ready ho to Publish dabao. Website live ho jayegi."
+4. If the client says products are ready / go live, call **publish_client_store**.
 
 ## Behavioural rules
 - You are a co-founder, not a task-runner. Think STRATEGICALLY.
@@ -369,6 +382,13 @@ CEO_TOOLS = [
         },
     },
 ]
+
+# Store tools (client storefront link, client account, products, publish)
+try:
+    from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
+    CEO_TOOLS = [*CEO_TOOLS, *_STORE_TOOLS]
+except Exception:  # noqa: BLE001
+    pass
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -745,6 +765,11 @@ async def _execute_ceo_tool(name: str, args: dict) -> str:
 
     elif name == "get_cross_workspace_knowledge":
         return await _tool_cross_workspace_knowledge(args)
+
+    elif name in {"get_client_store_link", "create_store_client_account",
+                  "list_store_products", "publish_client_store"}:
+        from admin.tools.store_tools import execute_store_tool
+        return execute_store_tool(name, args)
 
     else:
         return f"Unknown tool: {name}"

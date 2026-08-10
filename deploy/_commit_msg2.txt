@@ -1,0 +1,11 @@
+SBA: fix autopilot crash-loop + junk email gate + workspace email identity
+
+- sba_autopilot: block junk email prefixes (feedback@, hi@) and
+  template/aggregator domains (ground.news, mystore.com, wixsite.com,
+  myshopify.com, squarespace.com, godaddysites.com, weebly.com,
+  wordpress.com)
+- backfill: gate enriched emails with _is_valid_lead_email
+- email client: build_workspace_email_client(workspace) so each client
+  uses its own inbox (smtp/imap creds persisted per workspace)
+- meeting manager: accept injected email_client
+- biztypes: persist smtp/imap per-workspace keys

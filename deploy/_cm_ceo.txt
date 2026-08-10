@@ -1,0 +1,10 @@
+fix(ceo): Supabase-backed cross-session checkpointing + real conversation_id
+
+- build_ceo_graph() now accepts a checkpointer and defaults to
+  get_checkpointer("Agency", "ceo") (SupabaseSaver when configured,
+  MemorySaver fallback) — matches ads/seo agents
+- chat() accepts conversation_id, threads it through the LangGraph
+  config, and returns the real thread id instead of hardcoded
+  "ceo-session-1" — conversations now continue across restarts
+- /api/ceo/chat passes body.conversation_id through
+- tests: admin/tests/test_ceo_graph.py (7 new, all pass)

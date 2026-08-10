@@ -20,7 +20,7 @@ logger = logging.getLogger("sba.pipeline")
 
 
 def _env(key: str, default: str = "") -> str:
-    val = os.environ.get(key, "") or default
+    val = os.environ.get(key, "").strip() or default
     if val:
         return val
     env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
@@ -36,10 +36,11 @@ def _env(key: str, default: str = "") -> str:
 
 
 def supabase_config() -> tuple[str, str] | None:
-    url = _env("SUPABASE_URL", "http://localhost:8050")
-    key = _env("SUPABASE_SERVICE_KEY", "")
+    """Gateway config: PocketBase first, Supabase names as legacy fallback."""
+    url = _env("POCKETBASE_URL", _env("SUPABASE_URL", "http://localhost:8050"))
+    key = _env("POCKETBASE_SERVICE_KEY", _env("SUPABASE_SERVICE_KEY", ""))
     if not key:
-        logger.warning("SUPABASE_SERVICE_KEY missing — pipeline disabled")
+        logger.warning("POCKETBASE_SERVICE_KEY missing — pipeline disabled")
         return None
     return url, key
 
