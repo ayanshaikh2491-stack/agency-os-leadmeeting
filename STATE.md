@@ -3,7 +3,30 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-10 22:45 IST (17:15 UTC)
+**Last updated:** 2026-08-10 22:55 IST (17:25 UTC)
+
+---
+
+## STORE — CLIENT ACCOUNT + FULL LOOP VERIFIED (17:25 UTC)
+
+- **Client account LIVE:** `client@tagsagency.com` / `Client@2026` (name: TAGS
+  Store Owner) — created via `POST /api/store/accounts` for ws_agency/Client.
+  Client login karta hai `/store/agency` → "Store Owner Login".
+- **Full client loop verified live end-to-end:**
+  1. Client login → token ✅
+  2. Client apna product add (Premium Cotton Kurta ₹1299, via
+     `POST /api/store/products` with X-Store-Token) ✅
+  3. Customer order (ORD-82646280, ₹2598, Vikram Singh, Pune/Maharashtra,
+     source Instagram) ✅
+  4. Order client dashboard mein dikha (7 orders, naya order location+source
+     ke saath) ✅
+  5. Client dispatch (shipped, Delhivery, DL-778899, shipped_at stamped) ✅
+  6. Public track shows shipped + tracking ✅
+- Live store ab: 8 products (7 demo + Premium Cotton Kurta), 7 orders
+  (ORD-82646280 = naya, rest previous E2E), sales ~₹13,989.
+- Client khud products add/edit/delete karega apne dashboard se; demo
+  products ko delete/edit kar sakta hai. Agency StoreTab mein bhi account
+  create kar sakta hai (Email + Password → "Create Client Account").
 
 ---
 
