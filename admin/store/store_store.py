@@ -6,7 +6,10 @@ Each workspace's rows live in its own schema (`{schema}__store_products`,
 """
 from __future__ import annotations
 
+import datetime
 import logging
+import re
+from collections import Counter
 from typing import Any
 
 from admin.agency.website_supabase import _api, get_config
@@ -27,6 +30,107 @@ ORDER_STATUS_LABELS = {
     "delivered": "Delivered",
     "cancelled": "Cancelled",
 }
+
+# ── Customer location parsing (kaha se order aaya) ──────────────────────────
+# Pincode prefix (first 3 digits) → (city, state) for common Indian cities.
+# Deterministic + testable; fallback logic below handles the rest.
+PINCODE_CITY_MAP = {
+    "110": ("Delhi", "Delhi"),
+    "121": ("Faridabad", "Haryana"),
+    "122": ("Gurugram", "Haryana"),
+    "400": ("Mumbai", "Maharashtra"),
+    "401": ("Thane", "Maharashtra"),
+    "411": ("Pune", "Maharashtra"),
+    "500": ("Hyderabad", "Telangana"),
+    "560": ("Bengaluru", "Karnataka"),
+    "600": ("Chennai", "Tamil Nadu"),
+    "641": ("Coimbatore", "Tamil Nadu"),
+    "682": ("Kochi", "Kerala"),
+    "695": ("Thiruvananthapuram", "Kerala"),
+    "700": ("Kolkata", "West Bengal"),
+    "380": ("Ahmedabad", "Gujarat"),
+    "395": ("Surat", "Gujarat"),
+    "302": ("Jaipur", "Rajasthan"),
+    "226": ("Lucknow", "Uttar Pradesh"),
+    "201": ("Ghaziabad", "Uttar Pradesh"),
+    "452": ("Indore", "Madhya Pradesh"),
+    "462": ("Bhopal", "Madhya Pradesh"),
+}
+
+STATES = [
+    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+    "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand", "karnataka",
+    "kerala", "madhya pradesh", "maharashtra", "manipur", "meghalaya", "mizoram",
+    "nagaland", "odisha", "punjab", "rajasthan", "sikkim", "tamil nadu",
+    "telangana", "tripura", "uttar pradesh", "uttarakhand", "west bengal",
+    "delhi", "jammu and kashmir", "ladakh", "puducherry", "chandigarh",
+    "andaman and nicobar islands", "dadra and nagar haveli and daman and diu",
+]
+STATE_ABBR = {
+    "ka": "karnataka", "mh": "maharashtra", "dl": "delhi", "tn": "tamil nadu",
+    "ap": "andhra pradesh", "ts": "telangana", "gj": "gujarat", "rj": "rajasthan",
+    "up": "uttar pradesh", "wb": "west bengal", "kl": "kerala", "pb": "punjab",
+    "hr": "haryana", "mp": "madhya pradesh", "br": "bihar", "od": "odisha",
+    "ga": "goa", "uk": "uttarakhand", "cg": "chhattisgarh", "jh": "jharkhand",
+    "as": "assam", "sk": "sikkim", "mz": "mizoram", "mn": "manipur",
+    "ml": "meghalaya", "nl": "nagaland", "tr": "tripura", "ar": "arunachal pradesh",
+    "la": "ladakh", "jk": "jammu and kashmir", "py": "puducherry", "ch": "chandigarh",
+}
+
+
+def parse_location(address: str | None) -> dict[str, str]:
+    """Extract city/state/pincode from a free-text delivery address.
+
+    Pincode (6 digits) is the strongest signal → city/state via prefix map.
+    Falls back to scanning for known state names/abbreviations, then uses the
+    last comma segment of the address as the city.
+    """
+    addr = (address or "").strip()
+    out = {"customer_city": "", "customer_state": "", "customer_pincode": ""}
+    if not addr:
+        return out
+    low = addr.lower()
+
+    m = re.search(r"\b(\d{6})\b", addr)
+    if m:
+        pincode = m.group(1)
+        out["customer_pincode"] = pincode
+        city_state = PINCODE_CITY_MAP.get(pincode[:3])
+        if city_state:
+            out["customer_city"], out["customer_state"] = city_state
+
+    state = None
+    for st in STATES:
+        if st in low:
+            state = st.title()
+            break
+    if not state:
+        for abbr, full in STATE_ABBR.items():
+            if re.search(r"\b" + re.escape(abbr) + r"\b", low):
+                state = full.title()
+                break
+    if state and not out["customer_state"]:
+        out["customer_state"] = state
+
+    if not out["customer_city"]:
+        known = {s.lower() for s in STATES} | set(STATE_ABBR)
+        for seg in reversed([s.strip() for s in addr.split(",") if s.strip()]):
+            seg_low = seg.lower()
+            if not seg or re.search(r"\d", seg) or seg_low in known or seg_low in STATE_ABBR:
+                continue
+            out["customer_city"] = seg.split()[0][:40]
+            break
+    return out
+
+
+def _norm_city_state(order: dict[str, Any]) -> tuple[str, str]:
+    """Best-effort location for an order (explicit fields > parse address)."""
+    city = str(order.get("customer_city") or "").strip()
+    state = str(order.get("customer_state") or "").strip()
+    if city or state:
+        return city, state
+    loc = parse_location(str(order.get("customer_address") or ""))
+    return loc["customer_city"], loc["customer_state"]
 
 PRODUCT_FIELDS = {
     "name": "",
@@ -283,6 +387,16 @@ def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
     out["customer_email"] = s(out.get("customer_email"))
     out["customer_phone"] = s(out.get("customer_phone"))
     out["customer_address"] = s(out.get("customer_address"))
+    for k in ("customer_city", "customer_state", "customer_pincode", "source",
+              "tracking_number", "carrier", "dispatch_note", "shipped_at"):
+        out[k] = s(out.get(k))
+    if not out.get("source"):
+        out["source"] = "Direct"
+    city, state = _norm_city_state(out)
+    if city and not out.get("customer_city"):
+        out["customer_city"] = city
+    if state and not out.get("customer_state"):
+        out["customer_state"] = state
     out["status"] = s(out.get("status") or "placed")
     try:
         out["total"] = float(out.get("total") or 0)
@@ -335,6 +449,9 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
 
     order_number = "ORD-" + str(int(__import__("time").time() * 1000))[-8:]
 
+    loc = parse_location(str(customer.get("address") or ""))
+    source = str(customer.get("source") or "").strip() or "Direct"
+
     payload = {
         "client_name": client,
         "order_number": order_number,
@@ -353,6 +470,10 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
         "customer_email": str(customer.get("email") or "").strip(),
         "customer_phone": str(customer.get("phone") or "").strip(),
         "customer_address": str(customer.get("address") or "").strip(),
+        "customer_city": loc["customer_city"],
+        "customer_state": loc["customer_state"],
+        "customer_pincode": loc["customer_pincode"],
+        "source": source,
         "status": "placed",
     }
     try:
@@ -412,11 +533,58 @@ def list_orders(workspace: str, client: str, limit: int = 200) -> list[dict[str,
     return [_norm_order(r) for r in rows][:limit]
 
 
-def update_order_status(workspace: str, client: str, oid: str, status: str) -> dict[str, Any] | None:
+def find_order_by_number(workspace: str, client: str, order_number: str) -> dict[str, Any] | None:
+    """Fetch one order by its human order number (ORD-xxxx), client-scoped."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    import urllib.parse
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + ORDERS_TABLE + "?select=*&order_number=eq." + urllib.parse.quote(str(order_number)),
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: find_order_by_number failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_order(rows[0]) if rows else None
+
+
+def track_order(workspace: str, client: str, order_number: str, email: str) -> dict[str, Any]:
+    """Public order tracking: order_number + email must match.
+
+    Returns a safe summary (status, items, total, dispatch/tracking info)
+    with no full personal data beyond what ties the order to its buyer.
+    """
+    order = find_order_by_number(workspace, client, order_number)
+    expected = (order.get("customer_email") or "").strip().lower() if order else ""
+    if not order or (email or "").strip().lower() != expected:
+        return {"error": "Order nahi mila. Order number + email check karke dobara try karo."}
+    return {
+        "order_number": order["order_number"],
+        "status": order["status"],
+        "customer_name": order["customer_name"],
+        "total": order["total"],
+        "items": order["items"],
+        "tracking_number": order.get("tracking_number"),
+        "carrier": order.get("carrier"),
+        "dispatch_note": order.get("dispatch_note"),
+        "created_at": order.get("created_at"),
+        "shipped_at": order.get("shipped_at"),
+    }
+
+
+def update_order_status(workspace: str, client: str, oid: str, status: str,
+                        extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Update an order's status (owner action).
 
     Validates the status against the known lifecycle and scopes the update
-    to (workspace, client). Returns the updated order or an error dict.
+    to (workspace, client). Optional `extra` may carry dispatch fields
+    (tracking_number, carrier, dispatch_note); moving to "shipped" stamps
+    shipped_at. Returns the updated order or an error dict.
     """
     status = (status or "").strip().lower()
     if status not in ORDER_STATUSES:
@@ -428,11 +596,18 @@ def update_order_status(workspace: str, client: str, oid: str, status: str) -> d
     if not existing:
         return {"error": "Order not found"}
     url, key = cfg
+    payload: dict[str, Any] = {"status": status}
+    if extra:
+        for k in ("tracking_number", "carrier", "dispatch_note"):
+            if k in extra and extra[k] is not None:
+                payload[k] = str(extra[k]).strip()
+    if status == "shipped" and not existing.get("shipped_at"):
+        payload["shipped_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     try:
         rows = _api(
             "PATCH", url, key,
             "/rest/v1/" + ORDERS_TABLE + "?id=eq." + oid,
-            {"status": status},
+            payload,
             profile=schema_for(workspace),
         )
         rows = [r for r in rows if r.get("client_name") == client]
@@ -467,6 +642,9 @@ def sales_stats(workspace: str, client: str) -> dict[str, Any]:
     top = None
     if by_product:
         top = max(by_product.values(), key=lambda e: e["units"])
+    cities = Counter((_norm_city_state(o)[0] or "Unknown") for o in orders)
+    states = Counter((_norm_city_state(o)[1] or "Unknown") for o in orders)
+    sources = Counter((o.get("source") or "Direct") for o in orders)
     return {
         "revenue": revenue,
         "orders": len(orders),
@@ -474,5 +652,8 @@ def sales_stats(workspace: str, client: str) -> dict[str, Any]:
         "avg_order": round(revenue / len(orders), 2) if orders else 0.0,
         "top_product": top,
         "status_breakdown": {s: sum(1 for o in orders if (o.get("status") or "placed") == s) for s in {o.get("status") or "placed" for o in orders}},
+        "cities": [{"city": c, "orders": n} for c, n in cities.most_common(5)],
+        "states": [{"state": s, "orders": n} for s, n in states.most_common(5)],
+        "sources": [{"source": s, "orders": n} for s, n in sources.most_common(5)],
         "source": "orders",
     }

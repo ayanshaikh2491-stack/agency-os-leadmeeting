@@ -16,6 +16,8 @@ Endpoints:
   GET   /api/store/sales               — real store sales (revenue, orders, units)
   POST  /api/store/orders              — public checkout: place an order
   GET   /api/store/orders              — list orders (token required)
+  PATCH /api/store/orders/{oid}        — update status + dispatch info (token)
+  GET   /api/store/track               — public order tracking (order# + email)
 """
 from __future__ import annotations
 
@@ -114,6 +116,9 @@ class OrderRequest(BaseModel):
 
 class OrderStatusPATCH(BaseModel):
     status: str
+    tracking_number: str = ""
+    carrier: str = ""
+    dispatch_note: str = ""
 
 
 def _require_store() -> None:
@@ -164,6 +169,12 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
         )
 
     if owner_email and owner_email != customer_email:
+        location = " · ".join(x for x in [
+            order.get("customer_city") or "",
+            order.get("customer_state") or "",
+            order.get("customer_pincode") or "",
+        ] if x)
+        source = order.get("source") or "Direct"
         await email_client.send_email(
             owner_email,
             f"🛒 New order {order_number} — {store_name}",
@@ -171,12 +182,48 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
             f"Order number: {order_number}\n"
             f"Customer: {order.get('customer_name') or '—'} <{customer_email}>\n"
             f"Phone: {order.get('customer_phone') or '—'}\n"
-            f"Address: {order.get('customer_address') or '—'}\n\n"
+            f"Address: {order.get('customer_address') or '—'}\n"
+            f"Location: {location or '—'}  (source: {source})\n\n"
             f"Items:\n{items_txt}\n"
             f"\nTotal: {currency}{total}\n\n"
-            f"Login to your store dashboard to update the order status.",
+            f"Login to your store dashboard to update the order status and "
+            f"dispatch (tracking number/carrier).",
             cc_owner=False,
         )
+
+
+async def _notify_order_shipped(workspace: str, client: str, order: dict[str, Any]) -> None:
+    """Best-effort dispatch email to the customer when an order ships."""
+    from admin.store import store_store as ss
+    from admin.tools.sba_email_client import SBAEmailClient
+
+    email_client = SBAEmailClient()
+    if not email_client.enabled:
+        return
+
+    customer_email = str(order.get("customer_email") or "").strip()
+    if not customer_email:
+        return
+    settings = ss.get_settings(workspace, client)
+    store_name = str(settings.get("store_name") or "").strip() or client
+    order_number = str(order.get("order_number") or order.get("id") or "")
+    carrier = str(order.get("carrier") or "").strip()
+    tracking = str(order.get("tracking_number") or "").strip()
+    currency = str(settings.get("currency") or "₹")
+
+    await email_client.send_email(
+        customer_email,
+        f"📦 Order {order_number} dispatched — {store_name}",
+        f"Namaste {order.get('customer_name') or 'there'},\n\n"
+        f"Good news! Your order {order_number} has been dispatched.\n\n"
+        f"Carrier: {carrier or '—'}\n"
+        f"Tracking number: {tracking or '—'}\n"
+        f"{order.get('dispatch_note') or ''}\n"
+        f"Total: {currency}{order.get('total') or ''}\n\n"
+        f"Track online: {store_name} website ka Track Order section use karo "
+        f"(order number + apna email).\n\n— {store_name}",
+        cc_owner=False,
+    )
 
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -378,14 +425,42 @@ async def update_order_status(
     client: str = Query("Client"),
     payload: dict | None = Depends(_auth_optional),
 ):
-    """Owner updates an order's status (placed → processing → shipped → …)."""
+    """Owner updates an order's status + optional dispatch info."""
     _require_store()
     _enforce_client_scope(payload, workspace, client)
-    result = store_store.update_order_status(workspace, client, oid, req.status)
+    extra = {
+        "tracking_number": req.tracking_number,
+        "carrier": req.carrier,
+        "dispatch_note": req.dispatch_note,
+    }
+    result = store_store.update_order_status(workspace, client, oid, req.status, extra=extra)
     if result is None:
         raise HTTPException(status_code=503, detail="Store backend not available")
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    # Dispatch notification (customer email) when an order ships.
+    if (result.get("status") == "shipped" and result.get("tracking_number")):
+        try:
+            await _notify_order_shipped(workspace, client, result)
+        except Exception:  # noqa: BLE001
+            logger.exception("store: shipped notification failed")
+    return result
+
+
+@router.get("/track")
+async def track_order_public(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+    order_number: str = Query(""),
+    email: str = Query(""),
+):
+    """Public order tracking — order_number + email must match. No auth."""
+    _require_store()
+    if not order_number.strip() or not email.strip():
+        raise HTTPException(status_code=400, detail="Order number + email dono required hain")
+    result = store_store.track_order(workspace, client, order_number.strip(), email.strip())
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
     return result
 
 
