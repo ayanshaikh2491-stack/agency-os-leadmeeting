@@ -3,7 +3,32 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-09 19:30 IST (19:30 UTC)
+**Last updated:** 2026-08-10 19:28 IST (13:58 UTC)
+
+---
+
+## STORE SYSTEM LIVE ON PRODUCTION (13:58 UTC)
+
+- **Backend store routes deployed to EC2 (commit `c23cedf`):** `admin/store/`
+  (`store_store.py`, `store_auth.py`, `__init__.py`) + `admin/api/routes/store.py`
+  were MISSING from the deploy bundle (only `admin/agency/sba_store.py` was
+  included), so `/api/store/*` 404'd on EC2 while the frontend expected them.
+  Added 4 files to `deploy/deploy_sba.py` FILES list, deployed via
+  `python deploy/deploy_sba.py` — 97 files, py_compile OK, backend restarted,
+  DEPLOY OK (exit 0).
+- **Verified live on EC2 backend :8000:** `/api/store/public?workspace=agency`,
+  `/api/store/products`, `/api/store/settings` all 200.
+- **Frontend redeployed to Vercel (`agency-frontend-seven.vercel.app`, commit
+  `0792b05`):** build 41/41 pages, `/store/[slug]` route present. StoreTab live
+  (Revenue/Orders/Units/Top Product cards) + public storefront page.
+- **Public storefront:** `https://agency-frontend-seven.vercel.app/store/agency`
+  (renders "My Store", 0 products, 0 orders, ₹0 revenue — no products in live
+  agency workspace yet; local test products/orders were in local dev PB only).
+- **Admin Store tab:** `/admin/agents/website` → Store tab → shows Client Store
+  link, Publish, Products management.
+- Note: SSH hangs in cmd.exe wrapper; use python subprocess ssh (works fine).
+  Store deps (`website_supabase.py`, `workspace_provision.py`,
+  `website_tools.py`) already present on EC2.
 
 ---
 
