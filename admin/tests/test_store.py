@@ -145,3 +145,57 @@ def test_build_site_from_store_composes():
     assert res["product_count"] == 2
     assert res["deployed"] is False
     assert res["framework"] == "html"
+
+
+# ── orders + status lifecycle ────────────────────────────────────────────────
+
+ORDER_ROW = {
+    "id": "ord1",
+    "client_name": "C",
+    "order_number": "ORD-12345678",
+    "customer_name": "Rahul",
+    "customer_email": "rahul@example.com",
+    "customer_phone": "+919999999999",
+    "customer_address": "Mumbai",
+    "total": 499.0,
+    "status": "placed",
+    "items": [{"product_id": "p1", "name": "Widget", "price": 499.0, "quantity": 1}],
+}
+
+
+def test_norm_order_coerces_types():
+    o = store_store._norm_order(dict(ORDER_ROW))
+    assert o["order_number"] == "ORD-12345678"
+    assert o["total"] == 499.0
+    assert o["status"] == "placed"
+    assert o["customer_phone"] == "+919999999999"
+    assert isinstance(o["items"], list) and len(o["items"]) == 1
+
+
+def test_update_order_status_validates():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")):
+        r = store_store.update_order_status("ws_x", "C", "ord1", "not-a-status")
+    assert "error" in r and "Invalid status" in r["error"]
+
+
+def test_update_order_status_missing_config():
+    with mock.patch.object(store_store, "get_config", return_value=None):
+        assert store_store.update_order_status("ws_x", "C", "ord1", "shipped") is None
+
+
+def test_update_order_status_success():
+    updated = dict(ORDER_ROW, status="shipped")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_order", return_value=dict(ORDER_ROW)), \
+         mock.patch.object(store_store, "_api", return_value=[updated]):
+        r = store_store.update_order_status("ws_x", "C", "ord1", "shipped")
+    assert r["status"] == "shipped"
+    assert r["order_number"] == "ORD-12345678"
+
+
+def test_update_order_status_fallback_after_empty_patch():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_order", side_effect=[dict(ORDER_ROW), dict(ORDER_ROW, status="delivered")]), \
+         mock.patch.object(store_store, "_api", return_value=[]):
+        r = store_store.update_order_status("ws_x", "C", "ord1", "delivered")
+    assert r["status"] == "delivered"

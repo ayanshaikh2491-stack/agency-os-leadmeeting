@@ -112,9 +112,71 @@ class OrderRequest(BaseModel):
     customer: dict[str, Any] | None = None
 
 
+class OrderStatusPATCH(BaseModel):
+    status: str
+
+
 def _require_store() -> None:
     if not get_config():
         raise HTTPException(status_code=503, detail="Store backend not configured (POCKETBASE_URL/POCKETBASE_SERVICE_KEY missing)")
+
+
+async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any]) -> None:
+    """Best-effort emails when an order is placed.
+
+    Sends a confirmation to the customer and a notification to the store
+    owner (settings.contact_email). Both are fire-and-forget: any failure is
+    logged, never raised, so checkout never depends on email.
+    """
+    from admin.store import store_store as ss
+    from admin.tools.sba_email_client import SBAEmailClient
+
+    email_client = SBAEmailClient()
+    if not email_client.enabled:
+        return
+
+    customer_email = str(order.get("customer_email") or "").strip()
+    settings = ss.get_settings(workspace, client)
+    owner_email = str(settings.get("contact_email") or "").strip()
+    store_name = str(settings.get("store_name") or "").strip() or client
+    order_number = str(order.get("order_number") or order.get("id") or "")
+    total = str(order.get("total") or "")
+    currency = str(settings.get("currency") or "₹")
+    items = order.get("items") or []
+    items_txt = "\n".join(
+        f"  - {it.get('name', 'Item')} x{it.get('quantity', 1)} @ {currency}{it.get('price', 0)}"
+        for it in items
+    ) or f"  - {order.get('product_name', 'Item')} x{order.get('quantity', 1)}"
+
+    if customer_email:
+        await email_client.send_email(
+            customer_email,
+            f"✅ Order {order_number} confirmed — {store_name}",
+            f"Namaste {order.get('customer_name') or 'there'},\n\n"
+            f"Your order at {store_name} is confirmed.\n\n"
+            f"Order number: {order_number}\n"
+            f"Status: Placed\n\n"
+            f"Items:\n{items_txt}\n"
+            f"\nTotal: {currency}{total}\n\n"
+            f"We'll update you as the order moves to processing, shipping and delivery.\n"
+            f"Thank you for shopping with us!\n\n— {store_name}",
+            cc_owner=False,
+        )
+
+    if owner_email and owner_email != customer_email:
+        await email_client.send_email(
+            owner_email,
+            f"🛒 New order {order_number} — {store_name}",
+            f"A new order was placed on your store.\n\n"
+            f"Order number: {order_number}\n"
+            f"Customer: {order.get('customer_name') or '—'} <{customer_email}>\n"
+            f"Phone: {order.get('customer_phone') or '—'}\n"
+            f"Address: {order.get('customer_address') or '—'}\n\n"
+            f"Items:\n{items_txt}\n"
+            f"\nTotal: {currency}{total}\n\n"
+            f"Login to your store dashboard to update the order status.",
+            cc_owner=False,
+        )
 
 
 # ── Status ───────────────────────────────────────────────────────────────────
@@ -287,18 +349,44 @@ async def create_order(req: OrderRequest):
         raise HTTPException(status_code=503, detail="Store backend not available")
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    # Best-effort order notifications (customer confirmation + owner alert).
+    # Never blocks/fails the checkout when email is unavailable.
+    try:
+        await _notify_order_placed(req.workspace, req.client, result)
+    except Exception:  # noqa: BLE001
+        logger.exception("store: order notification failed (order still placed)")
     return result
 
 
 @router.get("/orders")
 async def store_orders(
-    payload: dict = Depends(_auth_workspace),
+    payload: dict | None = Depends(_auth_optional),
     workspace: str = Query("Default"),
     client: str = Query("Client"),
 ):
-    """List orders for the logged-in store owner."""
+    """List orders for this store (owner or agency)."""
     _require_store()
-    return store_store.list_orders(payload.get("ws") or workspace, payload.get("client") or client)
+    _enforce_client_scope(payload, workspace, client)
+    return store_store.list_orders(workspace, client)
+
+
+@router.patch("/orders/{oid}")
+async def update_order_status(
+    oid: str,
+    req: OrderStatusPATCH,
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+    payload: dict | None = Depends(_auth_optional),
+):
+    """Owner updates an order's status (placed → processing → shipped → …)."""
+    _require_store()
+    _enforce_client_scope(payload, workspace, client)
+    result = store_store.update_order_status(workspace, client, oid, req.status)
+    if result is None:
+        raise HTTPException(status_code=503, detail="Store backend not available")
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 # ── Sync to live website ─────────────────────────────────────────────────────

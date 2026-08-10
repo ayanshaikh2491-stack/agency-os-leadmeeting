@@ -18,6 +18,16 @@ PRODUCTS_TABLE = "store_products"
 SETTINGS_TABLE = "store_settings"
 ORDERS_TABLE = "store_orders"
 
+# Order status lifecycle (Shopify-like)
+ORDER_STATUSES = ["placed", "processing", "shipped", "delivered", "cancelled"]
+ORDER_STATUS_LABELS = {
+    "placed": "Placed",
+    "processing": "Processing",
+    "shipped": "Shipped",
+    "delivered": "Delivered",
+    "cancelled": "Cancelled",
+}
+
 PRODUCT_FIELDS = {
     "name": "",
     "description": "",
@@ -365,7 +375,26 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
         return {"error": f"Order failed: {e}"}
 
 
-def list_orders(workspace: str, client: str, limit: int = 100) -> list[dict[str, Any]]:
+def get_order(workspace: str, client: str, oid: str) -> dict[str, Any] | None:
+    """Fetch one order by id, scoped to (workspace, client)."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + ORDERS_TABLE + "?select=*&id=eq." + oid,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: get_order failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_order(rows[0]) if rows else None
+
+
+def list_orders(workspace: str, client: str, limit: int = 200) -> list[dict[str, Any]]:
     """List orders for (workspace, client), newest first."""
     cfg = get_config()
     if not cfg:
@@ -381,6 +410,40 @@ def list_orders(workspace: str, client: str, limit: int = 100) -> list[dict[str,
         logger.warning("store: list_orders failed: %s", e)
         return []
     return [_norm_order(r) for r in rows][:limit]
+
+
+def update_order_status(workspace: str, client: str, oid: str, status: str) -> dict[str, Any] | None:
+    """Update an order's status (owner action).
+
+    Validates the status against the known lifecycle and scopes the update
+    to (workspace, client). Returns the updated order or an error dict.
+    """
+    status = (status or "").strip().lower()
+    if status not in ORDER_STATUSES:
+        return {"error": f"Invalid status '{status}'. Valid: {', '.join(ORDER_STATUSES)}"}
+    cfg = get_config()
+    if not cfg:
+        return None
+    existing = get_order(workspace, client, oid)
+    if not existing:
+        return {"error": "Order not found"}
+    url, key = cfg
+    try:
+        rows = _api(
+            "PATCH", url, key,
+            "/rest/v1/" + ORDERS_TABLE + "?id=eq." + oid,
+            {"status": status},
+            profile=schema_for(workspace),
+        )
+        rows = [r for r in rows if r.get("client_name") == client]
+        if rows:
+            return _norm_order(rows[0])
+        # Gateway may return empty on PATCH; fall back to re-read.
+        updated = get_order(workspace, client, oid)
+        return updated if updated else existing
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: update_order_status failed: %s", e)
+        return {"error": f"Status update failed: {e}"}
 
 
 def sales_stats(workspace: str, client: str) -> dict[str, Any]:
