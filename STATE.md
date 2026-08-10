@@ -31,8 +31,15 @@
   `PATCH /orders/{oid}` → 200 processing, invalid status → 400.
 - **Live storefront:** `https://agency-frontend-seven.vercel.app/store/agency`
   (8 products, TAGS Store, ₹ currency, color #7C3AED).
-- **5 orders already placed live** (test buyers) — revenue stats are REAL
-  (source=orders, from the orders table, NOT SBA lead counts).
+- **Vercel deploy verified 15:38 UTC:** `app/store/[slug]` chunk contains the
+  new checkout/orders code (`customer_phone`, `customer_address`,
+  `order_number`, status tabs processing/shipped/delivered/cancelled).
+- **Live E2E verified 15:45 UTC:** placed real order `ORD-76731817` (Running
+  Sports Shoes, ₹1599) with phone `+919876543210` + Bengaluru address → 200,
+  persisted in `GET /orders`, status cycle placed→processing→shipped→placed
+  all 200, invalid status → 400. Sales now real: **₹11,391 across 6 orders**
+  (source=orders).
+- **6 orders live** (5 previous test buyers + E2E Test Buyer).
 
 ---
 
