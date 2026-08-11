@@ -1048,13 +1048,23 @@ def _nextjs_navbar(pages: list[tuple[str, str]], ctx: dict) -> str:
         f'<Link href="/{"" if route == "index" else route}">{_escape_html(label)}</Link>'
         for route, label in pages
     )
+    owner_link = ""
+    vt = ctx.get("view_tracking")
+    dash_url = (vt or {}).get("dashboard_url") if vt else None
+    if dash_url:
+        owner_link = (
+            f'<a href="{_escape_html(dash_url)}" '
+            f'className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-400/70 text-amber-300 hover:bg-amber-400/10 transition-colors shrink-0">'
+            f'Owner Login</a>'
+        )
     return f"""import Link from "next/link";
 
 export default function Navbar() {{
   return (
     <nav className="bg-slate-800 text-white px-8 py-4 flex items-center gap-6 flex-wrap">
-      <span className="font-bold text-lg mr-auto">{_escape_html(title)}</span>
+      <span className="font-bold text-lg">{_escape_html(title)}</span>
       {links}
+      {owner_link}
     </nav>
   );
 }}"""
