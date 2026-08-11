@@ -149,6 +149,8 @@ COMPILE_FILES = [
     "admin/api/routes/social.py",
     "admin/api/routes/extra.py",
     "admin/api/routes/agent_aliases.py",
+    "admin/api/routes/store.py",
+    "admin/store/store_store.py",
     "admin/api/models/schemas.py",
     "admin/workspace/manager.py",
     "admin/config/settings.py",

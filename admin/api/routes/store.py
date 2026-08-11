@@ -79,6 +79,19 @@ class ProductUpdateRequest(BaseModel):
     data: dict[str, Any]
 
 
+class ServiceRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    service: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+
+
+class ServiceUpdateRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    data: dict[str, Any]
+
+
 class SettingsRequest(BaseModel):
     workspace: str = "Default"
     client: str = "Client"
@@ -238,12 +251,21 @@ async def store_status(
     client: str = Query("Client"),
 ):
     _require_store()
+    site_url = ""
+    try:
+        from admin.agency.website_supabase import get_website_build
+        build = get_website_build(workspace, client)
+        site_url = (build or {}).get("site_url") or ""
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: status site_url lookup failed: %s", e)
     return {
         "available": True,
         "workspace": workspace,
         "client": client,
         "products": store_store.product_stats(workspace, client),
+        "services": store_store.service_stats(workspace, client),
         "settings": store_store.get_settings(workspace, client),
+        "site_url": site_url,
     }
 
 
@@ -292,6 +314,51 @@ async def delete_product(pid: str, workspace: str = Query("Default"), client: st
     return {"success": True, "deleted": pid}
 
 
+# ── Services ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/services")
+async def list_services(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+    active_only: bool = Query(False),
+):
+    _require_store()
+    return store_store.list_services(workspace, client, active_only=active_only)
+
+
+@router.post("/services")
+async def create_service(req: ServiceRequest, auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, req.workspace, req.client)
+    service = req.service or req.data or {}
+    created = store_store.create_service(req.workspace, req.client, service)
+    if not created:
+        raise HTTPException(status_code=500, detail="Failed to create service")
+    return created
+
+
+@router.patch("/services/{sid}")
+async def update_service(sid: str, req: ServiceUpdateRequest, auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, req.workspace, req.client)
+    updated = store_store.update_service(req.workspace, req.client, sid, req.data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Service not found or update failed")
+    return updated
+
+
+@router.delete("/services/{sid}")
+async def delete_service(sid: str, workspace: str = Query("Default"), client: str = Query("Client"),
+                         auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, workspace, client)
+    ok = store_store.delete_service(workspace, client, sid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return {"success": True, "deleted": sid}
+
+
 # ── Settings ─────────────────────────────────────────────────────────────────
 
 
@@ -322,13 +389,14 @@ async def public_storefront(
     workspace: str = Query("Default"),
     client: str = Query("Client"),
 ):
-    """Public view: store settings + active products. No token required."""
+    """Public view: store settings + active products + services. No token required."""
     _require_store()
     return {
         "workspace": workspace,
         "client": client,
         "settings": store_store.get_settings(workspace, client),
         "products": store_store.list_products(workspace, client, active_only=True),
+        "services": store_store.list_services(workspace, client, active_only=True),
     }
 
 

@@ -18,6 +18,7 @@ from admin.agency.workspace_provision import schema_for
 logger = logging.getLogger(__name__)
 
 PRODUCTS_TABLE = "store_products"
+SERVICES_TABLE = "store_services"
 SETTINGS_TABLE = "store_settings"
 ORDERS_TABLE = "store_orders"
 
@@ -143,6 +144,14 @@ PRODUCT_FIELDS = {
     "stock": 0,
     "active": True,
     "featured": False,
+    "sort_order": 0,
+}
+
+SERVICE_FIELDS = {
+    "name": "",
+    "description": "",
+    "price": "",
+    "active": True,
     "sort_order": 0,
 }
 
@@ -303,6 +312,165 @@ def product_stats(workspace: str, client: str) -> dict[str, Any]:
         "total": len(products),
         "active": len(active),
         "inactive": len(products) - len(active),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SERVICES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _norm_service(row: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a store_services row into stable types."""
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+    out = dict(row)
+    out["name"] = s(out.get("name"))
+    out["description"] = s(out.get("description"))
+    out["price"] = s(out.get("price"))
+    try:
+        out["active"] = bool(out.get("active", True))
+    except (TypeError, ValueError):
+        out["active"] = True
+    try:
+        out["sort_order"] = int(out.get("sort_order") or 0)
+    except (TypeError, ValueError):
+        out["sort_order"] = 0
+    return out
+
+
+def _clean_service_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only known service fields."""
+    payload = {}
+    for key in SERVICE_FIELDS:
+        if key in data and data[key] is not None:
+            payload[key] = data[key]
+    return payload
+
+
+def list_services(workspace: str, client: str, active_only: bool = False) -> list[dict[str, Any]]:
+    """List all services for (workspace, client), lowest sort_order first."""
+    cfg = get_config()
+    if not cfg:
+        return []
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + SERVICES_TABLE + "?select=*&" + _client_q(client) + "&order=sort_order.asc",
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: list_services failed: %s", e)
+        return []
+    services = [_norm_service(r) for r in rows]
+    if active_only:
+        services = [s for s in services if s["active"]]
+    return services
+
+
+def create_service(workspace: str, client: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Create a service for (workspace, client)."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = {"client_name": client, **(_clean_service_payload(data) or {"name": "Untitled Service"})}
+    try:
+        rows = _api(
+            "POST", url, key,
+            "/rest/v1/" + SERVICES_TABLE,
+            payload,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: create_service failed: %s", e)
+        return None
+    if not rows:
+        return None
+    row = rows[0] if isinstance(rows, list) else rows
+    if row.get("client_name") != client:
+        logger.warning("store: service insert scoped to wrong client")
+        return None
+    return _norm_service(row)
+
+
+def update_service(workspace: str, client: str, sid: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Update a service (scoped to client)."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = _clean_service_payload(data)
+    if not payload:
+        return get_service(workspace, client, sid)
+    try:
+        rows = _api(
+            "PATCH", url, key,
+            "/rest/v1/" + SERVICES_TABLE + "?id=eq." + sid,
+            payload,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: update_service failed: %s", e)
+        return None
+    # Verify the updated row still belongs to this client.
+    found = get_service(workspace, client, sid)
+    return found
+
+
+def delete_service(workspace: str, client: str, sid: str) -> bool:
+    """Delete a service (scoped to client)."""
+    cfg = get_config()
+    if not cfg:
+        return False
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + SERVICES_TABLE + "?select=*&id=eq." + sid,
+            profile=schema_for(workspace),
+        )
+        if not rows or rows[0].get("client_name") != client:
+            return False
+        _api(
+            "DELETE", url, key,
+            "/rest/v1/" + SERVICES_TABLE + "?id=eq." + sid,
+            profile=schema_for(workspace),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: delete_service failed: %s", e)
+        return False
+
+
+def get_service(workspace: str, client: str, sid: str) -> dict[str, Any] | None:
+    """Fetch one service, scoped to client."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + SERVICES_TABLE + "?select=*&id=eq." + sid,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: get_service failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_service(rows[0]) if rows else None
+
+
+def service_stats(workspace: str, client: str) -> dict[str, Any]:
+    """Aggregate service counts for the client dashboard."""
+    services = list_services(workspace, client)
+    active = [s for s in services if s["active"]]
+    return {
+        "total": len(services),
+        "active": len(active),
+        "inactive": len(services) - len(active),
     }
 
 

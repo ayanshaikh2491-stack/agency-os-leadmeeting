@@ -79,6 +79,55 @@ _WEBSITE_PALETTES = {
 
 _DEFAULT_SERVICES = ["Fast Delivery", "Secure Builds", "Scalable Design"]
 
+
+def _normalize_services(services) -> list[tuple[str, str, str]]:
+    """Coerce services into render-ready (name, description, price) tuples.
+
+    Accepts plain strings ("Fast Delivery"), store rows
+    ({"name", "description", "price"}), or tuples, and returns
+    (name, description, price) triples. The HTML cards renderer and the
+    Next.js Services component both understand this shape.
+    """
+    out: list[tuple[str, str, str]] = []
+    for s in (services or []):
+        if isinstance(s, str):
+            name = s.strip()
+            if name:
+                out.append((name, "", ""))
+        elif isinstance(s, dict):
+            name = str(s.get("name") or "").strip()
+            if not name:
+                continue
+            desc = str(s.get("description") or "").strip()
+            price = str(s.get("price") or "").strip()
+            out.append((name, desc, price))
+        elif isinstance(s, (tuple, list)) and s:
+            name = str(s[0] or "").strip()
+            if not name:
+                continue
+            desc = str(s[1] or "").strip() if len(s) > 1 else ""
+            price = str(s[2] or "").strip() if len(s) > 2 else ""
+            out.append((name, desc, price))
+    # Dedupe preserving order.
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[tuple[str, str, str]] = []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return unique
+
+
+def _services_display(services) -> list[str]:
+    """Human-readable one-liners for APIs/READMEs: 'Name — Description'."""
+    out = []
+    for name, desc, price in _normalize_services(services):
+        if price:
+            out.append(f"{name} — {desc}" if desc else f"{name} ({price})")
+        else:
+            out.append(f"{name} — {desc}" if desc else name)
+    return out
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # WEBSITE CATEGORIES — har type ke liye alag pages + sections
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -656,8 +705,9 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
         {{services.map((s, i) => (
           <div key={{i}} className="bg-white rounded-xl p-8 shadow-lg">
-            <h3 className="text-lg font-bold mb-2" style={{{{color: '{c['primary']}'}}}}>{{s}}</h3>
-            <p className="text-gray-600">Expert {{s.toLowerCase()}} tailored to your goals.</p>
+            <h3 className="text-lg font-bold mb-2" style={{{{color: '{c['primary']}'}}}}>{{s[0]}}</h3>
+            {{s[1] && <p className="text-gray-600">{{s[1]}}</p>}}
+            {{s[2] && <p className="mt-2 text-sm font-semibold" style={{{{color: '{c['primary']}'}}}}>{{s[2]}}</p>}}
           </div>
         ))}}
       </div>
@@ -1257,7 +1307,10 @@ def _build_website_project(
     skills = [s for s in (skills or []) if s]
     title = (title or "").strip() or "My Website"
     tagline = (tagline or "").strip()
-    services = [s.strip() for s in (services or []) if s and s.strip()] or list(_DEFAULT_SERVICES)
+    # Services may arrive as plain strings ("Fast Delivery") or store rows
+    # ({"name": ..., "description": ..., "price": ...}). Normalize to dicts so
+    # the Services section can render name + description (+ price when set).
+    services = _normalize_services(services) or list(_DEFAULT_SERVICES)
     category = (category or "business").strip().lower()
     if category not in WEBSITE_CATEGORIES:
         category = "business"
@@ -1354,7 +1407,7 @@ def _build_website_project(
         "title": title,
         "tagline": tagline,
         "industry": industry,
-        "services": services,
+        "services": _services_display(services),
         "business_email": business_email or "",
         "skills_applied": skills,
         "page_code": page_code,
@@ -2065,11 +2118,17 @@ def build_site(
     """
     if isinstance(skills, str):
         skills = [s.strip() for s in skills.split(",") if s.strip()]
+    if isinstance(services, str):
+        svc_list = [s.strip() for s in services.split(",") if s.strip()]
+    elif isinstance(services, list):
+        svc_list = services
+    else:
+        svc_list = []
     project = _build_website_project(
         title=title,
         tagline=tagline,
         industry=industry,
-        services=[s.strip() for s in services.split(",") if s.strip()],
+        services=svc_list,
         business_email=business_email,
         sections=[s.strip() for s in sections.split(",") if s.strip()] if sections else None,
         category=category,
@@ -2115,6 +2174,7 @@ def build_site_from_store(
     from admin.store import store_store
 
     products = store_store.list_products(workspace, client, active_only=True)
+    services = store_store.list_services(workspace, client, active_only=True)
     settings = store_store.get_settings(workspace, client)
 
     title = (settings.get("store_name") or "").strip() or client
@@ -2128,6 +2188,7 @@ def build_site_from_store(
         business_email=(settings.get("contact_email") or "").strip(),
         output_dir=os.path.join("generated_sites", "store_" + _slugify(workspace) + "_" + _slugify(client)),
         products=products,
+        services=services,
     )
 
     if not deploy:
@@ -2135,6 +2196,7 @@ def build_site_from_store(
             **result,
             "deployed": False,
             "product_count": len(products),
+            "service_count": len(services),
             "sync": {"workspace": workspace, "client": client},
         }
 
@@ -2149,7 +2211,7 @@ def build_site_from_store(
             upsert_website_build(workspace, client, status="deployed", site_url=site_url,
                                  current_stage="store-sync", framework=result["framework"])
             log_website_event(workspace, client, "store_sync",
-                              f"Store synced: {len(products)} products live at {site_url}")
+                              f"Store synced: {len(products)} products, {len(services)} services live at {site_url}")
         except Exception as e:  # noqa: BLE001
             logger.warning("build_site_from_store: persistence log failed: %s", e)
     return {
@@ -2157,6 +2219,7 @@ def build_site_from_store(
         "deployed": deployed.get("status") == "deployed",
         "deploy": deployed,
         "product_count": len(products),
+        "service_count": len(services),
         "site_url": site_url,
         "sync": {"workspace": workspace, "client": client},
     }

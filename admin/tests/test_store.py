@@ -402,3 +402,106 @@ def test_sales_stats_includes_cities_and_sources():
     assert s["cities"][0]["city"] == "Bengaluru" and s["cities"][0]["orders"] == 2
     assert s["sources"][0]["source"] == "Instagram"
     assert any(st["state"] == "Karnataka" for st in s["states"])
+
+
+# ── services ─────────────────────────────────────────────────────────────────
+
+SAMPLE_SERVICES = [
+    {"name": "Custom Stitching", "description": "Made-to-measure tailoring", "price": "499", "active": True, "sort_order": 1},
+    {"name": "Alterations", "description": "Quick turnaround fixes", "price": "199", "active": True, "sort_order": 2},
+    {"name": "Design Consultation", "description": "1-on-1 style advice", "price": "", "active": False, "sort_order": 3},
+]
+
+
+def test_norm_service_coerces_types():
+    s = store_store._norm_service({"name": "Custom Stitching", "price": 499, "active": True, "sort_order": "2", "description": None})
+    assert s["name"] == "Custom Stitching"
+    assert s["price"] == "499"
+    assert s["active"] is True
+    assert s["sort_order"] == 2
+    assert s["description"] == ""
+
+
+def test_clean_service_payload_drops_unknown_keys():
+    payload = store_store._clean_service_payload({"name": "X", "price": "10", "created_at": "t", "id": "abc"})
+    assert "name" in payload and "price" in payload
+    assert "id" not in payload and "created_at" not in payload
+
+
+def test_list_services_requires_config():
+    with mock.patch.object(store_store, "get_config", return_value=None):
+        assert store_store.list_services("ws_x", "Client") == []
+
+
+def test_list_services_active_only_filters():
+    rows = [dict(SAMPLE_SERVICES[0]), dict(SAMPLE_SERVICES[1]), dict(SAMPLE_SERVICES[2])]
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=rows):
+        all_s = store_store.list_services("ws_x", "C")
+        active = store_store.list_services("ws_x", "C", active_only=True)
+    assert len(all_s) == 3
+    assert len(active) == 2 and active[0]["name"] == "Custom Stitching"
+
+
+def test_create_service_scopes_to_client():
+    row = dict(SAMPLE_SERVICES[0], client_name="C")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=[row]):
+        created = store_store.create_service("ws_x", "C", {"name": "Custom Stitching"})
+    assert created is not None and created["name"] == "Custom Stitching"
+
+
+def test_create_service_rejects_wrong_client_scope():
+    row = dict(SAMPLE_SERVICES[0], client_name="OTHER")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=[row]):
+        assert store_store.create_service("ws_x", "C", {"name": "X"}) is None
+
+
+def test_delete_service_checks_client_scope():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=[]):
+        assert store_store.delete_service("ws_x", "C", "svc1") is False
+
+
+def test_service_stats_counts():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "list_services", return_value=[dict(s) for s in SAMPLE_SERVICES]):
+        stats = store_store.service_stats("ws_x", "C")
+    assert stats["total"] == 3
+    assert stats["active"] == 2
+    assert stats["inactive"] == 1
+
+
+# ── website builder: services from store rows ────────────────────────────────
+
+def test_build_site_accepts_service_rows():
+    project = website_tools._build_website_project(
+        title="Tailor Shop",
+        category="business",
+        services=[dict(s) for s in SAMPLE_SERVICES[:2]],
+    )
+    svc = project["services"]
+    assert len(svc) == 2
+    assert "Custom Stitching" in svc[0]
+    assert "Made-to-measure" in svc[0]
+
+
+def test_build_site_services_string_unchanged():
+    project = website_tools._build_website_project(
+        title="X", category="business",
+        services=["Fast Delivery", "Secure Builds"],
+    )
+    assert project["services"] == ["Fast Delivery", "Secure Builds"]
+
+
+def test_build_site_from_store_reads_services():
+    with mock.patch.object(store_store, "list_products", return_value=SAMPLE_PRODUCTS), \
+         mock.patch.object(store_store, "list_services", return_value=[dict(s) for s in SAMPLE_SERVICES[:2]]), \
+         mock.patch.object(store_store, "get_settings", return_value={"store_name": "T", "tagline": "", "category": "ecommerce", "style": "modern", "color_primary": "#111", "framework": "nextjs", "contact_email": ""}), \
+         mock.patch.object(website_tools, "build_site", return_value={"status": "built", "framework": "nextjs", "output_dir": "/tmp/x"}) as bs:
+        r = website_tools.build_site_from_store("ws_x", "C", deploy=False)
+    assert r["service_count"] == 2
+    call_kwargs = bs.call_args.kwargs
+    assert "services" in call_kwargs and len(call_kwargs["services"]) == 2
+
