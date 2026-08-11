@@ -49,6 +49,11 @@ docs/superpowers/
 /_*.png
 /_pw/
 
+# Scratch debug scripts under deploy/ (e.g. token-hunt one-offs)
+/deploy/_*.py
+/deploy/_*.js
+/deploy/_*.sh
+
 # Runtime state / generated output
 /.sba_rotation_state
 /.sba_enrichment_state
