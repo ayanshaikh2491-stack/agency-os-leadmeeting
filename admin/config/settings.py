@@ -50,6 +50,10 @@ PORT = int(os.getenv("ADMIN_PORT", "9002"))
 # ── EC2 backend (frontend proxy target) ────────────────────────────────────
 EC2_BACKEND_URL = os.getenv("EC2_BACKEND_URL", "http://18.213.66.136:8000")
 
+# ── Client dashboard (store admin) base URL ─────────────────────────────────
+# The dashboard is a Vercel app; each client's admin lives at /store/<workspace>.
+STORE_DASHBOARD_BASE_URL = os.getenv("STORE_DASHBOARD_BASE_URL", "https://agency-frontend-seven.vercel.app")
+
 # ── Chrome-agent (SBA's dedicated browser) ─────────────────────────────────
 CHROME_AGENT_PATH = os.getenv(
     "CHROME_AGENT_PATH",

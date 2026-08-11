@@ -845,8 +845,11 @@ def sales_stats(workspace: str, client: str) -> dict[str, Any]:
             entry["units"] += q
             entry["revenue"] = round(entry["revenue"] + float(item.get("price") or 0) * q, 2)
     top = None
+    top_products: list[dict[str, Any]] = []
     if by_product:
-        top = max(by_product.values(), key=lambda e: e["units"])
+        ranked = sorted(by_product.values(), key=lambda e: (e["units"], e["revenue"]), reverse=True)
+        top = ranked[0]
+        top_products = ranked[:5]
     cities = Counter((_norm_city_state(o)[0] or "Unknown") for o in orders)
     states = Counter((_norm_city_state(o)[1] or "Unknown") for o in orders)
     sources = Counter((o.get("source") or "Direct") for o in orders)
@@ -856,9 +859,58 @@ def sales_stats(workspace: str, client: str) -> dict[str, Any]:
         "units": units,
         "avg_order": round(revenue / len(orders), 2) if orders else 0.0,
         "top_product": top,
+        "top_products": top_products,
         "status_breakdown": {s: sum(1 for o in orders if (o.get("status") or "placed") == s) for s in {o.get("status") or "placed" for o in orders}},
         "cities": [{"city": c, "orders": n} for c, n in cities.most_common(5)],
         "states": [{"state": s, "orders": n} for s, n in states.most_common(5)],
         "sources": [{"source": s, "orders": n} for s, n in sources.most_common(5)],
+        "views": view_count(workspace, client),
         "source": "orders",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STORE VIEWS (public storefront pageviews)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def record_view(workspace: str, client: str) -> bool:
+    """Record one pageview of the client's public storefront.
+
+    Uses the existing website_build_log table with event_type='page_view'
+    so no new table is needed. Returns True when recorded.
+    """
+    cfg = get_config()
+    if not cfg:
+        return False
+    url, key = cfg
+    try:
+        _api(
+            "POST", url, key,
+            "/rest/v1/website_build_log",
+            {"client_name": client, "event_type": "page_view", "message": "storefront view", "actor": "storefront"},
+            profile=schema_for(workspace),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: record_view failed: %s", e)
+        return False
+
+
+def view_count(workspace: str, client: str) -> int:
+    """Count pageviews of the client's public storefront."""
+    cfg = get_config()
+    if not cfg:
+        return 0
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/website_build_log?select=id&event_type=eq.page_view&"
+            + _client_q(client) + "&limit=100000",
+            profile=schema_for(workspace),
+        )
+        return len(rows)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: view_count failed: %s", e)
+        return 0

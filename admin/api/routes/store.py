@@ -537,6 +537,30 @@ async def track_order_public(
     return result
 
 
+# ── Storefront views (public analytics) ────────────────────────────────────
+
+
+@router.post("/views")
+async def record_store_view(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """Record one pageview of the client's public storefront. No auth."""
+    _require_store()
+    ok = store_store.record_view(workspace, client)
+    return {"success": ok, "workspace": workspace, "client": client}
+
+
+@router.get("/views")
+async def store_views(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """Total pageviews of the client's public storefront."""
+    _require_store()
+    return {"views": store_store.view_count(workspace, client)}
+
+
 # ── Sync to live website ─────────────────────────────────────────────────────
 
 
