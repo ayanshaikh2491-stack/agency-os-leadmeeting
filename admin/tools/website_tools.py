@@ -2288,13 +2288,14 @@ def _vercel_headers(token: str | None = None) -> dict[str, str]:
 def _extract_vercel_url(output: str) -> str:
     """Pull the real deployment URL from vercel CLI output.
 
-    Prefers lines that are themselves URLs (starts with https:// and host
-    contains vercel.app / vercel.com), then falls back to any https token
-    that looks like a deployment URL. Ignores version banners like
-    "Vercel CLI 54.13.0 (Node.js 25.8.1)".
+    Prefers the stable production alias (the "Aliased https://..." line that
+    `vercel --prod` prints) so site_url does not change on every publish,
+    then falls back to the deployment-specific URL. Ignores version banners
+    like "Vercel CLI 54.13.0 (Node.js 25.8.1)".
     """
     url_like = re.compile(r"https://[^\s,;]+")
     candidates: list[str] = []
+    aliased: list[str] = []
     for line in output.split("\n"):
         line = line.strip()
         found = url_like.findall(line)
@@ -2310,6 +2311,14 @@ def _extract_vercel_url(output: str) -> str:
             low = u.lower()
             if "vercel.app" in low or "vercel.com" in low:
                 candidates.append(u)
+                if "aliased" in line.lower():
+                    aliased.append(u)
+    # The production alias (the "Aliased https://..." line from `vercel --prod`)
+    # is stable across publishes, so prefer it over the deployment URL.
+    for u in aliased:
+        low = u.lower()
+        if ".vercel.app" in low:
+            return u
     # Prefer the public *.vercel.app URL over dashboard/inspect links.
     for u in candidates:
         low = u.lower()
