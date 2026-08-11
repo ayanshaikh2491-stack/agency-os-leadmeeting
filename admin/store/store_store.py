@@ -388,7 +388,8 @@ def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
     out["customer_phone"] = s(out.get("customer_phone"))
     out["customer_address"] = s(out.get("customer_address"))
     for k in ("customer_city", "customer_state", "customer_pincode", "source",
-              "tracking_number", "carrier", "dispatch_note", "shipped_at"):
+              "tracking_number", "carrier", "dispatch_note", "shipped_at",
+              "payment_method", "notes"):
         out[k] = s(out.get(k))
     if not out.get("source"):
         out["source"] = "Direct"
@@ -415,37 +416,64 @@ def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def place_order(workspace: str, client: str, product_id: str, quantity: int,
-                customer: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Place an order for one product (public checkout).
+def _parse_price(product: dict[str, Any]) -> float:
+    """Parse a price value that may include ₹ / commas into a float."""
+    try:
+        return float(str(product.get("price") or "0").replace("₹", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
 
-    Validates the product exists + is in stock, decrements stock, and records
-    the order row in the workspace schema. Returns the created order.
+
+def place_order(workspace: str, client: str, product_id: str | None = None,
+                quantity: int = 1, customer: dict[str, Any] | None = None, *,
+                items: list[dict[str, Any]] | None = None,
+                payment_method: str = "", notes: str = "") -> dict[str, Any] | None:
+    """Place an order (public checkout).
+
+    Accepts either a single ``product_id``/``quantity`` (backwards compatible)
+    or a list of ``items`` ``[{"product_id": ..., "quantity": ...}]`` for cart
+    checkout. Validates every product exists, is active and in stock, decrements
+    each product's stock, and records one order row. Returns the created order.
     """
     cfg = get_config()
     if not cfg:
         return None
-    qty = max(1, int(quantity or 1))
-    customer = customer or {}
     url, key = cfg
-    product = get_product(workspace, client, product_id)
-    if not product:
-        return {"error": "Product not found"}
-    if not product.get("active", True):
-        return {"error": "Product is not available"}
-    try:
-        stock = int(product.get("stock") or 0)
-    except (TypeError, ValueError):
-        stock = 0
-    if stock < qty:
-        return {"error": "Not enough stock"}
+    customer = customer or {}
 
-    price = 0.0
-    try:
-        price = float(str(product.get("price") or "0").replace("₹", "").replace(",", "").strip())
-    except (TypeError, ValueError):
-        price = 0.0
-    total = round(price * qty, 2)
+    # Normalize requested items into [(product, qty)]
+    if not items:
+        items = [{"product_id": product_id, "quantity": quantity}]
+    requested: list[dict[str, Any]] = []
+    for it in items:
+        pid = (it or {}).get("product_id")
+        q = max(1, int((it or {}).get("quantity") or 1))
+        requested.append({"product_id": pid, "quantity": q})
+
+    # Validate + price every line
+    resolved: list[dict[str, Any]] = []
+    total = 0.0
+    for it in requested:
+        product = get_product(workspace, client, it["product_id"])
+        if not product:
+            return {"error": "Product not found"}
+        if not product.get("active", True):
+            return {"error": f"'{product.get('name', '')}' is not available"}
+        try:
+            stock = int(product.get("stock") or 0)
+        except (TypeError, ValueError):
+            stock = 0
+        if stock < it["quantity"]:
+            return {"error": f"Not enough stock for '{product.get('name', '')}' (only {stock} left)"}
+        price = _parse_price(product)
+        resolved.append({
+            "product": product,
+            "quantity": it["quantity"],
+            "price": price,
+        })
+        total += round(price * it["quantity"], 2)
+    if not resolved:
+        return {"error": "Order has no items"}
 
     order_number = "ORD-" + str(int(__import__("time").time() * 1000))[-8:]
 
@@ -455,17 +483,17 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
     payload = {
         "client_name": client,
         "order_number": order_number,
-        "product_id": product_id,
-        "product_name": product.get("name", ""),
-        "quantity": qty,
-        "unit_price": price,
+        "product_id": resolved[0]["product"]["id"],
+        "product_name": resolved[0]["product"].get("name", ""),
+        "quantity": resolved[0]["quantity"],
+        "unit_price": resolved[0]["price"],
         "total": total,
         "items": [{
-            "product_id": product_id,
-            "name": product.get("name", ""),
-            "price": price,
-            "quantity": qty,
-        }],
+            "product_id": r["product"]["id"],
+            "name": r["product"].get("name", ""),
+            "price": r["price"],
+            "quantity": r["quantity"],
+        } for r in resolved],
         "customer_name": str(customer.get("name") or "").strip(),
         "customer_email": str(customer.get("email") or "").strip(),
         "customer_phone": str(customer.get("phone") or "").strip(),
@@ -474,6 +502,8 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
         "customer_state": loc["customer_state"],
         "customer_pincode": loc["customer_pincode"],
         "source": source,
+        "payment_method": str(payment_method or "").strip() or "COD",
+        "notes": str(notes or "").strip(),
         "status": "placed",
     }
     try:
@@ -485,11 +515,14 @@ def place_order(workspace: str, client: str, product_id: str, quantity: int,
         )
         if not rows:
             return {"error": "Order create failed"}
-        # Decrement stock
-        try:
-            update_product(workspace, client, product_id, {"stock": max(0, stock - qty)})
-        except Exception:  # noqa: BLE001
-            logger.warning("store: stock decrement failed for %s", product_id)
+        # Decrement stock for every line item
+        for r in resolved:
+            try:
+                prod = r["product"]
+                cur = int(prod.get("stock") or 0)
+                update_product(workspace, client, prod["id"], {"stock": max(0, cur - r["quantity"])})
+            except Exception:  # noqa: BLE001
+                logger.warning("store: stock decrement failed for %s", r["product"]["id"])
         return _norm_order(rows[0])
     except Exception as e:  # noqa: BLE001
         logger.warning("store: place_order failed: %s", e)
@@ -572,6 +605,7 @@ def track_order(workspace: str, client: str, order_number: str, email: str) -> d
         "tracking_number": order.get("tracking_number"),
         "carrier": order.get("carrier"),
         "dispatch_note": order.get("dispatch_note"),
+        "payment_method": order.get("payment_method") or "",
         "created_at": order.get("created_at"),
         "shipped_at": order.get("shipped_at"),
     }

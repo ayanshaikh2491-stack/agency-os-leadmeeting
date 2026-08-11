@@ -250,6 +250,73 @@ def test_place_order_stores_location_and_source():
     assert r["source"] == "Instagram"
 
 
+def test_place_order_cart_multiple_items():
+    """Cart checkout: multiple line items in one order, stock decremented per item."""
+    created = dict(ORDER_ROW, items=[
+        {"product_id": "p1", "name": "Widget", "price": 499, "quantity": 2},
+        {"product_id": "p2", "name": "Gadget", "price": 799, "quantity": 1},
+    ], total=1797.0, payment_method="UPI")
+    products = {
+        "p1": {"id": "p1", "name": "Widget", "price": "₹499", "stock": 5, "active": True},
+        "p2": {"id": "p2", "name": "Gadget", "price": "799", "stock": 3, "active": True},
+    }
+    calls: list[tuple[str, int]] = []
+
+    def fake_update(ws, cl, pid, patch):
+        calls.append((pid, int(patch.get("stock") or 0)))
+
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_product", side_effect=lambda ws, cl, pid: products.get(pid)), \
+         mock.patch.object(store_store, "update_product", side_effect=fake_update), \
+         mock.patch.object(store_store, "_api", return_value=[created]):
+        r = store_store.place_order(
+            "ws_x", "C", items=[
+                {"product_id": "p1", "quantity": 2},
+                {"product_id": "p2", "quantity": 1},
+            ], customer={"name": "Rahul", "email": "r@x.com", "address": "Pune, MH 411001"},
+            payment_method="UPI",
+        )
+    assert r["total"] == 1797.0
+    assert len(r["items"]) == 2
+    assert r["payment_method"] == "UPI"
+    # Both products decremented: 5-2=3, 3-1=2
+    assert set(calls) == {("p1", 3), ("p2", 2)}
+
+
+def test_place_order_cart_rejects_out_of_stock_line():
+    """Cart checkout fails when any line item exceeds stock (atomic reject)."""
+    products = {
+        "p1": {"id": "p1", "name": "Widget", "price": "499", "stock": 2, "active": True},
+        "p2": {"id": "p2", "name": "Gadget", "price": "799", "stock": 0, "active": True},
+    }
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_product", side_effect=lambda ws, cl, pid: products.get(pid)), \
+         mock.patch.object(store_store, "update_product", return_value=None), \
+         mock.patch.object(store_store, "_api", return_value=[]):
+        r = store_store.place_order("ws_x", "C", items=[
+            {"product_id": "p1", "quantity": 2},
+            {"product_id": "p2", "quantity": 1},
+        ])
+    assert "error" in r
+    assert "Gadget" in r["error"]
+
+
+def test_place_order_backwards_compatible_single_product():
+    """Single product_id/quantity checkout still works (no items passed)."""
+    created = dict(ORDER_ROW, product_id="p1", items=[
+        {"product_id": "p1", "name": "Widget", "price": 499, "quantity": 2},
+    ], total=998.0)
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_product", return_value={
+             "id": "p1", "name": "Widget", "price": "499", "stock": 5, "active": True,
+         }), \
+         mock.patch.object(store_store, "update_product", return_value=None), \
+         mock.patch.object(store_store, "_api", return_value=[created]):
+        r = store_store.place_order("ws_x", "C", "p1", 2, {"name": "Rahul", "email": "r@x.com"})
+    assert r["total"] == 998.0
+    assert r["items"][0]["quantity"] == 2
+
+
 def test_norm_order_default_source_direct():
     o = store_store._norm_order(dict(ORDER_ROW))
     assert o["source"] == "Direct"
@@ -309,10 +376,11 @@ def test_update_order_status_plain_status_keeps_dispatch_info():
 
 def test_track_order_match_and_mismatch():
     with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
-         mock.patch.object(store_store, "_api", return_value=[dict(ORDER_ROW, tracking_number="T9", carrier="DTDC")]):
+         mock.patch.object(store_store, "_api", return_value=[dict(ORDER_ROW, tracking_number="T9", carrier="DTDC", payment_method="UPI")]):
         ok = store_store.track_order("ws_x", "C", "ORD-12345678", "rahul@example.com")
         assert ok["order_number"] == "ORD-12345678"
         assert ok["tracking_number"] == "T9"
+        assert ok["payment_method"] == "UPI"
         assert "customer_email" not in ok  # safe summary, no PII leak
 
         bad = store_store.track_order("ws_x", "C", "ORD-12345678", "wrong@example.com")

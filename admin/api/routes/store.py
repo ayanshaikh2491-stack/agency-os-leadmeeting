@@ -109,9 +109,12 @@ class AccountRequest(BaseModel):
 class OrderRequest(BaseModel):
     workspace: str = "Default"
     client: str = "Client"
-    product_id: str
+    product_id: str = ""
     quantity: int = 1
+    items: list[dict[str, Any]] | None = None
     customer: dict[str, Any] | None = None
+    payment_method: str = ""
+    notes: str = ""
 
 
 class OrderStatusPATCH(BaseModel):
@@ -185,7 +188,7 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
             f"Address: {order.get('customer_address') or '—'}\n"
             f"Location: {location or '—'}  (source: {source})\n\n"
             f"Items:\n{items_txt}\n"
-            f"\nTotal: {currency}{total}\n\n"
+            f"\nTotal: {currency}{total}  (payment: {order.get('payment_method') or 'COD'})\n\n"
             f"Login to your store dashboard to update the order status and "
             f"dispatch (tracking number/carrier).",
             cc_owner=False,
@@ -390,7 +393,9 @@ async def create_order(req: OrderRequest):
     """
     _require_store()
     result = store_store.place_order(
-        req.workspace, req.client, req.product_id, req.quantity, req.customer,
+        req.workspace, req.client, req.product_id, req.quantity,
+        items=req.items, customer=req.customer,
+        payment_method=req.payment_method, notes=req.notes,
     )
     if result is None:
         raise HTTPException(status_code=503, detail="Store backend not available")
