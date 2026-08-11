@@ -7,6 +7,7 @@ Each workspace's rows live in its own schema (`{schema}__store_products`,
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import re
 from collections import Counter
@@ -23,13 +24,15 @@ SETTINGS_TABLE = "store_settings"
 ORDERS_TABLE = "store_orders"
 
 # Order status lifecycle (Shopify-like)
-ORDER_STATUSES = ["placed", "processing", "shipped", "delivered", "cancelled"]
+ORDER_STATUSES = ["placed", "processing", "shipped", "delivered", "cancelled", "returned", "refunded"]
 ORDER_STATUS_LABELS = {
     "placed": "Placed",
     "processing": "Processing",
     "shipped": "Shipped",
     "delivered": "Delivered",
     "cancelled": "Cancelled",
+    "returned": "Returned",
+    "refunded": "Refunded",
 }
 
 # ── Customer location parsing (kaha se order aaya) ──────────────────────────
@@ -141,6 +144,8 @@ PRODUCT_FIELDS = {
     "image_url": "",
     "category": "",
     "sku": "",
+    "gstin": "",
+    "hsn": "",
     "stock": 0,
     "active": True,
     "featured": False,
@@ -178,6 +183,8 @@ def _norm_product(row: dict[str, Any]) -> dict[str, Any]:
     out["image_url"] = s(out.get("image_url"))
     out["category"] = s(out.get("category"))
     out["sku"] = s(out.get("sku"))
+    out["gstin"] = s(out.get("gstin"))
+    out["hsn"] = s(out.get("hsn"))
     try:
         out["stock"] = int(out.get("stock") or 0)
     except (TypeError, ValueError):
@@ -488,6 +495,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "currency": "₹",
     "show_stock": True,
     "contact_email": "",
+    "contact_phone": "",
+    "contact_address": "",
+    "gstin": "",
+    "logo_url": "",
+    "whatsapp": "",
+    "delivery_charge": "",
+    "free_delivery_min": "",
+    "payments": {"cod": True, "upi": True, "card": False},
     "domain": "",
 }
 
@@ -511,7 +526,16 @@ def get_settings(workspace: str, client: str) -> dict[str, Any]:
     out = dict(DEFAULT_SETTINGS)
     for k, v in row.items():
         if k in out and v is not None:
-            out[k] = str(v) if k != "show_stock" else bool(v)
+            if k == "payments":
+                if isinstance(v, str):
+                    try:
+                        out[k] = json.loads(v)
+                    except (TypeError, ValueError):
+                        out[k] = dict(DEFAULT_SETTINGS["payments"])
+                else:
+                    out[k] = v
+            else:
+                out[k] = str(v) if k != "show_stock" else bool(v)
     return out
 
 
