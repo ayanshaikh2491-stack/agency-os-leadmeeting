@@ -165,7 +165,7 @@ WEBSITE_CATEGORIES: dict[str, dict[str, Any]] = {
     "ecommerce": {
         "label": "E-commerce / Shop",
         "pages": {
-            "index": {"nav": "Home", "sections": ["hero", "products", "features", "testimonials", "cta", "footer"]},
+            "index": {"nav": "Home", "sections": ["hero", "products", "services", "features", "testimonials", "cta", "footer"]},
             "shop": {"nav": "Shop", "sections": ["hero_small", "products", "cta", "footer"]},
             "about": {"nav": "About", "sections": ["hero_small", "about", "team", "footer"]},
             "contact": {"nav": "Contact", "sections": ["hero_small", "contact", "footer"]},
