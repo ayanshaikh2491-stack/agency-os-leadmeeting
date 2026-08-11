@@ -3,7 +3,43 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-10 23:30 IST (18:00 UTC)
+**Last updated:** 2026-08-11 13:40 IST (08:10 UTC)
+
+---
+
+## STORE — CART CHECKOUT LIVE + PERSISTENCE VERIFIED (08:10 UTC)
+
+- **Feature complete + deployed:** multi-item cart checkout. Backend
+  `45accb6` (admin/api/routes/store.py, admin/store/store_store.py,
+  admin/tests/test_store.py; 28/28 tests). Frontend `a552d32` (cart drawer +
+  payment method + product search in `src/app/store/[slug]/page.js` +
+  `admin/agents/website/StoreTab.jsx`; build 41/41). Submodule pointer
+  `0ec50fd`. Backend deployed via `deploy/deploy_sba.py` (97 files, autopilot
+  active). Vercel deploy **READY** (production, 30 min after push).
+- **DB persistence contradiction RESOLVED:** backend returned 9 products but
+  the PB collection list showed none — that was PB **pagination truncation**
+  (`/api/collections` default perPage=30, 39 collections exist). With
+  `perPage=200`: `ws_agency__store_products` (9), `ws_agency__store_orders` (8),
+  `ws_agency__store_settings` (1), `ws_agency__store_accounts` (1) all present.
+  Data lives in **PocketBase** (EC2 8090) via the pb-supabase-gateway (8095),
+  NOT in Supabase Postgres. Backend `.env`: `SUPABASE_URL=http://127.0.0.1:8095`
+  (gateway) — PocketBase is the real store.
+- **Live E2E verified (via Vercel proxy → EC2 → PB):**
+  1. `GET /api/store/public?workspace=agency` → 9 active products.
+  2. `POST /api/store/orders` (2 items: Premium Cotton Kurta ₹1299 + Running
+     Sports Shoes ₹1599, UPI, customer Indore MP 452001) → 200,
+     **ORD-35314411**, total ₹2898, status placed, city/state/pincode
+     auto-parsed from address.
+  3. PB direct check: orders 8→9, new row present with full items[],
+     payment_method=UPI, source=live-e2e-test.
+  4. **Stock decremented:** Kurta 17→16, Shoes 13→12.
+  5. Sales stats (backend + via Vercel proxy, identical): 9 orders, ₹19,184
+     revenue, 16 units, status breakdown placed 6/shipped 1/delivered 2,
+     cities include Indore + states Madhya Pradesh — **storefront dashboard
+     reflects the new order.**
+- **Live storefront:** `https://agency-frontend-seven.vercel.app/store/agency`
+  (proxy `src/app/api/[...slug]/route.js` → `BACKEND_API_URL` =
+  18.213.66.136:8000, default in code).
 
 ---
 
