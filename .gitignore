@@ -58,6 +58,7 @@ docs/superpowers/
 /.sba_rotation_state
 /.sba_enrichment_state
 /generated_sites/
+/admin/generated_sites/
 crewai-repo/  
 deploy/pocketbase/ 
 deploy/gw.log
