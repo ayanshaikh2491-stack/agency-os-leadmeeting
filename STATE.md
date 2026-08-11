@@ -3,7 +3,45 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-11 13:40 IST (08:10 UTC)
+**Last updated:** 2026-08-12 00:50 IST (19:20 UTC)
+
+---
+
+## STORE — CLIENT PORTAL: 17 FEATURES + TABS + IMAGE UPLOAD LIVE (19:20 UTC)
+
+- **User approved all 17 store features** ("ya sab add kar") — sab ek hi jagah
+  (client dashboard), **tabs** taaki scroll na karna pade.
+- **Frontend `src/app/store/[slug]/page.js` (3 commits, Vercel prod live):**
+  1. `88b62bb` store-features-17-all — settings editor (store name/tagline/logo/
+     GSTIN/color/contact/WhatsApp/delivery charge/free-delivery min/payment
+     toggles), order detail modal (customer/dispatch/items w/ HSN/total/status
+     buttons), label + invoice print, CSV export, bulk dispatch bar
+     (select → carrier/tracking/note → ship), GST%+HSN fields, Low stock badge
+     (≤5), 14-day sales graph, payment breakdown, customer list.
+  2. `104beb8` store-dashboard-tabs-nav — sticky nav with 5 tabs:
+     **Dashboard** (stats/graph/publish), **Orders** (badge=pendingDispatch),
+     **Products** (badge=lowStock), **Services**, **Settings** (gated editor).
+     Low-stock "Update Stock" jumps to Products tab.
+  3. `b37650e` store-image-upload-logo-product — **Upload button** (logo +
+     product image): file → resize (max 900px) → compressed JPEG data URL →
+     seedha settings/product me save (no server storage, backend untouched).
+     Link paste field ab optional.
+- **Backend `admin/store/store_store.py` (parent `7e986ed`, EC2 live):**
+  ORDER_STATUSES + labels me `returned`/`refunded` added (tests 39 passed);
+  settings fields (GSTIN, HSN, logo, delivery, payments) already present.
+  Live verified: GET/PATCH settings round-trip (whatsapp, delivery_charge,
+  free_delivery_min, gstin, payments) → LOGIN_OK / PATCH_OK / REVERT_OK.
+- **Public checkout reverted clean:** leftover `_nextjs_store_shop` diff
+  (unwanted public selling site) removed via `git checkout --` from
+  `admin/tools/website_tools.py`. Store = client portal (login), NOT public
+  selling site.
+- **Parent repo commits:** `7e986ed` (backend+submodule), `866bc76`
+  (submodule pointer b37650e). Branch `feat/sba-lead-to-meeting-pipeline`.
+- **Live portal:** `https://agency-frontend-seven.vercel.app/store/agency`
+  (login `client@tagsagency.com` / `Client@2026`). Build 41/41 static pages.
+- **PENDING (user asked, not yet done):** service image, coupon/discount codes,
+  product reviews, offers/banners (homepage), WhatsApp order notification.
+  Track Order (order#+email) pehle se hai (`GET /api/store/track`).
 
 ---
 
@@ -506,6 +544,11 @@ and Gmail 550s once sends resume.
 
 | Commit | What |
 |---|---|
+| `866bc76` | store: submodule pointer → `b37650e` (image upload live) |
+| `7e986ed` | store: returned/refunded statuses + settings round-trip verified (backend) |
+| `b37650e` | store frontend: image upload (logo + product, data URL) |
+| `104beb8` | store frontend: 5-tab dashboard nav (Dashboard/Orders/Products/Services/Settings) |
+| `88b62bb` | store frontend: all 17 features (settings editor, orders detail/print/CSV/bulk dispatch, GST/HSN, stats) |
 | `522031b` | docs: STATE.md — PocketBase bound to systemd service, PRODUCTION GREEN |
 | `48242d3` | **feat(pocketbase): gateway GREEN on EC2 — id remap + pagination fix, autopilot on 8095, Supabase stopped** |
 | `6bd88f5` | **CEO checkpointing: Supabase-backed cross-session memory + real conversation_id** (get_checkpointer("Agency","ceo"), fallback MemorySaver; tests 7 passed) |
