@@ -330,9 +330,12 @@ def _is_valid_lead_email(email: str, allow_consumer: bool = False) -> bool:
             pass
         else:
             return False
-    if not allow_consumer:
+    if not allow_consumer or domain in _CONSUMER_DOMAINS:
         # Generic front-desk prefixes (info@, contact@, ...) are fine on the
-        # business's OWN verified page, but junk in an unverified scrape.
+        # business's OWN verified page, but junk in an unverified scrape. On
+        # consumer mail domains (gmail/yahoo/...) a role account like info@
+        # can never be proven to belong to this specific business, so it stays
+        # junk even when the caller says consumer mail is otherwise acceptable.
         for prefix in _GENERIC_EMAIL_PREFIXES:
             if e.startswith(prefix):
                 return False

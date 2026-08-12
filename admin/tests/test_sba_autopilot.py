@@ -22,6 +22,18 @@ def _isolate_enrich_state(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_ENRICH_STATE_FILE", str(tmp_path / "enrich_state.json"))
 
 
+@pytest.fixture(autouse=True)
+def _no_strategy_llm(monkeypatch, tmp_path):
+    """Keep the post-pass strategy review deterministic: it must never call the
+    real LLM or write the repo's real strategy/journal state files."""
+    async def _noop_review(*args, **kwargs):
+        return None
+    monkeypatch.setattr("admin.agency.sba_autopilot.strat.maybe_review", _noop_review)
+    monkeypatch.setattr("admin.agency.sba_autopilot.strat.load_strategy", lambda path=None: {"angle": None, "focus": [], "notes": [], "actions": []})
+    monkeypatch.setattr("admin.agency.sba_autopilot.strat.metrics_from_journal", lambda hours=None, log_path=None: {"passes": 0})
+    monkeypatch.setattr("admin.agency.sba_autopilot.strat.observe_pass", lambda stats, path=None: {})
+
+
 class FakeEmailClient:
     def __init__(self):
         self.enabled = True
@@ -58,6 +70,7 @@ async def test_run_once_sends_email_to_lead_in_business_hours(monkeypatch):
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
     monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr("admin.agency.sba_autopilot.sb_patch_lead", lambda u, k, sid, upd: True)
+    _no_new_leads(monkeypatch)
 
     # Force business hours: 17:00 UTC = 12:00 CDT (America/Chicago, Mon)
     import datetime as dt
@@ -81,6 +94,7 @@ async def test_run_once_skips_email_outside_business_hours(monkeypatch):
             "category": "bar", "state": "CA", "status": "new"}
     monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
     monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
+    _no_new_leads(monkeypatch)
 
     # Night in LA: 06:00 UTC on 8/4 = 23:00 PDT on 8/3 (Mon) -> outside 9-17
     import datetime as dt
@@ -112,6 +126,7 @@ async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     monkeypatch.setattr("admin.agency.sba_autopilot.sb_patch_lead", lambda u, k, sid, upd: True)
     monkeypatch.setattr(SBAAutopilot, "_is_owner", lambda self, a: True)
     monkeypatch.setattr("admin.agency.sba_autopilot.parse_owner_command", lambda s, b: {"lead_id": "12", "action": "haan", "time": "15:00"})
+    _no_new_leads(monkeypatch)
     email.replies = [owner_reply]
 
     stats = await ap.run_once()

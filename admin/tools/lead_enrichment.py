@@ -283,8 +283,11 @@ def _is_valid_email(email: str, allow_consumer: bool = False) -> bool:
         if e.startswith(prefix):
             return False
     # Generic front-desk prefixes are fine on the business's OWN verified page
-    # (allow_consumer=True), but are junk in an unverified scrape.
-    if not allow_consumer:
+    # (allow_consumer=True), but are junk in an unverified scrape. On consumer
+    # mail domains (gmail/yahoo/...) a role account like info@ can never be
+    # proven to belong to this specific business, so it stays junk even when
+    # the caller says consumer mail is otherwise acceptable.
+    if not allow_consumer or domain in _CONSUMER_DOMAINS:
         for prefix in _GENERIC_PREFIXES:
             if e.startswith(prefix):
                 return False
