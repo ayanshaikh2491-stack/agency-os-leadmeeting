@@ -670,8 +670,10 @@ async def list_coupons(
     workspace: str = Query("Default"),
     client: str = Query("Client"),
 ):
-    """List all discount coupons for this store (owner or agency)."""
+    """List all discount coupons for this store (token required, no public leak)."""
     _require_store()
+    if not payload:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(payload, workspace, client)
     return store_store.list_coupons(workspace, client)
 
@@ -679,6 +681,8 @@ async def list_coupons(
 @router.post("/coupons")
 async def create_coupon(req: CouponRequest, auth: dict | None = Depends(_auth_optional)):
     _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(auth, req.workspace, req.client)
     coupon = req.coupon or req.data or {}
     created = store_store.create_coupon(req.workspace, req.client, coupon)
@@ -702,6 +706,8 @@ async def validate_coupon(req: CouponValidateRequest):
 @router.patch("/coupons/{cid}")
 async def update_coupon(cid: str, req: CouponRequest, auth: dict | None = Depends(_auth_optional)):
     _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(auth, req.workspace, req.client)
     updated = store_store.update_coupon(req.workspace, req.client, cid, req.coupon or req.data or {})
     if not updated:
@@ -713,6 +719,8 @@ async def update_coupon(cid: str, req: CouponRequest, auth: dict | None = Depend
 async def delete_coupon(cid: str, workspace: str = Query("Default"), client: str = Query("Client"),
                         auth: dict | None = Depends(_auth_optional)):
     _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(auth, workspace, client)
     ok = store_store.delete_coupon(workspace, client, cid)
     if not ok:
@@ -730,10 +738,15 @@ async def list_reviews(
     client: str = Query("Client"),
     product_id: str = Query(""),
 ):
-    """List all reviews for this store (owner/agency) or for one product."""
+    """List reviews for this store.
+
+    Owner/agency (with token) get all reviews incl. pending; public callers
+    only see approved ones so unpublished reviews never leak.
+    """
     _require_store()
     _enforce_client_scope(payload, workspace, client)
-    return store_store.list_reviews(workspace, client, product_id=product_id)
+    approved_only = payload is None
+    return store_store.list_reviews(workspace, client, product_id=product_id, approved_only=approved_only)
 
 
 @router.get("/reviews/stats")
@@ -759,8 +772,10 @@ async def create_review(req: ReviewRequest):
 
 @router.patch("/reviews/{rid}")
 async def update_review(rid: str, req: ReviewPatchRequest, auth: dict | None = Depends(_auth_optional)):
-    """Owner approves/rejects or edits a review."""
+    """Owner approves/rejects or edits a review (token required)."""
     _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(auth, req.workspace, req.client)
     updated = store_store.update_review(req.workspace, req.client, rid, req.data)
     if not updated:
@@ -772,6 +787,8 @@ async def update_review(rid: str, req: ReviewPatchRequest, auth: dict | None = D
 async def delete_review(rid: str, workspace: str = Query("Default"), client: str = Query("Client"),
                         auth: dict | None = Depends(_auth_optional)):
     _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
     _enforce_client_scope(auth, workspace, client)
     ok = store_store.delete_review(workspace, client, rid)
     if not ok:
