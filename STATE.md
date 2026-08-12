@@ -3,11 +3,11 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 10:30 IST (05:00 UTC)
+**Last updated:** 2026-08-12 10:40 IST (05:10 UTC)
 
 ---
 
-## STORE — FEATURES DONE + GST/HSN REMOVED + SECURITY HARDENED (05:00 UTC)
+## STORE — FEATURES DONE + GST/HSN REMOVED + SECURITY HARDENED (05:10 UTC)
 
 - **User asked:** baki store kaam khatam karo, GST/HSN poori tarah hatao,
   colours/design aur achha karo.
@@ -15,7 +15,7 @@
   store_store.py) + frontend `page.js` + StoreTab — zero `gst`/`hsn`/`GSTIN`
   matches left (only unrelated `fonts.gstatic.com`). Settings editor ab
   **Primary Color** field hai (GSTIN ki jagah).
-- **New storefront features (frontend `0964f2e`, Vercel prod building):**
+- **New storefront features (frontend `0964f2e`, Vercel prod LIVE — verified):**
   1. **Service images** — upload/URL field in service editor + image cards.
   2. **Coupons (owner Coupons tab):** create/edit/delete/toggle-active, percent
      ya flat, min order, max uses, expiry. **Checkout pe coupon apply box** —
@@ -31,17 +31,26 @@
      (settings.whatsapp).
   6. **Design polish:** hero gradient blobs, backdrop-blur chips, `--accent`
      CSS var ab store ke colour se sync (checkbox accents), banner carousel.
-- **Security hardening (backend `59b3adb`, EC2 deploy in progress):**
+- **Security hardening (backend `59b3adb`, EC2 LIVE):**
   - `GET /reviews` bina token → sirf approved reviews (pending kabhi leak nahi).
   - `PATCH/DELETE /reviews` + coupons POST/PATCH/DELETE + `GET /coupons` →
     ab store owner token zaroori (pehle bina auth ke koi bhi pending review
     approve/delete kar sakta tha, coupon codes bhi padh/change sakta tha).
   - Public storefront view (`/api/store/public`) pehle se approved-only
     reviews + stats deta hai.
+- **WhatsApp path live-verified:** settings me whatsapp number temporary set
+  karke order banaya → response me `waLink=https://wa.me/919876543210?text=...`
+  correct aaya, phir settings revert. Store owner ko **Settings tab me apna
+  WhatsApp number daalna hai** taaki success screen ka confirm button + floating
+  chat button dikhe (abhi `settings.whatsapp=''` hai isliye hidden).
 - **Tests:** 58/58 pass (`admin/tests/test_store.py`). Frontend build 41/41.
+  Live chunk (`page-48896c53…`) me Coupon/Review/whatsapp/banner sab present.
+- **Test orders in live DB (E2E se bache):** `ORD-10979596` (coupon wala,
+  total ₹1169.1) + `ORD-11068160` (WhatsApp link test, ₹1299). Owner dashboard
+  me ye dikhenge — delete kar sakte hain ya chhod dein.
 - **Commits:** frontend submodule `0964f2e` (pushed → Vercel), parent
   `59b3adb` (routes security + submodule pointer). Backend deploy via
-  `python deploy/deploy_sba.py`.
+  `python deploy/deploy_sba.py` (100 files, py_compile OK, service active).
 - **Live portal:** `https://agency-frontend-seven.vercel.app/store/agency`
   (login `client@tagsagency.com` / `Client@2026`).
 
