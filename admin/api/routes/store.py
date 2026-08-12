@@ -22,6 +22,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -128,6 +129,34 @@ class OrderRequest(BaseModel):
     customer: dict[str, Any] | None = None
     payment_method: str = ""
     notes: str = ""
+    coupon_code: str = ""
+
+
+class CouponRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    coupon: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+
+
+class CouponValidateRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    code: str = ""
+    subtotal: float = 0
+
+
+class ReviewRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    review: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
+
+
+class ReviewPatchRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    data: dict[str, Any]
 
 
 class OrderStatusPATCH(BaseModel):
@@ -159,6 +188,7 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
     customer_email = str(order.get("customer_email") or "").strip()
     settings = ss.get_settings(workspace, client)
     owner_email = str(settings.get("contact_email") or "").strip()
+    owner_whatsapp = str(settings.get("whatsapp") or "").strip()
     store_name = str(settings.get("store_name") or "").strip() or client
     order_number = str(order.get("order_number") or order.get("id") or "")
     total = str(order.get("total") or "")
@@ -168,6 +198,25 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
         f"  - {it.get('name', 'Item')} x{it.get('quantity', 1)} @ {currency}{it.get('price', 0)}"
         for it in items
     ) or f"  - {order.get('product_name', 'Item')} x{order.get('quantity', 1)}"
+
+    # WhatsApp deep link: owner tap kare to message prefilled ready rahe.
+    wa_link = ""
+    if owner_whatsapp:
+        try:
+            import urllib.parse
+            phone = re.sub(r"[^0-9]", "", owner_whatsapp)
+            if phone:
+                wa_text = (
+                    f"New order {order_number} — {store_name}\n"
+                    f"Customer: {order.get('customer_name') or '—'}\n"
+                    f"Phone: {order.get('customer_phone') or '—'}\n"
+                    f"Address: {order.get('customer_address') or '—'}\n"
+                    f"Items:\n{items_txt}\n"
+                    f"Total: {currency}{total} ({order.get('payment_method') or 'COD'})"
+                )
+                wa_link = f"https://wa.me/{phone}?text={urllib.parse.quote(wa_text)}"
+        except Exception:  # noqa: BLE001
+            wa_link = ""
 
     if customer_email:
         await email_client.send_email(
@@ -191,6 +240,7 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
             order.get("customer_pincode") or "",
         ] if x)
         source = order.get("source") or "Direct"
+        wa_txt = f"\nWhatsApp pe chat karo: {wa_link}\n" if wa_link else "\n"
         await email_client.send_email(
             owner_email,
             f"🛒 New order {order_number} — {store_name}",
@@ -201,7 +251,8 @@ async def _notify_order_placed(workspace: str, client: str, order: dict[str, Any
             f"Address: {order.get('customer_address') or '—'}\n"
             f"Location: {location or '—'}  (source: {source})\n\n"
             f"Items:\n{items_txt}\n"
-            f"\nTotal: {currency}{total}  (payment: {order.get('payment_method') or 'COD'})\n\n"
+            f"\nTotal: {currency}{total}  (payment: {order.get('payment_method') or 'COD'})\n"
+            f"{wa_txt}"
             f"Login to your store dashboard to update the order status and "
             f"dispatch (tracking number/carrier).",
             cc_owner=False,
@@ -389,7 +440,7 @@ async def public_storefront(
     workspace: str = Query("Default"),
     client: str = Query("Client"),
 ):
-    """Public view: store settings + active products + services. No token required."""
+    """Public view: store settings + active products + services + approved reviews. No token required."""
     _require_store()
     return {
         "workspace": workspace,
@@ -397,6 +448,8 @@ async def public_storefront(
         "settings": store_store.get_settings(workspace, client),
         "products": store_store.list_products(workspace, client, active_only=True),
         "services": store_store.list_services(workspace, client, active_only=True),
+        "reviews": store_store.list_reviews(workspace, client, approved_only=True),
+        "review_stats": store_store.review_stats(workspace, client),
     }
 
 
@@ -464,6 +517,7 @@ async def create_order(req: OrderRequest):
         req.workspace, req.client, req.product_id, req.quantity,
         items=req.items, customer=req.customer,
         payment_method=req.payment_method, notes=req.notes,
+        coupon_code=req.coupon_code,
     )
     if result is None:
         raise HTTPException(status_code=503, detail="Store backend not available")
@@ -475,6 +529,23 @@ async def create_order(req: OrderRequest):
         await _notify_order_placed(req.workspace, req.client, result)
     except Exception:  # noqa: BLE001
         logger.exception("store: order notification failed (order still placed)")
+    # Owner's WhatsApp deep link so they can ping the customer instantly.
+    try:
+        settings = store_store.get_settings(req.workspace, req.client)
+        owner_wa = str(settings.get("whatsapp") or "").strip()
+        phone = re.sub(r"[^0-9]", "", owner_wa)
+        if phone:
+            import urllib.parse
+            wa_text = (
+                f"Hi {result.get('customer_name') or 'there'}! Your order "
+                f"{result.get('order_number')} at "
+                f"{settings.get('store_name') or req.client} is confirmed. "
+                f"Total: {settings.get('currency') or '₹'}{result.get('total')}. "
+                f"We'll update you soon."
+            )
+            result["whatsapp_link"] = f"https://wa.me/{phone}?text={urllib.parse.quote(wa_text)}"
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 
@@ -588,3 +659,121 @@ async def sync_store_site(req: SyncRequest, auth: dict | None = Depends(_auth_op
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+# ── Coupons (owner creates, customers apply at checkout) ─────────────────────
+
+
+@router.get("/coupons")
+async def list_coupons(
+    payload: dict | None = Depends(_auth_optional),
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """List all discount coupons for this store (owner or agency)."""
+    _require_store()
+    _enforce_client_scope(payload, workspace, client)
+    return store_store.list_coupons(workspace, client)
+
+
+@router.post("/coupons")
+async def create_coupon(req: CouponRequest, auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, req.workspace, req.client)
+    coupon = req.coupon or req.data or {}
+    created = store_store.create_coupon(req.workspace, req.client, coupon)
+    if not created:
+        raise HTTPException(status_code=500, detail="Failed to create coupon")
+    if "error" in created:
+        raise HTTPException(status_code=400, detail=created["error"])
+    return created
+
+
+@router.post("/coupons/validate")
+async def validate_coupon(req: CouponValidateRequest):
+    """Public: check a coupon code against a subtotal (no auth)."""
+    _require_store()
+    result = store_store.validate_coupon(req.workspace, req.client, req.code, req.subtotal)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.patch("/coupons/{cid}")
+async def update_coupon(cid: str, req: CouponRequest, auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, req.workspace, req.client)
+    updated = store_store.update_coupon(req.workspace, req.client, cid, req.coupon or req.data or {})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Coupon not found or update failed")
+    return updated
+
+
+@router.delete("/coupons/{cid}")
+async def delete_coupon(cid: str, workspace: str = Query("Default"), client: str = Query("Client"),
+                        auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, workspace, client)
+    ok = store_store.delete_coupon(workspace, client, cid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    return {"success": True, "deleted": cid}
+
+
+# ── Reviews (customers rate products; owner moderates) ───────────────────────
+
+
+@router.get("/reviews")
+async def list_reviews(
+    payload: dict | None = Depends(_auth_optional),
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+    product_id: str = Query(""),
+):
+    """List all reviews for this store (owner/agency) or for one product."""
+    _require_store()
+    _enforce_client_scope(payload, workspace, client)
+    return store_store.list_reviews(workspace, client, product_id=product_id)
+
+
+@router.get("/reviews/stats")
+async def reviews_stats(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """Aggregated rating stats (public, approved reviews only)."""
+    _require_store()
+    return store_store.review_stats(workspace, client)
+
+
+@router.post("/reviews")
+async def create_review(req: ReviewRequest):
+    """Public: customer submits a review for a product (no auth, pending approval)."""
+    _require_store()
+    review = req.review or req.data or {}
+    created = store_store.create_review(req.workspace, req.client, review)
+    if not created:
+        raise HTTPException(status_code=500, detail="Failed to create review")
+    return created
+
+
+@router.patch("/reviews/{rid}")
+async def update_review(rid: str, req: ReviewPatchRequest, auth: dict | None = Depends(_auth_optional)):
+    """Owner approves/rejects or edits a review."""
+    _require_store()
+    _enforce_client_scope(auth, req.workspace, req.client)
+    updated = store_store.update_review(req.workspace, req.client, rid, req.data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Review not found or update failed")
+    return updated
+
+
+@router.delete("/reviews/{rid}")
+async def delete_review(rid: str, workspace: str = Query("Default"), client: str = Query("Client"),
+                        auth: dict | None = Depends(_auth_optional)):
+    _require_store()
+    _enforce_client_scope(auth, workspace, client)
+    ok = store_store.delete_review(workspace, client, rid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return {"success": True, "deleted": rid}

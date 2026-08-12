@@ -22,6 +22,8 @@ PRODUCTS_TABLE = "store_products"
 SERVICES_TABLE = "store_services"
 SETTINGS_TABLE = "store_settings"
 ORDERS_TABLE = "store_orders"
+COUPONS_TABLE = "store_coupons"
+REVIEWS_TABLE = "store_reviews"
 
 # Order status lifecycle (Shopify-like)
 ORDER_STATUSES = ["placed", "processing", "shipped", "delivered", "cancelled", "returned", "refunded"]
@@ -144,8 +146,6 @@ PRODUCT_FIELDS = {
     "image_url": "",
     "category": "",
     "sku": "",
-    "gstin": "",
-    "hsn": "",
     "stock": 0,
     "active": True,
     "featured": False,
@@ -156,6 +156,7 @@ SERVICE_FIELDS = {
     "name": "",
     "description": "",
     "price": "",
+    "image_url": "",
     "active": True,
     "sort_order": 0,
 }
@@ -183,8 +184,6 @@ def _norm_product(row: dict[str, Any]) -> dict[str, Any]:
     out["image_url"] = s(out.get("image_url"))
     out["category"] = s(out.get("category"))
     out["sku"] = s(out.get("sku"))
-    out["gstin"] = s(out.get("gstin"))
-    out["hsn"] = s(out.get("hsn"))
     try:
         out["stock"] = int(out.get("stock") or 0)
     except (TypeError, ValueError):
@@ -335,6 +334,7 @@ def _norm_service(row: dict[str, Any]) -> dict[str, Any]:
     out["name"] = s(out.get("name"))
     out["description"] = s(out.get("description"))
     out["price"] = s(out.get("price"))
+    out["image_url"] = s(out.get("image_url"))
     try:
         out["active"] = bool(out.get("active", True))
     except (TypeError, ValueError):
@@ -497,12 +497,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "contact_email": "",
     "contact_phone": "",
     "contact_address": "",
-    "gstin": "",
     "logo_url": "",
     "whatsapp": "",
     "delivery_charge": "",
     "free_delivery_min": "",
     "payments": {"cod": True, "upi": True, "card": False},
+    "banners": [],
     "domain": "",
 }
 
@@ -526,16 +526,20 @@ def get_settings(workspace: str, client: str) -> dict[str, Any]:
     out = dict(DEFAULT_SETTINGS)
     for k, v in row.items():
         if k in out and v is not None:
-            if k == "payments":
+            if k in ("payments", "banners"):
                 if isinstance(v, str):
                     try:
                         out[k] = json.loads(v)
                     except (TypeError, ValueError):
-                        out[k] = dict(DEFAULT_SETTINGS["payments"])
+                        out[k] = dict(DEFAULT_SETTINGS["payments"]) if k == "payments" else []
                 else:
                     out[k] = v
             else:
                 out[k] = str(v) if k != "show_stock" else bool(v)
+    if not isinstance(out.get("banners"), list):
+        out["banners"] = []
+    if not isinstance(out.get("payments"), dict):
+        out["payments"] = dict(DEFAULT_SETTINGS["payments"])
     return out
 
 
@@ -581,7 +585,7 @@ def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
     out["customer_address"] = s(out.get("customer_address"))
     for k in ("customer_city", "customer_state", "customer_pincode", "source",
               "tracking_number", "carrier", "dispatch_note", "shipped_at",
-              "payment_method", "notes"):
+              "payment_method", "notes", "coupon_code"):
         out[k] = s(out.get(k))
     if not out.get("source"):
         out["source"] = "Direct"
@@ -595,6 +599,14 @@ def _norm_order(row: dict[str, Any]) -> dict[str, Any]:
         out["total"] = float(out.get("total") or 0)
     except (TypeError, ValueError):
         out["total"] = 0.0
+    try:
+        out["discount"] = float(out.get("discount") or 0)
+    except (TypeError, ValueError):
+        out["discount"] = 0.0
+    try:
+        out["subtotal"] = float(out.get("subtotal") or 0)
+    except (TypeError, ValueError):
+        out["subtotal"] = 0.0
     items = out.get("items")
     if isinstance(items, str):
         try:
@@ -619,7 +631,8 @@ def _parse_price(product: dict[str, Any]) -> float:
 def place_order(workspace: str, client: str, product_id: str | None = None,
                 quantity: int = 1, customer: dict[str, Any] | None = None, *,
                 items: list[dict[str, Any]] | None = None,
-                payment_method: str = "", notes: str = "") -> dict[str, Any] | None:
+                payment_method: str = "", notes: str = "",
+                coupon_code: str = "") -> dict[str, Any] | None:
     """Place an order (public checkout).
 
     Accepts either a single ``product_id``/``quantity`` (backwards compatible)
@@ -644,7 +657,7 @@ def place_order(workspace: str, client: str, product_id: str | None = None,
 
     # Validate + price every line
     resolved: list[dict[str, Any]] = []
-    total = 0.0
+    subtotal = 0.0
     for it in requested:
         product = get_product(workspace, client, it["product_id"])
         if not product:
@@ -663,9 +676,22 @@ def place_order(workspace: str, client: str, product_id: str | None = None,
             "quantity": it["quantity"],
             "price": price,
         })
-        total += round(price * it["quantity"], 2)
+        subtotal += round(price * it["quantity"], 2)
     if not resolved:
         return {"error": "Order has no items"}
+
+    # Optional coupon discount
+    discount = 0.0
+    coupon = ""
+    if coupon_code and coupon_code.strip():
+        coupon = coupon_code.strip().upper()
+        valid = validate_coupon(workspace, client, coupon, subtotal)
+        if "error" in valid:
+            return {"error": valid["error"]}
+        discount = round(float(valid.get("discount") or 0), 2)
+        if discount > subtotal:
+            discount = subtotal
+    total = round(subtotal - discount, 2)
 
     order_number = "ORD-" + str(int(__import__("time").time() * 1000))[-8:]
 
@@ -679,7 +705,10 @@ def place_order(workspace: str, client: str, product_id: str | None = None,
         "product_name": resolved[0]["product"].get("name", ""),
         "quantity": resolved[0]["quantity"],
         "unit_price": resolved[0]["price"],
+        "subtotal": subtotal,
+        "discount": discount,
         "total": total,
+        "coupon_code": coupon,
         "items": [{
             "product_id": r["product"]["id"],
             "name": r["product"].get("name", ""),
@@ -715,6 +744,9 @@ def place_order(workspace: str, client: str, product_id: str | None = None,
                 update_product(workspace, client, prod["id"], {"stock": max(0, cur - r["quantity"])})
             except Exception:  # noqa: BLE001
                 logger.warning("store: stock decrement failed for %s", r["product"]["id"])
+        # Count this coupon usage
+        if coupon:
+            bump_coupon_usage(workspace, client, coupon)
         return _norm_order(rows[0])
     except Exception as e:  # noqa: BLE001
         logger.warning("store: place_order failed: %s", e)
@@ -938,3 +970,428 @@ def view_count(workspace: str, client: str) -> int:
     except Exception as e:  # noqa: BLE001
         logger.warning("store: view_count failed: %s", e)
         return 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COUPONS / DISCOUNT CODES (owner creates, customers apply at checkout)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+COUPON_FIELDS = {
+    "code": "",
+    "discount_type": "percent",  # 'percent' | 'flat'
+    "discount_value": 0,
+    "min_order": 0,
+    "max_uses": 0,               # 0 = unlimited
+    "used_count": 0,
+    "active": True,
+    "expires_at": "",
+}
+
+
+def _norm_coupon(row: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a store_coupons row into stable types."""
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+    out = dict(row)
+    out["code"] = s(out.get("code")).strip().upper()
+    out["discount_type"] = s(out.get("discount_type") or "percent")
+    try:
+        out["discount_value"] = float(out.get("discount_value") or 0)
+    except (TypeError, ValueError):
+        out["discount_value"] = 0.0
+    try:
+        out["min_order"] = float(out.get("min_order") or 0)
+    except (TypeError, ValueError):
+        out["min_order"] = 0.0
+    try:
+        out["max_uses"] = int(out.get("max_uses") or 0)
+    except (TypeError, ValueError):
+        out["max_uses"] = 0
+    try:
+        out["used_count"] = int(out.get("used_count") or 0)
+    except (TypeError, ValueError):
+        out["used_count"] = 0
+    out["active"] = bool(out.get("active", True))
+    out["expires_at"] = s(out.get("expires_at"))
+    return out
+
+
+def _clean_coupon_payload(data: dict[str, Any]) -> dict[str, Any]:
+    payload = {}
+    for key in COUPON_FIELDS:
+        if key in data and data[key] is not None:
+            payload[key] = data[key]
+    if "code" in payload and payload["code"] is not None:
+        payload["code"] = str(payload["code"]).strip().upper()
+    return payload
+
+
+def list_coupons(workspace: str, client: str) -> list[dict[str, Any]]:
+    cfg = get_config()
+    if not cfg:
+        return []
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?select=*&" + _client_q(client) + "&order=created_at.desc",
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: list_coupons failed: %s", e)
+        return []
+    return [_norm_coupon(r) for r in rows]
+
+
+def get_coupon(workspace: str, client: str, cid: str) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?select=*&id=eq." + cid,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: get_coupon failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_coupon(rows[0]) if rows else None
+
+
+def find_coupon(workspace: str, client: str, code: str) -> dict[str, Any] | None:
+    """Find a coupon by its (case-insensitive) code, client-scoped."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    import urllib.parse
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?select=*&code=eq." + urllib.parse.quote(str(code).strip().upper()),
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: find_coupon failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_coupon(rows[0]) if rows else None
+
+
+def create_coupon(workspace: str, client: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = {"client_name": client, **(_clean_coupon_payload(data) or {"code": "SAVE10"})}
+    if not str(payload.get("code") or "").strip():
+        return None
+    if find_coupon(workspace, client, str(payload["code"])):
+        return {"error": "Is code ka coupon pehle se hai"}
+    try:
+        rows = _api(
+            "POST", url, key,
+            "/rest/v1/" + COUPONS_TABLE,
+            payload,
+            profile=schema_for(workspace),
+        )
+        return _norm_coupon(rows[0]) if rows else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: create_coupon failed: %s", e)
+        return None
+
+
+def update_coupon(workspace: str, client: str, cid: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = _clean_coupon_payload(data)
+    if not payload:
+        return get_coupon(workspace, client, cid)
+    try:
+        rows = _api(
+            "PATCH", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?id=eq." + cid,
+            payload,
+            profile=schema_for(workspace),
+        )
+        rows = [r for r in rows if r.get("client_name") == client]
+        if rows:
+            return _norm_coupon(rows[0])
+        return get_coupon(workspace, client, cid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: update_coupon failed: %s", e)
+        return None
+
+
+def delete_coupon(workspace: str, client: str, cid: str) -> bool:
+    cfg = get_config()
+    if not cfg:
+        return False
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?select=*&id=eq." + cid,
+            profile=schema_for(workspace),
+        )
+        if not rows or rows[0].get("client_name") != client:
+            return False
+        _api(
+            "DELETE", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?id=eq." + cid,
+            profile=schema_for(workspace),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: delete_coupon failed: %s", e)
+        return False
+
+
+def validate_coupon(workspace: str, client: str, code: str, subtotal: float) -> dict[str, Any]:
+    """Validate a coupon code against an order subtotal.
+
+    Returns {"discount": float} on success or {"error": str} when invalid.
+    """
+    coupon = find_coupon(workspace, client, code)
+    if not coupon:
+        return {"error": f"Coupon '{code}' nahi mila"}
+    if not coupon.get("active", True):
+        return {"error": "Ye coupon abhi active nahi hai"}
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires = coupon.get("expires_at") or ""
+    if expires:
+        try:
+            exp = datetime.datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=datetime.timezone.utc)
+            if now > exp:
+                return {"error": "Ye coupon expire ho chuka hai"}
+        except (TypeError, ValueError):
+            pass
+    try:
+        min_order = float(coupon.get("min_order") or 0)
+    except (TypeError, ValueError):
+        min_order = 0.0
+    if subtotal < min_order:
+        return {"error": f"Ye coupon ₹{min_order:g} ya usse upar ke order pe lagta hai"}
+    try:
+        max_uses = int(coupon.get("max_uses") or 0)
+        used = int(coupon.get("used_count") or 0)
+    except (TypeError, ValueError):
+        max_uses, used = 0, 0
+    if max_uses and used >= max_uses:
+        return {"error": "Ye coupon apni limit tak use ho chuka hai"}
+    dtype = str(coupon.get("discount_type") or "percent")
+    value = float(coupon.get("discount_value") or 0)
+    if dtype == "flat":
+        discount = min(value, subtotal)
+    else:
+        discount = round(subtotal * min(value, 100) / 100, 2)
+    return {"discount": discount, "coupon": coupon.get("code", "").upper()}
+
+
+def bump_coupon_usage(workspace: str, client: str, code: str) -> None:
+    """Increment used_count after a successful order with a coupon."""
+    coupon = find_coupon(workspace, client, code)
+    if not coupon:
+        return
+    cfg = get_config()
+    if not cfg:
+        return
+    url, key = cfg
+    try:
+        used = int(coupon.get("used_count") or 0) + 1
+        _api(
+            "PATCH", url, key,
+            "/rest/v1/" + COUPONS_TABLE + "?id=eq." + str(coupon.get("id")),
+            {"used_count": used},
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: bump_coupon_usage failed: %s", e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REVIEWS (customers rate products; owner moderates)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+REVIEW_FIELDS = {
+    "product_id": "",
+    "product_name": "",
+    "rating": 5,
+    "reviewer_name": "",
+    "reviewer_email": "",
+    "comment": "",
+    "approved": False,
+}
+
+
+def _norm_review(row: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a store_reviews row into stable types."""
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+    out = dict(row)
+    out["product_id"] = s(out.get("product_id"))
+    out["product_name"] = s(out.get("product_name"))
+    out["reviewer_name"] = s(out.get("reviewer_name"))
+    out["reviewer_email"] = s(out.get("reviewer_email"))
+    out["comment"] = s(out.get("comment"))
+    try:
+        raw_rating = out.get("rating")
+        rating = int(raw_rating) if raw_rating not in (None, "") else 5
+        out["rating"] = max(1, min(5, rating))
+    except (TypeError, ValueError):
+        out["rating"] = 5
+    out["approved"] = bool(out.get("approved", False))
+    return out
+
+
+def _clean_review_payload(data: dict[str, Any]) -> dict[str, Any]:
+    payload = {}
+    for key in REVIEW_FIELDS:
+        if key in data and data[key] is not None:
+            payload[key] = data[key]
+    return payload
+
+
+def list_reviews(workspace: str, client: str, product_id: str = "",
+                 approved_only: bool = False) -> list[dict[str, Any]]:
+    cfg = get_config()
+    if not cfg:
+        return []
+    import urllib.parse
+    url, key = cfg
+    q = "/rest/v1/" + REVIEWS_TABLE + "?select=*&" + _client_q(client)
+    if product_id:
+        q += "&product_id=eq." + urllib.parse.quote(product_id)
+    q += "&order=created_at.desc"
+    try:
+        rows = _api("GET", url, key, q, profile=schema_for(workspace))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: list_reviews failed: %s", e)
+        return []
+    reviews = [_norm_review(r) for r in rows]
+    if approved_only:
+        reviews = [r for r in reviews if r["approved"]]
+    return reviews
+
+
+def create_review(workspace: str, client: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = {"client_name": client, **(_clean_review_payload(data) or {})}
+    if not str(payload.get("product_id") or "").strip():
+        return None
+    # One review per (email, product): update instead of duplicate
+    email = str(payload.get("reviewer_email") or "").strip().lower()
+    if email:
+        existing = list_reviews(workspace, client, product_id=str(payload["product_id"]))
+        for r in existing:
+            if str(r.get("reviewer_email") or "").strip().lower() == email:
+                cid = str(r.get("id") or "")
+                if cid:
+                    return update_review(workspace, client, cid, payload)
+    try:
+        rows = _api(
+            "POST", url, key,
+            "/rest/v1/" + REVIEWS_TABLE,
+            payload,
+            profile=schema_for(workspace),
+        )
+        return _norm_review(rows[0]) if rows else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: create_review failed: %s", e)
+        return None
+
+
+def update_review(workspace: str, client: str, rid: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = _clean_review_payload(data)
+    if not payload:
+        return get_review(workspace, client, rid)
+    try:
+        rows = _api(
+            "PATCH", url, key,
+            "/rest/v1/" + REVIEWS_TABLE + "?id=eq." + rid,
+            payload,
+            profile=schema_for(workspace),
+        )
+        rows = [r for r in rows if r.get("client_name") == client]
+        if rows:
+            return _norm_review(rows[0])
+        return get_review(workspace, client, rid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: update_review failed: %s", e)
+        return None
+
+
+def get_review(workspace: str, client: str, rid: str) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + REVIEWS_TABLE + "?select=*&id=eq." + rid,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: get_review failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_review(rows[0]) if rows else None
+
+
+def delete_review(workspace: str, client: str, rid: str) -> bool:
+    cfg = get_config()
+    if not cfg:
+        return False
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + REVIEWS_TABLE + "?select=*&id=eq." + rid,
+            profile=schema_for(workspace),
+        )
+        if not rows or rows[0].get("client_name") != client:
+            return False
+        _api(
+            "DELETE", url, key,
+            "/rest/v1/" + REVIEWS_TABLE + "?id=eq." + rid,
+            profile=schema_for(workspace),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: delete_review failed: %s", e)
+        return False
+
+
+def review_stats(workspace: str, client: str) -> dict[str, Any]:
+    """Aggregate ratings per product (approved reviews only) for the UI."""
+    reviews = list_reviews(workspace, client, approved_only=True)
+    by_product: dict[str, dict[str, Any]] = {}
+    for r in reviews:
+        pid = str(r.get("product_id") or "?")
+        entry = by_product.setdefault(pid, {"count": 0, "total": 0, "avg": 0.0})
+        entry["count"] += 1
+        entry["total"] += int(r.get("rating") or 0)
+    for e in by_product.values():
+        e["avg"] = round(e["total"] / e["count"], 1) if e["count"] else 0.0
+        e.pop("total", None)
+    all_ratings = [int(r.get("rating") or 0) for r in reviews]
+    return {
+        "total": len(reviews),
+        "avg": round(sum(all_ratings) / len(all_ratings), 1) if all_ratings else 0.0,
+        "by_product": by_product,
+    }

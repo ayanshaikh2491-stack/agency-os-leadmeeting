@@ -505,3 +505,211 @@ def test_build_site_from_store_reads_services():
     call_kwargs = bs.call_args.kwargs
     assert "services" in call_kwargs and len(call_kwargs["services"]) == 2
 
+
+# ── coupons / discount codes ─────────────────────────────────────────────────
+
+COUPON_ROW = {
+    "id": "cp1",
+    "client_name": "C",
+    "code": "save10",
+    "discount_type": "percent",
+    "discount_value": 10,
+    "min_order": 0,
+    "max_uses": 0,
+    "used_count": 0,
+    "active": True,
+    "expires_at": "",
+}
+
+
+def test_norm_coupon_coerces_types():
+    c = store_store._norm_coupon(dict(COUPON_ROW, code="save10", discount_value="10", max_uses="5", used_count="2"))
+    assert c["code"] == "SAVE10"          # uppercased
+    assert c["discount_value"] == 10.0    # float
+    assert c["max_uses"] == 5
+    assert c["used_count"] == 2
+    assert c["active"] is True
+
+
+def test_clean_coupon_payload_uppercases_code():
+    p = store_store._clean_coupon_payload({"code": "flash20", "discount_value": 20})
+    assert p["code"] == "FLASH20"
+    assert p["discount_value"] == 20
+
+
+def test_validate_coupon_percent_discount():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(COUPON_ROW)):
+        r = store_store.validate_coupon("ws_x", "C", "SAVE10", subtotal=1000)
+    assert r["discount"] == 100.0
+    assert r["coupon"] == "SAVE10"
+
+
+def test_validate_coupon_flat_and_min_order():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(
+            COUPON_ROW, discount_type="flat", discount_value=150, min_order=500)):
+        ok = store_store.validate_coupon("ws_x", "C", "FLAT", subtotal=600)
+        too_low = store_store.validate_coupon("ws_x", "C", "FLAT", subtotal=300)
+    assert ok["discount"] == 150.0
+    assert "error" in too_low and "₹500" in too_low["error"]
+
+
+def test_validate_coupon_flat_capped_at_subtotal():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(
+            COUPON_ROW, discount_type="flat", discount_value=500)):
+        r = store_store.validate_coupon("ws_x", "C", "FLAT", subtotal=200)
+    assert r["discount"] == 200.0
+
+
+def test_validate_coupon_inactive_and_missing():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(COUPON_ROW, active=False)):
+        r = store_store.validate_coupon("ws_x", "C", "SAVE10", subtotal=100)
+    assert "error" in r
+    with mock.patch.object(store_store, "find_coupon", return_value=None):
+        r = store_store.validate_coupon("ws_x", "C", "NOPE", subtotal=100)
+    assert "error" in r and "nahi mila" in r["error"]
+
+
+def test_validate_coupon_expired():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(
+            COUPON_ROW, expires_at="2020-01-01T00:00:00Z")):
+        r = store_store.validate_coupon("ws_x", "C", "OLD", subtotal=100)
+    assert "error" in r and "expire" in r["error"]
+
+
+def test_validate_coupon_max_uses_reached():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(
+            COUPON_ROW, max_uses=3, used_count=3)):
+        r = store_store.validate_coupon("ws_x", "C", "SAVE10", subtotal=100)
+    assert "error" in r and "limit" in r["error"]
+
+
+def test_create_coupon_duplicate_code_rejected():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "find_coupon", return_value=dict(COUPON_ROW)):
+        r = store_store.create_coupon("ws_x", "C", {"code": "save10"})
+    assert r is not None and "error" in r
+
+
+def test_create_coupon_scopes_to_client():
+    row = dict(COUPON_ROW, client_name="C", code="WELCOME")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "find_coupon", return_value=None), \
+         mock.patch.object(store_store, "_api", return_value=[row]):
+        created = store_store.create_coupon("ws_x", "C", {"code": "WELCOME", "discount_value": 15})
+    assert created is not None and created["code"] == "WELCOME"
+
+
+def test_bump_coupon_usage_increments():
+    with mock.patch.object(store_store, "find_coupon", return_value=dict(COUPON_ROW, used_count=2)), \
+         mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=[]) as api_mock:
+        store_store.bump_coupon_usage("ws_x", "C", "SAVE10")
+    payload = api_mock.call_args[0][4]
+    assert payload["used_count"] == 3
+
+
+def test_place_order_with_coupon_applies_discount():
+    created = dict(ORDER_ROW, subtotal=1000.0, discount=100.0, total=900.0, coupon_code="SAVE10")
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_product", return_value={
+             "id": "p1", "name": "Widget", "price": "1000", "stock": 5, "active": True,
+         }), \
+         mock.patch.object(store_store, "update_product", return_value=None), \
+         mock.patch.object(store_store, "validate_coupon", return_value={"discount": 100.0}), \
+         mock.patch.object(store_store, "bump_coupon_usage", return_value=None), \
+         mock.patch.object(store_store, "_api", return_value=[created]):
+        r = store_store.place_order("ws_x", "C", "p1", 1, {"name": "R", "email": "r@x.com"},
+                                    coupon_code="save10")
+    assert r["total"] == 900.0
+    assert r["discount"] == 100.0
+    assert r["coupon_code"] == "SAVE10"
+
+
+def test_place_order_rejects_invalid_coupon():
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "get_product", return_value={
+             "id": "p1", "name": "Widget", "price": "1000", "stock": 5, "active": True,
+         }), \
+         mock.patch.object(store_store, "validate_coupon", return_value={"error": "Coupon 'BAD' nahi mila"}), \
+         mock.patch.object(store_store, "_api", return_value=[]):
+        r = store_store.place_order("ws_x", "C", "p1", 1, {"name": "R", "email": "r@x.com"},
+                                    coupon_code="BAD")
+    assert "error" in r and "BAD" in r["error"]
+
+
+# ── reviews ──────────────────────────────────────────────────────────────────
+
+REVIEW_ROW = {
+    "id": "rv1",
+    "client_name": "C",
+    "product_id": "p1",
+    "product_name": "Widget",
+    "rating": 5,
+    "reviewer_name": "Rahul",
+    "reviewer_email": "rahul@example.com",
+    "comment": "Badiya product!",
+    "approved": False,
+}
+
+
+def test_norm_review_coerces_types():
+    r = store_store._norm_review(dict(REVIEW_ROW, rating="4", approved=True))
+    assert r["rating"] == 4
+    assert r["approved"] is True
+    assert r["product_id"] == "p1"
+    assert r["comment"] == "Badiya product!"
+
+
+def test_norm_review_clamps_rating():
+    assert store_store._norm_review(dict(REVIEW_ROW, rating=99))["rating"] == 5
+    assert store_store._norm_review(dict(REVIEW_ROW, rating=0))["rating"] == 1
+
+
+def test_list_reviews_approved_only_filters():
+    rows = [dict(REVIEW_ROW, approved=True), dict(REVIEW_ROW, id="rv2", approved=False)]
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=rows):
+        all_r = store_store.list_reviews("ws_x", "C")
+        approved = store_store.list_reviews("ws_x", "C", approved_only=True)
+    assert len(all_r) == 2
+    assert len(approved) == 1 and approved[0]["id"] == "rv1"
+
+
+def test_list_reviews_filters_by_product():
+    rows = [dict(REVIEW_ROW), dict(REVIEW_ROW, id="rv2", product_id="p2")]
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=rows) as api_mock:
+        store_store.list_reviews("ws_x", "C", product_id="p1")
+    path = api_mock.call_args[0][3]
+    assert "product_id=eq.p1" in path
+
+
+def test_create_review_updates_existing_for_same_email():
+    existing = dict(REVIEW_ROW, rating=4)
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "list_reviews", return_value=[existing]), \
+         mock.patch.object(store_store, "update_review", return_value=dict(existing, rating=5)) as upd:
+        created = store_store.create_review("ws_x", "C", {
+            "product_id": "p1", "rating": 5, "reviewer_email": "rahul@example.com", "comment": "New",
+        })
+    assert created["rating"] == 5
+    upd.assert_called_once()
+    assert upd.call_args[0][2] == "rv1"
+
+
+def test_review_stats_aggregates_approved_only():
+    rows = [
+        dict(REVIEW_ROW, product_id="p1", rating=5, approved=True),
+        dict(REVIEW_ROW, id="rv2", product_id="p1", rating=3, approved=True),
+        dict(REVIEW_ROW, id="rv3", product_id="p2", rating=4, approved=True),
+        dict(REVIEW_ROW, id="rv4", product_id="p1", rating=1, approved=False),
+    ]
+    with mock.patch.object(store_store, "get_config", return_value=("http://x:8050", "key")), \
+         mock.patch.object(store_store, "_api", return_value=rows):
+        stats = store_store.review_stats("ws_x", "C")
+    assert stats["total"] == 3
+    assert stats["avg"] == 4.0
+    assert stats["by_product"]["p1"]["count"] == 2
+    assert stats["by_product"]["p1"]["avg"] == 4.0
+    assert "rv4" not in stats["by_product"]  # unapproved ignored
+
