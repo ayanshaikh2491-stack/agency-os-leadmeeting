@@ -3,7 +3,47 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 00:50 IST (19:20 UTC)
+**Last updated:** 2026-08-12 10:30 IST (05:00 UTC)
+
+---
+
+## STORE — FEATURES DONE + GST/HSN REMOVED + SECURITY HARDENED (05:00 UTC)
+
+- **User asked:** baki store kaam khatam karo, GST/HSN poori tarah hatao,
+  colours/design aur achha karo.
+- **GST/HSN 100% removed (codebase-wide verified):** backend (routes/store.py +
+  store_store.py) + frontend `page.js` + StoreTab — zero `gst`/`hsn`/`GSTIN`
+  matches left (only unrelated `fonts.gstatic.com`). Settings editor ab
+  **Primary Color** field hai (GSTIN ki jagah).
+- **New storefront features (frontend `0964f2e`, Vercel prod building):**
+  1. **Service images** — upload/URL field in service editor + image cards.
+  2. **Coupons (owner Coupons tab):** create/edit/delete/toggle-active, percent
+     ya flat, min order, max uses, expiry. **Checkout pe coupon apply box** —
+     validate API se discount milta hai, subtotal/discount/total rows, order
+     pe coupon_code bhejta hai.
+  3. **Reviews (owner Reviews tab + storefront):** customer product pe rating
+     (1-5) + comment deta hai (pending), owner approve/unpublish/delete karta
+     hai. Product cards pe star rating + count (approved stats only).
+  4. **Hero banners (settings.banners):** upload/add-link/remove, storefront
+     pe auto-rotating carousel (5s, arrows + dots).
+  5. **WhatsApp:** order success pe "WhatsApp pe Order Confirm karo" deep link
+     (owner ke number pe), + floating chat button visitors ke liye
+     (settings.whatsapp).
+  6. **Design polish:** hero gradient blobs, backdrop-blur chips, `--accent`
+     CSS var ab store ke colour se sync (checkbox accents), banner carousel.
+- **Security hardening (backend `59b3adb`, EC2 deploy in progress):**
+  - `GET /reviews` bina token → sirf approved reviews (pending kabhi leak nahi).
+  - `PATCH/DELETE /reviews` + coupons POST/PATCH/DELETE + `GET /coupons` →
+    ab store owner token zaroori (pehle bina auth ke koi bhi pending review
+    approve/delete kar sakta tha, coupon codes bhi padh/change sakta tha).
+  - Public storefront view (`/api/store/public`) pehle se approved-only
+    reviews + stats deta hai.
+- **Tests:** 58/58 pass (`admin/tests/test_store.py`). Frontend build 41/41.
+- **Commits:** frontend submodule `0964f2e` (pushed → Vercel), parent
+  `59b3adb` (routes security + submodule pointer). Backend deploy via
+  `python deploy/deploy_sba.py`.
+- **Live portal:** `https://agency-frontend-seven.vercel.app/store/agency`
+  (login `client@tagsagency.com` / `Client@2026`).
 
 ---
 
@@ -544,6 +584,8 @@ and Gmail 550s once sends resume.
 
 | Commit | What |
 |---|---|
+| `59b3adb` | store: secure coupon/review routes (token required, no pending/code leak) + submodule pointer |
+| `0964f2e` | store frontend: service images, coupons, reviews, banners, WhatsApp, GST/HSN removed, design polish (pushed → Vercel) |
 | `866bc76` | store: submodule pointer → `b37650e` (image upload live) |
 | `7e986ed` | store: returned/refunded statuses + settings round-trip verified (backend) |
 | `b37650e` | store frontend: image upload (logo + product, data URL) |
