@@ -112,6 +112,36 @@ async def test_run_once_skips_email_outside_business_hours(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_once_auto_books_meeting_on_lead_yes(monkeypatch):
+    """A lead reply "yes" books the meeting automatically - no owner round-trip."""
+    email = FakeEmailClient()
+    mm = FakeMeetingManager()
+    ap = SBAAutopilot(email_client=email, meeting_manager=mm)
+
+    lead = {"id": "13", "name": "Green Lawn", "email": "lawn@greenlawn.com",
+            "category": "landscaping", "state": "TX", "status": "contacted"}
+    lead_reply = {"from_addr": "lawn@greenlawn.com", "subject": "Re: lawn",
+                  "body_preview": "Yes, interested. 3 baje"}
+
+    monkeypatch.setattr("admin.agency.sba_autopilot.load_leads", lambda u, k: [lead])
+    monkeypatch.setattr("admin.agency.sba_autopilot.supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr("admin.agency.sba_autopilot.sb_patch_lead", lambda u, k, sid, upd: True)
+    monkeypatch.setattr(SBAAutopilot, "_is_owner", lambda self, a: False)
+
+    async def _understand(text):
+        return {"intent": "yes", "meeting_time": "15:00", "reason": "test"}
+    monkeypatch.setattr("admin.agency.sba_reason.understand_reply", _understand)
+    _no_new_leads(monkeypatch)
+    email.replies = [lead_reply]
+
+    stats = await ap.run_once()
+    assert stats["meetings_scheduled"] == 1
+    assert mm.created and mm.created[0]["lead_id"] == "13"
+    assert mm.created[0]["time"]  # proposed slot was computed
+    # Owner got a summary (no action needed), lead got the confirm via meeting manager.
+
+
+@pytest.mark.asyncio
 async def test_run_once_schedules_meeting_on_owner_confirm(monkeypatch):
     email = FakeEmailClient()
     mm = FakeMeetingManager()

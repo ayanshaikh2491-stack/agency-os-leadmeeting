@@ -29,7 +29,6 @@ from admin.agency import sba_reason as reason  # noqa: E402
 from admin.agency import sba_strategy as strat  # noqa: E402
 from admin.agency.sba_pipeline import (  # noqa: E402
     load_leads,
-    owner_notification_body,
     parse_owner_command,
     sb_patch_lead,
     supabase_config,
@@ -745,18 +744,56 @@ class SBAAutopilot:
                     "reason": rep.get("reason") or "",
                 }, log_path=self._journal_path)
                 lead = next((l for l in leads if (l.get("email") or "").lower() in from_addr.lower()), None)
-                if not lead or kind != "yes":
+                if not lead:
                     continue
-                # The workspace owner (client or agency) is the one who must
-                # book the meeting, not the lead who just said "yes".
-                owner_to = self._owner_email or OWNER_EMAIL
-                await self.email.send_email(
-                    to_email=owner_to, subject="New interested lead!",
-                    body_text=owner_notification_body(lead, body[:300]), cc_owner=True,
-                )
-                self._last_notified_lead_id = str(lead.get("id") or "")
-                sb_patch_lead(url, key, str(lead["id"]), {"status": "owner_confirm"})
-                stats["owner_notified"] += 1
+                if kind in ("yes", "maybe"):
+                    # The lead said yes - the agent books the meeting right away
+                    # (Meet link + calendar + confirmation email to the lead).
+                    # No owner round-trip needed; the owner is CC'd on the
+                    # confirmation and gets a summary below.
+                    hour = None
+                    mt = meeting_time
+                    if mt and len(mt) >= 2:
+                        try:
+                            hour = int(mt[:2])
+                        except (TypeError, ValueError):
+                            hour = None
+                    iso, text = meeting_slot(lead, OWNER_TZ, hour=hour)
+                    await self.meetings.create_meeting(
+                        lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
+                        lead_email=lead.get("email") or "", proposed_time=iso,
+                    )
+                    sb_patch_lead(url, key, str(lead["id"]), {"status": "meeting"})
+                    stats["meetings_scheduled"] += 1
+                    owner_to = self._owner_email or OWNER_EMAIL
+                    await self.email.send_email(
+                        to_email=owner_to,
+                        subject="Meeting booked automatically!",
+                        body_text=(
+                            f"{lead.get('name') or 'Lead'} said yes, so the agent "
+                            f"booked the meeting on its own.\n\n{text}\n\n"
+                            f"Lead email: {lead.get('email') or ''}\n"
+                            f"Their reply: {body[:300]}\n\n"
+                            "No action needed - the lead got the confirmation "
+                            "with the Meet link."
+                        ),
+                        cc_owner=False,
+                    )
+                    reason.log_decision({
+                        "event": "meeting_auto_booked",
+                        "lead_id": str(lead.get("id") or ""),
+                        "name": lead.get("name") or "",
+                        "time": iso,
+                        "text": text,
+                    }, log_path=self._journal_path)
+                elif kind in ("no", "stop"):
+                    await self.email.send_email(
+                        to_email=lead.get("email") or "", subject="Thanks",
+                        body_text=pipe.rejected_body(lead), cc_owner=True,
+                    )
+                    sb_patch_lead(url, key, str(lead["id"]), {"status": "rejected"})
+                    stats["rejected"] += 1
+                # kind == "other": nothing actionable, leave the lead as-is.
         return stats
 
     async def run_once(self) -> dict:
