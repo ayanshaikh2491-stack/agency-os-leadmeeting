@@ -3,7 +3,22 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 11:00 IST (05:30 UTC)
+**Last updated:** 2026-08-12 11:20 IST (05:50 UTC)
+
+---
+
+## STORE — LOGIN HIDDEN ON PUBLIC SELLING SITE (05:50 UTC)
+
+- **User asked:** "jo website selling ke liye hai wo client portal nahi hai,
+  marketing website hai — uske under se login hatao."
+- **Frontend `fa4d3ec` (Vercel deploy in progress):** public selling site pe
+  Login button (header + hero) **gayab** + "Store owner? Login karke..." hints
+  bhi hata diye. Visitors ko ab pure marketing storefront dikhta hai
+  (hero + banners + products + reviews + cart/checkout).
+- **Owner access ab hidden hai:** URL me `?owner=1` lagao →
+  `https://agency-frontend-seven.vercel.app/store/agency?owner=1` → login card
+  khud khulta hai, phir dashboard normal. Owner ko ye link hi use karna hai.
+- **Backend untouched.** Build 41/41.
 
 ---
 
