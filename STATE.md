@@ -3,7 +3,60 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 11:20 IST (05:50 UTC)
+**Last updated:** 2026-08-12 12:31 IST (07:01 UTC)
+
+---
+
+## LATEST AUDIT (2026-08-12, 07:01 UTC)
+
+**Store portal LIVE + DONE:**
+- Frontend Vercel live: `https://agency-frontend-seven.vercel.app/store/agency`.
+  Products, coupons, reviews, banners, WhatsApp button sab live. Login hidden
+  behind `?owner=1`. **Services feature removed from frontend**; backend
+  `/api/store/services` kept for future service businesses (re-enable karne ke
+  liye frontend code git history me hai).
+- **Owner login:** URL pe `?owner=1` lagao, phir
+  `client@tagsagency.com` / `Client@2026`.
+- **WhatsApp button:** owner ko **Settings tab me apna WhatsApp number daalna
+  hai** — tabhi success-screen confirm button + floating chat button dikhega
+  (abhi `settings.whatsapp=''` hai isliye hidden).
+
+**test_sba_autopilot.py hang FIXED — 12/12 pass (was hanging ~300-884s):**
+- **Root cause:** `run_once()` calls `_find_new_leads()` which does REAL Chrome
+  scraping + LLM judging; 3 tests lacked the `_no_new_leads` mock.
+- **Fix:** `_no_new_leads` added to those 3 tests + **`_no_strategy_llm` autouse
+  fixture** (mocks `strat.maybe_review` / `load_strategy` /
+  `metrics_from_journal` / `observe_pass`) so the post-pass strategy LLM never
+  runs in tests.
+
+**lead_enrichment.py fix:**
+- `_is_valid_email` ab generic role prefixes (`info@`, `contact@`, etc.) ko
+  **consumer mail domains** (gmail.com, yahoo.com, etc.) pe reject karta hai —
+  even when `allow_consumer=True` — kyunki `info@gmail.com` kabhi prove nahi
+  ho sakta ki wo kisi specific business ka hai.
+- `test_consumer_email_requires_first_party_provenance` passes.
+
+**Weak points audit summary:**
+- a) **Lead-to-meeting conversion at ZERO:** 826 total leads (615 new, 211
+  contacted, 0 meeting); only 1 test meeting record. Autopilot emails leads,
+  but meetings only get scheduled when the OWNER replies "haan" to a digest
+  email.
+- b) **Swarm module thin:** `swarm.py` only 42 lines / 3 endpoints; placeholders
+  in `sba_autopilot.py`, `swarm.py`, `sba_reason.py`, `api/routes`.
+- c) **XXX markers:** `ads_api_client.py` (9), `ads.py` (4),
+  `linkedin_api.py` (2).
+- d) `chrome_tool.py` me "not implemented" spot hai; `langgraph_sba.py` me
+  `NotImplemented`.
+- e) **TODO markers:** `workflows.py` (1), `admin/issues/page.js` (9).
+
+**Test totals (all green):** 58 (store + agents_import + ceo), 14
+(sba_pipeline + social_skills), 86 (website_build + ads_audit + analytics_audit),
+12 (sba_autopilot).
+
+**Current live state:** backend EC2 live; frontend Vercel live at
+`https://agency-frontend-seven.vercel.app/store/agency` (owner: add `?owner=1`,
+login `client@tagsagency.com` / `Client@2026`). Owner must set WhatsApp number
+in Settings for the WhatsApp button to appear.
 
 ---
 
