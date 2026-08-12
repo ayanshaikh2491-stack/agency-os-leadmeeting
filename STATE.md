@@ -3,7 +3,21 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 10:40 IST (05:10 UTC)
+**Last updated:** 2026-08-12 11:00 IST (05:30 UTC)
+
+---
+
+## STORE — SERVICES FEATURE REMOVED (FRONTEND) (05:30 UTC)
+
+- **User asked:** "service ko hatao, jab koi service-based business aayega tab
+  uske store management me service add kar lenge."
+- **Frontend `f62a501` (Vercel deploy in progress):** Services tab + storefront
+  Services section + service editor/upload **poora remove** (`page.js` se 167
+  lines gayi). Products/coupons/reviews/banners/WhatsApp untouched. Build 41/41.
+- **Backend untouched (by design):** `/api/store/services` routes + services
+  data (agency ke 3 services) abhi bhi maujood hain — future service business
+  ke liye frontend re-enable karna hi kaafi hai (git history me code hai).
+- **Public storefront ab:** hero + products + reviews. Services kahin nahi dikhti.
 
 ---
 
