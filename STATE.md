@@ -11,9 +11,10 @@
 
 - **User asked:** "jo website selling ke liye hai wo client portal nahi hai,
   marketing website hai — uske under se login hatao."
-- **Frontend `fa4d3ec` (Vercel deploy in progress):** public selling site pe
+- **Frontend `fa4d3ec` (Vercel prod LIVE — verified):** public selling site pe
   Login button (header + hero) **gayab** + "Store owner? Login karke..." hints
-  bhi hata diye. Visitors ko ab pure marketing storefront dikhta hai
+  bhi hata diye. SSR HTML me login ka 0 reference, Cart button present.
+  Visitors ko ab pure marketing storefront dikhta hai
   (hero + banners + products + reviews + cart/checkout).
 - **Owner access ab hidden hai:** URL me `?owner=1` lagao →
   `https://agency-frontend-seven.vercel.app/store/agency?owner=1` → login card
