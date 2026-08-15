@@ -80,6 +80,25 @@ _WEBSITE_PALETTES = {
 _DEFAULT_SERVICES = ["Fast Delivery", "Secure Builds", "Scalable Design"]
 
 
+def _mix_hex(hex_color: str, target: str = "ffffff", amt: float = 0.0) -> str:
+    """Blend hex_color toward target hex by amt (0..1). Compatibility-safe (no color-mix())."""
+    h = (hex_color or "#000000").lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        r, g, b = 0, 0, 0
+    t = target.lstrip("#")
+    if len(t) == 3:
+        t = "".join(c * 2 for c in t)
+    tr, tg, tb = int(t[0:2], 16), int(t[2:4], 16), int(t[4:6], 16)
+    nr = round(r + (tr - r) * amt)
+    ng = round(g + (tg - g) * amt)
+    nb = round(b + (tb - b) * amt)
+    return f"#{nr:02x}{ng:02x}{nb:02x}"
+
+
 def _normalize_services(services) -> list[tuple[str, str, str]]:
     """Coerce services into render-ready (name, description, price) tuples.
 
@@ -415,12 +434,12 @@ def _html_section(sec: str, ctx: dict) -> str:
         subtitle = f'<p class="sub">{tagline}</p>' if tagline else ""
         return f'<section class="hero hero-small"><h1>{title}</h1>{subtitle}</section>'
     if sec == "services":
-        return f'<section class="services" id="services"><h2>Our Services</h2><div class="grid">{svc_cards}</div></section>'
+        return f'<section class="services reveal" id="services"><h2>Our Services</h2><div class="grid">{svc_cards}</div></section>'
     if sec == "about":
-        return f'<section class="about" id="about"><h2>About Us</h2><p>{title} {esc(data.get("about_copy", "is a team of passionate builders creating impactful digital experiences."))}</p></section>'
+        return f'<section class="about reveal" id="about"><h2>About Us</h2><p>{title} {esc(data.get("about_copy", "is a team of passionate builders creating impactful digital experiences."))}</p></section>'
     if sec == "testimonials":
         return (
-            '<section class="testimonials" id="testimonials"><h2>What Clients Say</h2>'
+            '<section class="testimonials reveal" id="testimonials"><h2>What Clients Say</h2>'
             '<blockquote>"Professional, fast, and creative. Highly recommended!" — Happy Client</blockquote></section>'
         )
     if sec == "contact":
@@ -434,16 +453,16 @@ def _html_section(sec: str, ctx: dict) -> str:
         return f"<footer><p>&copy; 2026 {title}. All rights reserved.</p></footer>"
     if sec == "cta":
         return (
-            '<section class="cta"><h2>Ready to Get Started?</h2>'
+            '<section class="cta reveal"><h2>Ready to Get Started?</h2>'
             '<p>Contact us today and let\'s build something amazing together.</p>'
             '<a href="#contact" class="btn">Contact Us</a></section>'
         )
     if sec == "features":
         items = data.get("features_custom") or data.get("features") or _SECTION_FALLBACK_CONTENT["features"]
-        return f'<section class="features" id="features"><h2>Features</h2><div class="grid">{cards(items)}</div></section>'
+        return f'<section class="features reveal" id="features"><h2>Features</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "pricing":
         return (
-            '<section class="pricing" id="pricing"><h2>Pricing</h2><div class="grid">'
+            '<section class="pricing reveal" id="pricing"><h2>Pricing</h2><div class="grid">'
             '<div class="card"><h3>Starter</h3><p>For individuals</p><span class="price">$29/mo</span></div>'
             '<div class="card featured"><h3>Pro</h3><p>For growing teams</p><span class="price">$79/mo</span></div>'
             '<div class="card"><h3>Enterprise</h3><p>Custom solutions</p><span class="price">$199/mo</span></div>'
@@ -452,63 +471,63 @@ def _html_section(sec: str, ctx: dict) -> str:
     # ── Category-specific sections ──
     if sec == "menu":
         items = data.get("menu_items") or _SECTION_FALLBACK_CONTENT["menu"]
-        return f'<section class="menu" id="menu"><h2>Our Menu</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+        return f'<section class="menu reveal" id="menu"><h2>Our Menu</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
     if sec == "products":
         items = data.get("products") or _SECTION_FALLBACK_CONTENT["products"]
         body = product_cards(items, products_raw) if products_raw else cards(items, price_index=2)
         return (
-            f'<section class="products" id="products"><h2>Shop</h2><div class="grid">{body}</div>'
+            f'<section class="products reveal" id="products"><h2>Shop</h2><div class="grid">{body}</div>'
             '<p class="hint">Online checkout coming soon. Call or email to order.</p></section>'
         )
     if sec == "projects":
         items = data.get("projects") or _SECTION_FALLBACK_CONTENT["projects"]
-        return f'<section class="projects" id="projects"><h2>Our Work</h2><div class="grid">{cards(items)}</div></section>'
+        return f'<section class="projects reveal" id="projects"><h2>Our Work</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "listings":
         items = data.get("listings") or _SECTION_FALLBACK_CONTENT["listings"]
-        return f'<section class="listings" id="listings"><h2>Featured Listings</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+        return f'<section class="listings reveal" id="listings"><h2>Featured Listings</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
     if sec == "posts":
         items = data.get("posts") or _SECTION_FALLBACK_CONTENT["posts"]
-        return f'<section class="posts" id="posts"><h2>Latest Posts</h2><div class="grid">{cards(items)}</div></section>'
+        return f'<section class="posts reveal" id="posts"><h2>Latest Posts</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "courses":
         items = data.get("courses") or _SECTION_FALLBACK_CONTENT["courses"]
-        return f'<section class="courses" id="courses"><h2>Our Courses</h2><div class="grid">{cards(items)}</div></section>'
+        return f'<section class="courses reveal" id="courses"><h2>Our Courses</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "rooms":
         items = data.get("rooms") or _SECTION_FALLBACK_CONTENT["rooms"]
-        return f'<section class="rooms" id="rooms"><h2>Rooms & Stays</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
+        return f'<section class="rooms reveal" id="rooms"><h2>Rooms & Stays</h2><div class="grid">{cards(items, price_index=2)}</div></section>'
     if sec == "gallery":
         items = data.get("gallery_items") or data.get("gallery") or _SECTION_FALLBACK_CONTENT["gallery"]
         tiles = "".join(
             f'<div class="tile" style="background:{c["primary"]}22"><h3>{esc(it[0])}</h3><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
             for it in items
         )
-        return f'<section class="gallery" id="gallery"><h2>Gallery</h2><div class="grid tiles">{tiles}</div></section>'
+        return f'<section class="gallery reveal" id="gallery"><h2>Gallery</h2><div class="grid tiles">{tiles}</div></section>'
     if sec == "team":
         items = data.get("team") or _SECTION_FALLBACK_CONTENT["team"]
         avatars = "".join(
             f'<div class="card team-card"><div class="avatar">{esc(it[0][:2].upper())}</div><h3>{esc(it[0])}</h3><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
             for it in items
         )
-        return f'<section class="team" id="team"><h2>Meet the Team</h2><div class="grid">{avatars}</div></section>'
+        return f'<section class="team reveal" id="team"><h2>Meet the Team</h2><div class="grid">{avatars}</div></section>'
     if sec == "stats":
         items = data.get("stats") or _SECTION_FALLBACK_CONTENT["stats"]
         stats = "".join(
             f'<div class="stat"><span class="num">{esc(it[0])}</span><p>{esc(it[1]) if len(it) > 1 else ""}</p></div>'
             for it in items
         )
-        return f'<section class="stats" id="stats"><div class="stats-row">{stats}</div></section>'
+        return f'<section class="stats reveal" id="stats"><div class="stats-row">{stats}</div></section>'
     if sec == "process":
         items = data.get("process") or _SECTION_FALLBACK_CONTENT["process"]
-        return f'<section class="process" id="process"><h2>How We Work</h2><div class="grid">{cards(items)}</div></section>'
+        return f'<section class="process reveal" id="process"><h2>How We Work</h2><div class="grid">{cards(items)}</div></section>'
     if sec == "faq":
         items = data.get("faq") or _SECTION_FALLBACK_CONTENT["faq"]
         faqs = "".join(
             f'<details class="faq-item"><summary>{esc(it[0])}</summary><p>{esc(it[1]) if len(it) > 1 else ""}</p></details>'
             for it in items
         )
-        return f'<section class="faq" id="faq"><h2>FAQ</h2>{faqs}</section>'
+        return f'<section class="faq reveal" id="faq"><h2>FAQ</h2>{faqs}</section>'
     if sec == "booking":
         return (
-            '<section class="booking" id="booking"><h2>Book Now</h2>'
+            '<section class="booking reveal" id="booking"><h2>Book Now</h2>'
             '<form class="booking-form"><input type="text" placeholder="Your Name" required>'
             '<input type="tel" placeholder="Phone" required>'
             '<input type="date" required><input type="time" required>'
@@ -518,22 +537,22 @@ def _html_section(sec: str, ctx: dict) -> str:
         hours = esc(data.get("hours") or _SECTION_FALLBACK_CONTENT["hours"])
         location = esc(data.get("location") or _SECTION_FALLBACK_CONTENT["location"])
         return (
-            f'<section class="hours" id="hours"><h2>Hours & Location</h2>'
+            f'<section class="hours reveal" id="hours"><h2>Hours & Location</h2>'
             f'<p><strong>Hours:</strong> {hours}</p><p><strong>Location:</strong> {location}</p></section>'
         )
     if sec == "newsletter":
         return (
-            '<section class="newsletter" id="newsletter"><h2>Stay Updated</h2>'
+            '<section class="newsletter reveal" id="newsletter"><h2>Stay Updated</h2>'
             '<form class="newsletter-form"><input type="email" placeholder="Your email" required>'
             '<button type="submit">Subscribe</button></form></section>'
         )
     if sec == "donate":
         return (
-            '<section class="donate" id="donate"><h2>Support Our Cause</h2>'
+            '<section class="donate reveal" id="donate"><h2>Support Our Cause</h2>'
             '<p>Every contribution makes a real difference.</p>'
             '<a href="#contact" class="btn">Donate Now</a></section>'
         )
-    return f'<section class="{sec}" id="{sec}"><h2>{sec.title()}</h2><p>Content for the {sec} section.</p></section>'
+    return f'<section class="{sec} reveal" id="{sec}"><h2>{sec.title()}</h2><p>Content for the {sec} section.</p></section>'
 
 
 def _html_nav(pages: list[tuple[str, str]], active: str = "index", title: str = "", logo_url: str = "") -> str:
@@ -546,69 +565,134 @@ def _html_nav(pages: list[tuple[str, str]], active: str = "index", title: str = 
         brand = f'<img class="brand-logo" src="{_escape_html(logo_url)}" alt="{_escape_html(title)}"/>'
     else:
         brand = f'<span class="brand">{_escape_html(title)}</span>' if title else ""
-    return f"<nav>{brand}{''.join(links)}</nav>"
+    return f"<nav class=\"nav\">{brand}{''.join(links)}</nav>"
 
 
 def _html_page(ctx: dict, body: str, nav: str = "") -> str:
+    title = _escape_html(ctx["title"])
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
         "  <meta charset=\"UTF-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-        f"  <title>{_escape_html(ctx['title'])}</title>\n"
-        "  <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n"
-        f"{nav}\n{body}\n</body>\n</html>"
+        f"  <title>{title}</title>\n"
+        '  <link rel="preconnect" href="https://fonts.googleapis.com">\n'
+        '  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+        "  <link rel=\"stylesheet\" href=\"style.css\">\n"
+        f'  <meta name="description" content="{title} — official website.">\n'
+        "</head>\n<body>\n"
+        f"{nav}\n{body}\n"
+        "  <script>\n"
+        "    document.querySelectorAll('section:not(.hero)').forEach(function(el){el.classList.add('reveal');});\n"
+        "    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {\n"
+        "      var io = new IntersectionObserver(function(entries){\n"
+        "        entries.forEach(function(e){ if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });\n"
+        "      }, { threshold: 0.12 });\n"
+        "      document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });\n"
+        "    }\n"
+        "  </script>\n"
+        "</body>\n</html>"
     )
 
 
 def _html_css(ctx: dict) -> str:
     c = ctx["colors"]
-    return f"""/* Generated by Website Agent */
+    p = c["primary"]
+    s = c["secondary"]
+    a = c["accent"]
+    tint = _mix_hex(p, "ffffff", 0.90)
+    tint2 = _mix_hex(p, "ffffff", 0.96)
+    font_url = "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap"
+    return f"""/* Premium design system — Generated by Website Agent (TAGS) */
+@import url('{font_url}');
+:root {{
+  --p: {p}; --s: {s}; --a: {a}; --bg: {c['bg']}; --text: {c['text']};
+  --tint: {tint}; --tint2: {tint2};
+  --radius: 18px; --shadow: 0 20px 45px -20px rgba(0,0,0,0.25);
+}}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-body {{ font-family: 'Inter', system-ui, sans-serif; color: {c['text']}; background: {c['bg']}; }}
-nav {{ display: flex; align-items: center; gap: 1.5rem; padding: 1rem 2rem; background: {c['secondary']}; color: white; flex-wrap: wrap; }}
-nav .brand {{ font-weight: 700; font-size: 1.1rem; margin-right: auto; }}
-nav a {{ color: rgba(255,255,255,0.85); text-decoration: none; font-weight: 500; }}
-nav a:hover, nav a.active {{ color: {c['accent']}; }}
-.hero {{ min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 4rem 2rem; background: {c['secondary']}; color: white; }}
-.hero-small {{ min-height: 40vh; padding: 3rem 2rem; }}
-.hero h1 {{ font-size: 3.5rem; margin-bottom: 1rem; }}
-.hero .sub {{ font-size: 1.4rem; margin-bottom: 1rem; opacity: 0.95; }}
-.hero p {{ font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; }}
-.services, .about, .testimonials, .pricing, .features, .contact, .menu, .products, .projects, .listings, .posts, .courses, .rooms, .gallery, .team, .process, .faq, .booking, .hours, .newsletter, .donate {{ padding: 5rem 2rem; text-align: center; }}
-.services h2, .about h2, .testimonials h2, .pricing h2, .features h2, .contact h2, .menu h2, .products h2, .projects h2, .listings h2, .posts h2, .courses h2, .rooms h2, .gallery h2, .team h2, .process h2, .faq h2, .booking h2, .hours h2, .newsletter h2, .donate h2 {{ font-size: 2.5rem; margin-bottom: 2rem; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 1100px; margin: 0 auto; }}
-.card {{ background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
-.card.featured {{ border: 2px solid {c['primary']}; }}
-.product-card {{ padding: 1rem; overflow: hidden; }}
-.product-img {{ width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 1rem; }}
-.product-ph {{ width: 100%; height: 200px; border-radius: 8px; margin-bottom: 1rem; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: 800; color: {c['primary']}; }}
-.stock {{ display: inline-block; margin-left: 0.5rem; font-size: 0.8rem; font-weight: 600; color: #16a34a; }}
+html {{ scroll-behavior: smooth; }}
+body {{ font-family: 'Plus Jakarta Sans', system-ui, sans-serif; color: var(--text); background: var(--bg); line-height: 1.6; -webkit-font-smoothing: antialiased; }}
+h1,h2,h3 {{ font-family: 'Sora', 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.02em; }}
+nav {{ position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 1.6rem; padding: 0.9rem 2rem;
+  background: rgba(255,255,255,0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(0,0,0,0.06); box-shadow: 0 8px 30px -18px rgba(0,0,0,0.4); flex-wrap: wrap; }}
+nav .brand {{ font-family: 'Sora', sans-serif; font-weight: 800; font-size: 1.2rem; letter-spacing: -0.02em; margin-right: auto; color: var(--s); }}
+nav .brand-logo {{ height: 38px; width: auto; border-radius: 10px; margin-right: auto; }}
+nav a {{ color: var(--text); text-decoration: none; font-weight: 600; font-size: 0.95rem; opacity: 0.8; transition: color 0.2s; }}
+nav a:hover, nav a.active {{ color: var(--p); opacity: 1; }}
+.btn {{ display: inline-block; padding: 0.95rem 2.4rem; background: linear-gradient(135deg, var(--p), {_mix_hex(p,'ffffff',-0.25)});
+  color: #fff; text-decoration: none; border-radius: 999px; font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em;
+  box-shadow: 0 14px 30px -12px var(--p); transition: transform 0.2s, box-shadow 0.2s; }}
+.btn:hover {{ transform: translateY(-3px); box-shadow: 0 22px 44px -14px var(--p); }}
+.hero {{ position: relative; min-height: 88vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 6rem 2rem; overflow: hidden;
+  background:
+    radial-gradient(900px 500px at 15% -10%, {tint} 0%, transparent 60%),
+    radial-gradient(800px 600px at 110% 10%, {_mix_hex(a,'ffffff',0.88)} 0%, transparent 55%),
+    linear-gradient(180deg, var(--bg), var(--tint2)); }}
+.hero::after {{ content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(0,0,0,0.05) 1px, transparent 1px);
+  background-size: 22px 22px; -webkit-mask-image: radial-gradient(circle at 50% 35%, #000, transparent 70%);
+  mask-image: radial-gradient(circle at 50% 35%, #000, transparent 70%); opacity: 0.6; pointer-events: none; }}
+.hero h1 {{ position: relative; font-size: clamp(2.6rem, 6vw, 4.6rem); font-weight: 800; line-height: 1.05;
+  background: linear-gradient(120deg, var(--s), var(--p)); -webkit-background-clip: text; background-clip: text; color: transparent; max-width: 16ch; }}
+.hero .sub {{ position: relative; font-size: clamp(1.1rem, 2.2vw, 1.5rem); margin: 1.1rem 0; font-weight: 500; opacity: 0.85; }}
+.hero p {{ position: relative; font-size: 1.15rem; margin-bottom: 2rem; max-width: 38ch; opacity: 0.8; }}
+.hero .btn {{ position: relative; }}
+.hero-small {{ min-height: 46vh; padding: 4rem 2rem; text-align: center;
+  background: radial-gradient(700px 400px at 50% -20%, var(--tint) 0%, transparent 60%); }}
+.hero-small h1 {{ font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800;
+  background: linear-gradient(120deg, var(--s), var(--p)); -webkit-background-clip: text; background-clip: text; color: transparent; }}
+.hero-small .sub {{ font-size: 1.2rem; opacity: 0.8; margin-top: 0.6rem; }}
+.services, .about, .testimonials, .pricing, .features, .contact, .menu, .products, .projects, .listings, .posts, .courses, .rooms, .gallery, .team, .process, .faq, .booking, .hours, .newsletter, .donate {{ padding: 6rem 2rem; text-align: center; }}
+.services h2, .about h2, .testimonials h2, .pricing h2, .features h2, .contact h2, .menu h2, .products h2, .projects h2, .listings h2, .posts h2, .courses h2, .rooms h2, .gallery h2, .team h2, .process h2, .faq h2, .booking h2, .hours h2, .newsletter h2, .donate h2 {{ font-size: clamp(2rem, 4vw, 2.8rem); font-weight: 800; margin-bottom: 2.6rem; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 1.8rem; max-width: 1120px; margin: 0 auto; }}
+.card {{ background: #fff; border-radius: var(--radius); padding: 2rem; box-shadow: var(--shadow); border: 1px solid rgba(0,0,0,0.04);
+  transition: transform 0.25s, box-shadow 0.25s; }}
+.card:hover {{ transform: translateY(-6px); box-shadow: 0 30px 60px -22px rgba(0,0,0,0.3); }}
+.card.featured {{ border: 2px solid var(--p); background: linear-gradient(180deg, #fff, var(--tint2)); }}
+.product-card {{ padding: 0; overflow: hidden; text-align: left; }}
+.product-img {{ width: 100%; height: 210px; object-fit: cover; }}
+.product-ph {{ width: 100%; height: 210px; display: flex; align-items: center; justify-content: center; font-size: 3.4rem;
+  font-weight: 800; font-family: 'Sora', sans-serif; color: var(--p); background: linear-gradient(135deg, var(--tint), var(--tint2)); }}
+.product-card h3, .product-card p {{ padding: 0 1.2rem; }}
+.product-card h3 {{ padding-top: 1.1rem; }}
+.product-card .price {{ padding: 0 1.2rem 1.2rem; }}
+.stock {{ display: inline-block; margin-left: 0.5rem; font-size: 0.78rem; font-weight: 700; color: #16a34a; }}
 .stock.out {{ color: #dc2626; }}
-.card h3 {{ color: {c['primary']}; margin-bottom: 0.5rem; }}
-.price {{ display: inline-block; margin-top: 0.5rem; font-weight: 700; color: {c['accent']}; }}
-.hint {{ margin-top: 1.5rem; color: #666; }}
+.card h3 {{ color: var(--s); margin-bottom: 0.5rem; font-size: 1.25rem; }}
+.price {{ display: inline-block; margin-top: 0.5rem; font-weight: 800; color: var(--p); font-size: 1.1rem; }}
+.hint {{ margin-top: 1.5rem; color: #64748b; }}
 .tiles {{ grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }}
-.tile {{ border-radius: 12px; padding: 3rem 1.5rem; color: {c['text']}; }}
-.tile h3 {{ color: {c['primary']}; }}
-.team-card .avatar {{ width: 64px; height: 64px; border-radius: 50%; background: {c['primary']}; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; margin: 0 auto 1rem; font-size: 1.2rem; }}
-.stats-row {{ display: flex; justify-content: center; gap: 3rem; flex-wrap: wrap; max-width: 1100px; margin: 0 auto; }}
-.stat {{ text-align: center; }}
-.stat .num {{ display: block; font-size: 2.6rem; font-weight: 800; color: {c['primary']}; }}
-.stat p {{ color: #555; }}
-.faq-item {{ max-width: 700px; margin: 0.5rem auto; text-align: left; background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }}
-.faq-item summary {{ font-weight: 600; cursor: pointer; }}
-.faq-item p {{ margin-top: 0.5rem; color: #555; }}
-.cta {{ background: {c['primary']}; color: white; padding: 5rem 2rem; text-align: center; }}
-.cta h2 {{ font-size: 2.5rem; margin-bottom: 1rem; }}
-.cta p {{ font-size: 1.1rem; margin-bottom: 2rem; opacity: 0.9; }}
-.btn {{ display: inline-block; padding: 1rem 2.5rem; background: {c['accent']}; color: {c['secondary']}; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 1.1rem; transition: transform 0.2s; }}
-.btn:hover {{ transform: translateY(-2px); }}
-footer {{ background: {c['secondary']}; color: white; text-align: center; padding: 2rem; }}
+.tile {{ border-radius: var(--radius); padding: 3rem 1.5rem; background: linear-gradient(135deg, var(--tint), #fff); }}
+.tile h3 {{ color: var(--s); }}
+.team-card .avatar {{ width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, var(--p), var(--a)); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 800; margin: 0 auto 1rem; font-size: 1.2rem; }}
+.stats-row {{ display: flex; justify-content: center; gap: 3rem; flex-wrap: wrap; max-width: 1120px; margin: 0 auto; }}
+.stat {{ text-align: center; padding: 1.5rem 2.2rem; border-radius: var(--radius); background: var(--tint2); box-shadow: var(--shadow); }}
+.stat .num {{ display: block; font-size: 2.6rem; font-weight: 800; font-family: 'Sora', sans-serif; color: var(--p); }}
+.stat p {{ color: #475569; font-weight: 500; }}
+.faq-item {{ max-width: 720px; margin: 0.6rem auto; text-align: left; background: #fff; border-radius: 14px; padding: 1.1rem 1.6rem;
+  box-shadow: var(--shadow); border: 1px solid rgba(0,0,0,0.04); }}
+.faq-item summary {{ font-weight: 700; cursor: pointer; }}
+.faq-item p {{ margin-top: 0.5rem; color: #475569; }}
+.cta {{ background: linear-gradient(135deg, var(--s), {_mix_hex(s,'000000',0.25)}); color: #fff; padding: 6rem 2rem; text-align: center; }}
+.cta h2 {{ font-size: clamp(2rem, 4vw, 2.8rem); font-weight: 800; }}
+.cta p {{ font-size: 1.15rem; margin-bottom: 2rem; opacity: 0.9; }}
+.cta .btn {{ background: #fff; color: var(--s); box-shadow: 0 14px 30px -12px rgba(0,0,0,0.5); }}
+blockquote {{ font-size: 1.25rem; font-style: italic; max-width: 640px; margin: 0 auto; padding: 2.2rem; border-left: 4px solid var(--p);
+  background: var(--tint2); border-radius: 0 14px 14px 0; text-align: left; }}
+footer {{ background: var(--s); color: #fff; text-align: center; padding: 2.4rem; }}
+footer p {{ opacity: 0.85; }}
 form {{ display: flex; flex-direction: column; gap: 1rem; max-width: 500px; margin: 0 auto; }}
-input, textarea {{ padding: 0.75rem; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; }}
-button {{ padding: 0.75rem; background: {c['primary']}; color: white; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; }}
-blockquote {{ font-size: 1.2rem; font-style: italic; max-width: 600px; margin: 0 auto; padding: 2rem; border-left: 4px solid {c['primary']}; }}
-@media (max-width: 768px) {{ .hero h1 {{ font-size: 2.2rem; }} }}
+input, textarea {{ padding: 0.85rem 1rem; border: 1px solid #d8dee9; border-radius: 12px; font-size: 1rem; font-family: inherit; }}
+input:focus, textarea:focus {{ outline: 2px solid var(--p); border-color: transparent; }}
+button {{ padding: 0.9rem 1.4rem; background: linear-gradient(135deg, var(--p), {_mix_hex(p,'ffffff',-0.2)}); color: #fff; border: none;
+  border-radius: 12px; font-size: 1rem; font-weight: 700; cursor: pointer; font-family: inherit; }}
+@media (max-width: 768px) {{ .hero h1 {{ font-size: 2.4rem; }} nav {{ gap: 1rem; padding: 0.8rem 1.2rem; }} }}
+@media (prefers-reduced-motion: no-preference) {{
+  .reveal {{ opacity: 0; transform: translateY(28px); transition: opacity 0.7s ease, transform 0.7s ease; }}
+  .reveal.in {{ opacity: 1; transform: none; }}
+}}
 """
 
 
@@ -680,11 +764,13 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
   const title = {json.dumps(title, ensure_ascii=False)};
   const tagline = {json.dumps(tagline, ensure_ascii=False)};
   return (
-    <section className="min-h-[70vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
-      <h1 className="text-5xl font-bold mb-4">{{title}}</h1>
-      {{tagline && <p className="text-xl mb-4 opacity-95">{{tagline}}</p>}}
-      <p className="text-xl mb-8 opacity-90">{hero_copy}</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform">Get Started</a>
+    <section className="relative min-h-[88vh] flex flex-col items-center justify-center text-center px-8 overflow-hidden"
+      style={{{{ background: 'radial-gradient(900px 500px at 15% -10%, var(--tint) 0%, transparent 60%), radial-gradient(800px 600px at 110% 10%, {_mix_hex(c['accent'],'ffffff',0.88)} 0%, transparent 55%), linear-gradient(180deg, var(--color-bg), var(--tint2))' }}}}>
+      <h1 className="text-5xl md:text-7xl font-extrabold mb-4 max-w-[16ch] leading-[1.05]"
+        style={{{{ background: 'linear-gradient(120deg, var(--color-secondary), var(--color-primary))', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', fontFamily: 'Sora, sans-serif' }}}}>{{title}}</h1>
+      {{tagline && <p className="text-xl md:text-2xl mb-4 font-medium opacity-85">{{tagline}}</p>}}
+      <p className="text-lg md:text-xl mb-8 max-w-[38ch] opacity-80">{hero_copy}</p>
+      <a href="#contact" className="bg-gradient-to-br from-[var(--color-primary)] to-[{_mix_hex(c['primary'],'ffffff',-0.25)}] text-white px-8 py-3 rounded-full font-bold shadow-[0_14px_30px_-12px_var(--color-primary)] hover:-translate-y-1 transition-transform">Get Started</a>
     </section>
   );
 }}"""
@@ -693,9 +779,11 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
   const title = {json.dumps(title, ensure_ascii=False)};
   const tagline = {json.dumps(tagline, ensure_ascii=False)};
   return (
-    <section className="min-h-[40vh] flex flex-col items-center justify-center text-center px-8 bg-slate-800 text-white">
-      <h1 className="text-4xl font-bold mb-4">{{title}}</h1>
-      {{tagline && <p className="text-xl opacity-95">{{tagline}}</p>}}
+    <section className="min-h-[46vh] flex flex-col items-center justify-center text-center px-8"
+      style={{{{ background: 'radial-gradient(700px 400px at 50% -20%, var(--tint) 0%, transparent 60%)' }}}}>
+      <h1 className="text-4xl md:text-5xl font-extrabold"
+        style={{{{ background: 'linear-gradient(120deg, var(--color-secondary), var(--color-primary))', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', fontFamily: 'Sora, sans-serif' }}}}>{{title}}</h1>
+      {{tagline && <p className="text-xl opacity-80 mt-2">{{tagline}}</p>}}
     </section>
   );
 }}"""
@@ -703,14 +791,14 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         return f"""export default function Services() {{
   const services = {json.dumps(services, ensure_ascii=False)};
   return (
-    <section className="py-20 px-8 text-center" id="services">
-      <h2 className="text-4xl font-bold mb-12">Our Services</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+    <section className="py-24 px-8 text-center reveal" id="services">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Our Services</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-7 max-w-5xl mx-auto">
         {{services.map((s, i) => (
-          <div key={{i}} className="bg-white rounded-xl p-8 shadow-lg">
-            <h3 className="text-lg font-bold mb-2" style={{{{color: '{c['primary']}'}}}}>{{s[0]}}</h3>
-            {{s[1] && <p className="text-gray-600">{{s[1]}}</p>}}
-            {{s[2] && <p className="mt-2 text-sm font-semibold" style={{{{color: '{c['primary']}'}}}}>{{s[2]}}</p>}}
+          <div key={{i}} className="bg-white rounded-2xl p-8 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.25)] border border-black/5 hover:-translate-y-1.5 transition-transform">
+            <h3 className="text-lg font-bold mb-2" style={{{{color: 'var(--color-secondary)'}}}}>{{{{s[0]}}}}</h3>
+            {{s[1] && <p className="text-gray-600">{{{{s[1]}}}}</p>}}
+            {{s[2] && <p className="mt-2 text-sm font-semibold" style={{{{color: 'var(--color-primary)'}}}}>{{{{s[2]}}}}</p>}}
           </div>
         ))}}
       </div>
@@ -721,18 +809,18 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         return f"""export default function About() {{
   const title = {json.dumps(title, ensure_ascii=False)};
   return (
-    <section className="py-20 px-8 text-center" id="about">
-      <h2 className="text-4xl font-bold mb-12">About Us</h2>
-      <p className="text-gray-600 max-w-2xl mx-auto">{{title}} {about_copy}</p>
+    <section className="py-24 px-8 text-center reveal" id="about">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>About Us</h2>
+      <p className="text-gray-600 max-w-2xl mx-auto text-lg">{{title}} {about_copy}</p>
     </section>
   );
 }}"""
     if sec == "testimonials":
         return """export default function Testimonials() {
   return (
-    <section className="py-20 px-8 text-center" id="testimonials">
-      <h2 className="text-4xl font-bold mb-12">What Clients Say</h2>
-      <blockquote className="text-xl italic max-w-2xl mx-auto border-l-4 border-blue-600 pl-8 text-left">
+    <section className="py-24 px-8 text-center reveal" id="testimonials">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{fontFamily: 'Sora, sans-serif'}}>What Clients Say</h2>
+      <blockquote className="text-xl italic max-w-2xl mx-auto pl-8 border-l-4 border-[var(--color-primary)] text-left bg-[var(--tint2)] rounded-r-2xl py-6">
         "Professional, fast, and creative. Highly recommended!" — Happy Client
       </blockquote>
     </section>
@@ -741,18 +829,18 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "contact":
         email_block = ""
         if email:
-            email_block = (f'<p className="text-lg mb-4">Email us at <a href="mailto:{email}" className="underline">{email}</a></p>')
+            email_block = (f'<p className="text-lg mb-4">Email us at <a href="mailto:{email}" className="underline" style={{{{color: "var(--color-primary)"}}}}>{email}</a></p>')
         return f"""export default function Contact() {{
   const email = {json.dumps(email, ensure_ascii=False)};
   return (
-    <section className="py-20 px-8 text-center" id="contact">
-      <h2 className="text-4xl font-bold mb-12">Contact Us</h2>
+    <section className="py-24 px-8 text-center reveal" id="contact">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Contact Us</h2>
       {email_block}
       <form className="flex flex-col gap-4 max-w-md mx-auto" onSubmit={{e => e.preventDefault()}}>
-        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Name" required />
-        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Email" required />
-        <textarea className="p-3 border border-gray-300 rounded-lg" placeholder="Message" required />
-        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Send</button>
+        <input className="p-3 border border-gray-300 rounded-xl" placeholder="Name" required />
+        <input className="p-3 border border-gray-300 rounded-xl" placeholder="Email" required />
+        <textarea className="p-3 border border-gray-300 rounded-xl" placeholder="Message" required />
+        <button className="p-3 bg-gradient-to-br from-[var(--color-primary)] to-[{_mix_hex(c['primary'],'ffffff',-0.2)}] text-white rounded-xl cursor-pointer font-bold">Send</button>
       </form>
     </section>
   );
@@ -782,8 +870,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         cards = _nextjs_cards(items, ctx)
         return f"""export default function Features() {{
   return (
-    <section className="py-20 px-8 text-center" id="features">
-      <h2 className="text-4xl font-bold mb-12">Features</h2>
+    <section className="py-24 px-8 text-center reveal" id="features">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Features</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
         {cards}
       </div>
@@ -793,34 +881,35 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "cta":
         return """export default function CTA() {
   return (
-    <section className="py-20 px-8 text-center bg-blue-600 text-white">
-      <h2 className="text-4xl font-bold mb-4">Ready to Get Started?</h2>
+    <section className="py-24 px-8 text-center text-white reveal"
+      style={{background: 'linear-gradient(135deg, var(--color-secondary), #0b1020)'}}>
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-4" style={{fontFamily: 'Sora, sans-serif'}}>Ready to Get Started?</h2>
       <p className="text-lg mb-8 opacity-90">Contact us today.</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Contact Us</a>
+      <a href="#contact" className="bg-white text-slate-800 px-8 py-3 rounded-full font-bold hover:-translate-y-1 transition-transform inline-block">Contact Us</a>
     </section>
   );
 }"""
     if sec == "pricing":
         return """export default function Pricing() {
   return (
-    <section className="py-20 px-8 text-center" id="pricing">
-      <h2 className="text-4xl font-bold mb-12">Pricing</h2>
+    <section className="py-24 px-8 text-center reveal" id="pricing">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{fontFamily: 'Sora, sans-serif'}}>Pricing</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Starter</h3><p>For individuals</p><span className="inline-block mt-2 font-bold text-amber-500">$29/mo</span></div>
-        <div className="bg-white rounded-xl p-8 shadow-lg border-2 border-blue-600"><h3 className="text-lg font-bold mb-2">Pro</h3><p>For growing teams</p><span className="inline-block mt-2 font-bold text-amber-500">$79/mo</span></div>
-        <div className="bg-white rounded-xl p-8 shadow-lg"><h3 className="text-lg font-bold mb-2">Enterprise</h3><p>Custom solutions</p><span className="inline-block mt-2 font-bold text-amber-500">$199/mo</span></div>
+        <div className="bg-white rounded-2xl p-8 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.25)]"><h3 className="text-lg font-bold mb-2">Starter</h3><p>For individuals</p><span className="inline-block mt-2 font-bold text-amber-500">$29/mo</span></div>
+        <div className="bg-white rounded-2xl p-8 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.25)] border-2 border-blue-600"><h3 className="text-lg font-bold mb-2">Pro</h3><p>For growing teams</p><span className="inline-block mt-2 font-bold text-amber-500">$79/mo</span></div>
+        <div className="bg-white rounded-2xl p-8 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.25)]"><h3 className="text-lg font-bold mb-2">Enterprise</h3><p>Custom solutions</p><span className="inline-block mt-2 font-bold text-amber-500">$199/mo</span></div>
       </div>
     </section>
   );
 }"""
     # ── Category-specific sections ──
-    grid = 'className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto"'
+    grid = 'className="grid grid-cols-1 md:grid-cols-3 gap-7 max-w-5xl mx-auto"'
     if sec == "menu":
         items = data.get("menu_items") or _SECTION_FALLBACK_CONTENT["menu"]
         return f"""export default function Menu() {{
   return (
-    <section className="py-20 px-8 text-center" id="menu">
-      <h2 className="text-4xl font-bold mb-12">Our Menu</h2>
+    <section className="py-24 px-8 text-center reveal" id="menu">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Our Menu</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx, price_index=2)}
       </div>
@@ -833,8 +922,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         body = _nextjs_product_cards(items, raw_items, ctx) if raw_items else _nextjs_cards(items, ctx, price_index=2)
         return f"""export default function Products() {{
   return (
-    <section className="py-20 px-8 text-center" id="products">
-      <h2 className="text-4xl font-bold mb-12">Shop</h2>
+    <section className="py-24 px-8 text-center reveal" id="products">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Shop</h2>
       <div {grid}>
         {body}
       </div>
@@ -846,8 +935,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("projects") or _SECTION_FALLBACK_CONTENT["projects"]
         return f"""export default function Projects() {{
   return (
-    <section className="py-20 px-8 text-center" id="projects">
-      <h2 className="text-4xl font-bold mb-12">Our Work</h2>
+    <section className="py-24 px-8 text-center reveal" id="projects">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Our Work</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx)}
       </div>
@@ -858,8 +947,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("listings") or _SECTION_FALLBACK_CONTENT["listings"]
         return f"""export default function Listings() {{
   return (
-    <section className="py-20 px-8 text-center" id="listings">
-      <h2 className="text-4xl font-bold mb-12">Featured Listings</h2>
+    <section className="py-24 px-8 text-center reveal" id="listings">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Featured Listings</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx, price_index=2)}
       </div>
@@ -870,8 +959,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("posts") or _SECTION_FALLBACK_CONTENT["posts"]
         return f"""export default function Posts() {{
   return (
-    <section className="py-20 px-8 text-center" id="posts">
-      <h2 className="text-4xl font-bold mb-12">Latest Posts</h2>
+    <section className="py-24 px-8 text-center reveal" id="posts">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Latest Posts</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx)}
       </div>
@@ -882,8 +971,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("courses") or _SECTION_FALLBACK_CONTENT["courses"]
         return f"""export default function Courses() {{
   return (
-    <section className="py-20 px-8 text-center" id="courses">
-      <h2 className="text-4xl font-bold mb-12">Our Courses</h2>
+    <section className="py-24 px-8 text-center reveal" id="courses">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Our Courses</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx)}
       </div>
@@ -894,8 +983,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("rooms") or _SECTION_FALLBACK_CONTENT["rooms"]
         return f"""export default function Rooms() {{
   return (
-    <section className="py-20 px-8 text-center" id="rooms">
-      <h2 className="text-4xl font-bold mb-12">Rooms & Stays</h2>
+    <section className="py-24 px-8 text-center reveal" id="rooms">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Rooms & Stays</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx, price_index=2)}
       </div>
@@ -912,9 +1001,9 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         )
         return f"""export default function Gallery() {{
   return (
-    <section className="py-20 px-8 text-center" id="gallery">
-      <h2 className="text-4xl font-bold mb-12">Gallery</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+    <section className="py-24 px-8 text-center reveal" id="gallery">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Gallery</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-7 max-w-5xl mx-auto">
         {tiles}
       </div>
     </section>
@@ -930,9 +1019,9 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         )
         return f"""export default function Team() {{
   return (
-    <section className="py-20 px-8 text-center" id="team">
-      <h2 className="text-4xl font-bold mb-12">Meet the Team</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+    <section className="py-24 px-8 text-center reveal" id="team">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Meet the Team</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-7 max-w-5xl mx-auto">
         {avatars}
       </div>
     </section>
@@ -946,7 +1035,7 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         )
         return f"""export default function Stats() {{
   return (
-    <section className="py-16 px-8 text-center" id="stats">
+    <section className="py-20 px-8 text-center reveal" id="stats">
       <div className="flex justify-center gap-12 flex-wrap max-w-5xl mx-auto">
         {stats}
       </div>
@@ -957,8 +1046,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         items = data.get("process") or _SECTION_FALLBACK_CONTENT["process"]
         return f"""export default function Process() {{
   return (
-    <section className="py-20 px-8 text-center" id="process">
-      <h2 className="text-4xl font-bold mb-12">How We Work</h2>
+    <section className="py-24 px-8 text-center reveal" id="process">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>How We Work</h2>
       <div {grid}>
         {_nextjs_cards(items, ctx)}
       </div>
@@ -975,8 +1064,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
         )
         return f"""export default function FAQ() {{
   return (
-    <section className="py-20 px-8 text-center" id="faq">
-      <h2 className="text-4xl font-bold mb-12">FAQ</h2>
+    <section className="py-24 px-8 text-center reveal" id="faq">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>FAQ</h2>
       {faqs}
     </section>
   );
@@ -984,16 +1073,16 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "booking":
         return """export default function Booking() {
   return (
-    <section className="py-20 px-8 text-center" id="booking">
-      <h2 className="text-4xl font-bold mb-12">Book Now</h2>
+    <section className="py-24 px-8 text-center reveal" id="booking">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{fontFamily: 'Sora, sans-serif'}}>Book Now</h2>
       <form className="flex flex-col gap-4 max-w-md mx-auto" onSubmit={e => e.preventDefault()}>
-        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Your Name" required />
-        <input className="p-3 border border-gray-300 rounded-lg" placeholder="Phone" required />
+        <input className="p-3 border border-gray-300 rounded-xl" placeholder="Your Name" required />
+        <input className="p-3 border border-gray-300 rounded-xl" placeholder="Phone" required />
         <div className="flex gap-4">
-          <input type="date" className="p-3 border border-gray-300 rounded-lg flex-1" required />
-          <input type="time" className="p-3 border border-gray-300 rounded-lg flex-1" required />
+          <input type="date" className="p-3 border border-gray-300 rounded-xl flex-1" required />
+          <input type="time" className="p-3 border border-gray-300 rounded-xl flex-1" required />
         </div>
-        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Request Booking</button>
+        <button className="p-3 bg-gradient-to-br from-[var(--color-primary)] to-[#1d4ed8] text-white rounded-xl cursor-pointer font-bold">Request Booking</button>
       </form>
     </section>
   );
@@ -1005,8 +1094,8 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
   const hours = {json.dumps(hours, ensure_ascii=False)};
   const location = {json.dumps(location, ensure_ascii=False)};
   return (
-    <section className="py-20 px-8 text-center" id="hours">
-      <h2 className="text-4xl font-bold mb-12">Hours & Location</h2>
+    <section className="py-24 px-8 text-center reveal" id="hours">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Hours & Location</h2>
       <p className="text-gray-600 mb-2"><strong>Hours:</strong> {{hours}}</p>
       <p className="text-gray-600"><strong>Location:</strong> {{location}}</p>
     </section>
@@ -1015,11 +1104,11 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "newsletter":
         return """export default function Newsletter() {
   return (
-    <section className="py-20 px-8 text-center" id="newsletter">
-      <h2 className="text-4xl font-bold mb-12">Stay Updated</h2>
+    <section className="py-24 px-8 text-center reveal" id="newsletter">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-14" style={{fontFamily: 'Sora, sans-serif'}}>Stay Updated</h2>
       <form className="flex gap-4 max-w-md mx-auto" onSubmit={e => e.preventDefault()}>
-        <input className="p-3 border border-gray-300 rounded-lg flex-1" placeholder="Your email" required />
-        <button className="p-3 bg-blue-600 text-white rounded-lg cursor-pointer">Subscribe</button>
+        <input className="p-3 border border-gray-300 rounded-xl flex-1" placeholder="Your email" required />
+        <button className="p-3 bg-gradient-to-br from-[var(--color-primary)] to-[#1d4ed8] text-white rounded-xl cursor-pointer font-bold">Subscribe</button>
       </form>
     </section>
   );
@@ -1027,18 +1116,18 @@ def _nextjs_component(sec: str, ctx: dict) -> str:
     if sec == "donate":
         return f"""export default function Donate() {{
   return (
-    <section className="py-20 px-8 text-center bg-blue-600 text-white" id="donate">
-      <h2 className="text-4xl font-bold mb-4">Support Our Cause</h2>
+    <section className="py-24 px-8 text-center text-white reveal" style={{{{background: 'linear-gradient(135deg, var(--color-secondary), #0b1020)'}}}} id="donate">
+      <h2 className="text-4xl md:text-5xl font-extrabold mb-4" style={{{{fontFamily: 'Sora, sans-serif'}}}}>Support Our Cause</h2>
       <p className="text-lg mb-8 opacity-90">Every contribution makes a real difference.</p>
-      <a href="#contact" className="bg-amber-500 text-slate-800 px-8 py-3 rounded-lg font-semibold hover:-translate-y-1 transition-transform inline-block">Donate Now</a>
+      <a href="#contact" className="bg-white text-slate-800 px-8 py-3 rounded-full font-bold hover:-translate-y-1 transition-transform inline-block">Donate Now</a>
     </section>
   );
 }}"""
     name = sec.title().replace(" ", "")
     return f"""export default function {name}() {{
   return (
-    <section className="py-20 px-8 text-center" id="{sec}">
-      <h2 className="text-4xl font-bold mb-4">{sec.title()}</h2>
+    <section className="py-24 px-8 text-center reveal" id="{sec}">
+      <h2 className="text-4xl font-bold mb-4" style={{{{fontFamily: 'Sora, sans-serif'}}}}>{sec.title()}</h2>
       <p className="text-gray-600">Content for the {sec} section.</p>
     </section>
   );
@@ -1064,8 +1153,8 @@ def _nextjs_navbar(pages: list[tuple[str, str]], ctx: dict) -> str:
 
 export default function Navbar() {{
   return (
-    <nav className="bg-slate-800 text-white px-8 py-4 flex items-center gap-6 flex-wrap">
-      <span className="font-bold text-lg">{_escape_html(title)}</span>
+    <nav className="sticky top-0 z-50 bg-white/70 backdrop-blur-xl border-b border-black/5 shadow-[0_8px_30px_-18px_rgba(0,0,0,0.4)] px-8 py-3 flex items-center gap-6 flex-wrap">
+      <span className="font-bold text-lg text-slate-800" style={{{{fontFamily: "Sora, sans-serif"}}}}>{_escape_html(title)}</span>
       {links}
       {owner_link}
     </nav>
@@ -1154,7 +1243,7 @@ export const metadata: Metadata = {{
 export default function RootLayout({{ children }}: {{ children: React.ReactNode }}) {{
   return (
     <html lang="en">
-      <body>
+      <body className="font-['Plus_Jakarta_Sans',system-ui,sans-serif]">
         {beacon}        <Navbar />
         {{children}}
         <Footer />
@@ -1167,7 +1256,10 @@ export default function RootLayout({{ children }}: {{ children: React.ReactNode 
 
 def _nextjs_globals_css(ctx: dict) -> str:
     c = ctx["colors"]
-    return f"""@tailwind base;
+    tint = _mix_hex(c["primary"], "ffffff", 0.90)
+    tint2 = _mix_hex(c["primary"], "ffffff", 0.96)
+    return f"""@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap');
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -1177,11 +1269,22 @@ def _nextjs_globals_css(ctx: dict) -> str:
   --color-accent: {c['accent']};
   --color-bg: {c['bg']};
   --color-text: {c['text']};
+  --tint: {tint};
+  --tint2: {tint2};
 }}
 
+html {{ scroll-behavior: smooth; }}
 body {{
   color: var(--color-text);
   background: var(--color-bg);
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}}
+h1, h2, h3 {{ font-family: 'Sora', 'Plus Jakarta Sans', sans-serif; letter-spacing: -0.02em; }}
+
+@media (prefers-reduced-motion: no-preference) {{
+  .reveal {{ opacity: 0; transform: translateY(28px); transition: opacity 0.7s ease, transform 0.7s ease; }}
+  .reveal.in {{ opacity: 1; transform: none; }}
 }}
 """
 
@@ -1378,7 +1481,11 @@ def _build_website_project(
     # Services may arrive as plain strings ("Fast Delivery") or store rows
     # ({"name": ..., "description": ..., "price": ...}). Normalize to dicts so
     # the Services section can render name + description (+ price when set).
-    services = _normalize_services(services) or list(_DEFAULT_SERVICES)
+    # Always store NORMALIZED (name, description, price) tuples in ctx so the
+    # HTML/Next.js card renderers iterate tuples (not characters of a string).
+    # A bare list of strings like ["Fast Delivery"] would otherwise render each
+    # letter as its own card (head="F", sub="a").
+    services = _normalize_services(services) or _normalize_services(list(_DEFAULT_SERVICES))
     category = (category or "business").strip().lower()
     if category not in WEBSITE_CATEGORIES:
         category = "business"
