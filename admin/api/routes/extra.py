@@ -15,7 +15,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["extra"])
 
-from admin.agency.agent_monitor import _AGENT_PROBES, get_monitor  # noqa: E402  (probe table + monitor)
+# The agent-health monitor is a NICE-TO-HAVE dashboard signal, not a hard
+# backend dependency. If the module is ever missing on a box (seen: it was
+# left out of a deploy bundle and the whole backend died at import time, then
+# systemd tight-looped it 2000x and pegged the CPU), we must NOT crash the
+# entire API. So import it defensively and degrade gracefully to per-request
+# construction probes. The monitor's own job is to surface agent failures —
+# it must never be the thing that takes the backend down.
+try:
+    from admin.agency.agent_monitor import _AGENT_PROBES, get_monitor  # noqa: E402
+    _HAVE_MONITOR = True
+except Exception:  # noqa: BLE001
+    _AGENT_PROBES = {}  # type: ignore[assignment]
+    get_monitor = None  # type: ignore[assignment]
+    _HAVE_MONITOR = False
 
 
 @router.get("/api/status", tags=["system"])
@@ -107,11 +120,14 @@ async def api_agent_status(agent_id: str) -> dict[str, Any]:
 
     if probe_slug in _AGENT_PROBES:
         try:
-            health = await get_monitor().get_health()
-            rec = health["agents"].get(probe_slug)
-            if rec is None:
-                rec = get_monitor()._health.get(probe_slug) or _probe_now(probe_slug)
-            status = rec["status"]
+            if _HAVE_MONITOR:
+                health = await get_monitor().get_health()
+                rec = health["agents"].get(probe_slug)
+                if rec is None:
+                    rec = get_monitor()._health.get(probe_slug) or _probe_now(probe_slug)
+                status = rec["status"]
+            else:
+                status = _probe_now(probe_slug)["status"]
         except Exception:  # noqa: BLE001
             status = _probe_now(probe_slug)["status"]
     else:
@@ -127,6 +143,8 @@ async def api_agent_status(agent_id: str) -> dict[str, Any]:
 
 
 def _probe_now(agent_id: str) -> dict[str, Any]:
+    if not _HAVE_MONITOR or agent_id not in _AGENT_PROBES:
+        return {"slug": agent_id, "status": "unknown", "error": "monitor unavailable", "last_checked": None}
     from admin.agency.agent_monitor import probe_agent, _AGENT_PROBES
 
     return probe_agent(agent_id, _AGENT_PROBES[agent_id])
@@ -135,6 +153,13 @@ def _probe_now(agent_id: str) -> dict[str, Any]:
 @router.get("/api/agents/health")
 async def api_agents_health() -> dict[str, Any]:
     """Agency-wide agent health summary from the 24/7 monitor."""
+    if not _HAVE_MONITOR:
+        return {
+            "success": True,
+            "monitor_available": False,
+            "message": "agent monitor module not loaded",
+            "agents": {},
+        }
     from admin.agency.agent_monitor import get_monitor
 
     return await get_monitor().get_health()

@@ -72,12 +72,24 @@ async def lifespan(app: FastAPI):
     # Organic scheduler: dispatch due scheduled posts every 60s.
     scheduler_task = asyncio.create_task(_organic_scheduler_loop())
 
-    # Agency-wide agent health monitor (24/7 construction probe).
-    from admin.agency.agent_monitor import start_monitor, stop_monitor
-    await start_monitor()
+    # Agency-wide agent health monitor (24/7 construction probe). This is a
+    # best-effort health signal only — if it fails to import or start, the
+    # backend must still come up (seen: a missing agent_monitor module took
+    # the whole API down and systemd tight-looped it). Never let it block
+    # startup.
+    try:
+        from admin.agency.agent_monitor import start_monitor, stop_monitor
+        await start_monitor()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").exception("agent monitor failed to start (backend continues): %s", exc)
+        start_monitor = stop_monitor = None  # type: ignore[assignment]
 
     yield
-    await stop_monitor()
+    if stop_monitor is not None:
+        try:
+            await stop_monitor()
+        except Exception:  # noqa: BLE001
+            pass
     try:
         await scheduler_task
     except asyncio.CancelledError:

@@ -1105,7 +1105,23 @@ class SBAWorkspaceRunner:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     runner = SBAWorkspaceRunner()
-    asyncio.run(runner.run_forever())
+    # Outer guard: never let the process hard-crash. If a pass (or even the
+    # runner setup) throws something unexpected, log it once and retry after
+    # a backoff instead of exiting — systemd's Restart would otherwise tight-
+    # loop every 5s and peg the CPU (seen: 2000+ restarts). The inner loop
+    # already swallows per-pass errors; this catches the rare escape + the
+    # very first startup so the agent stays up smoothly.
+    backoff = 30
+    while True:
+        try:
+            asyncio.run(runner.run_forever())
+        except KeyboardInterrupt:
+            logger.info("autopilot interrupted, exiting")
+            break
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("autopilot process crashed (will retry in %ss): %s", backoff, exc)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 600)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ FILES = [
     "admin/agency/sba_autopilot.py",
     "admin/agency/sba_biztypes.py",
     "admin/agency/sba_monitor.py",
+    "admin/agency/agent_monitor.py",
     "admin/agency/sba_pipeline.py",
     "admin/agency/sba_reason.py",
     "admin/agency/sba_strategy.py",
@@ -39,6 +40,8 @@ FILES = [
     "admin/agency/website_supabase.py",
     "admin/agency/workspace_provision.py",
     "admin/tools/website_tools.py",
+    "admin/tools/store_tools.py",
+    "admin/workspace/agents/website.py",
     "admin/agency/ceo.py",
     "admin/agency/ceo_monitor.py",
     "admin/agency/social_skills.py",
@@ -124,6 +127,7 @@ FILES = [
     "admin/workspace/agents/social.py",
     "admin/workspace/agents/website.py",
     "deploy/sba-autopilot.service",
+    "deploy/sba.service",
     "deploy/sba-chrome.service",
     "docs/sba_autopilot_deploy.md",
 ]
@@ -139,6 +143,7 @@ COMPILE_FILES = [
     "admin/agency/sba_strategy.py",
     "admin/agency/ceo.py",
     "admin/agency/ceo_monitor.py",
+    "admin/agency/agent_monitor.py",
     "admin/agency/social_skills.py",
     "admin/agency/agent_persistence.py",
     "admin/agency/website_supabase.py",
@@ -349,6 +354,20 @@ def main() -> int:
         j = ssh("journalctl -u sba-autopilot.service -n 20 --no-pager | tail -15", timeout=30)
         log((j.stdout or j.stderr or "").strip()[-1200:])
         return 6
+
+    # 6b. Install hardened sba.service (CPU-safe RestartSec + StartLimit).
+    # Replaces the hand-created unit that tight-looped the CPU during the
+    # 2026-08-15 missing-module incident.
+    r = ssh(
+        "sudo cp %s/deploy/sba.service /etc/systemd/system/ && "
+        "sudo systemctl daemon-reload && echo SBA_UNIT_OK" % REMOTE_ROOT,
+        timeout=60,
+    )
+    if "SBA_UNIT_OK" not in (r.stdout or ""):
+        log("sba.service install FAILED:")
+        log((r.stdout or r.stderr or "").strip()[-500:])
+        return 6
+    log("sba.service hardened + installed.")
 
     # 7. restart backend
     r = ssh("sudo systemctl restart sba.service && sleep 6 && systemctl is-active sba.service",
