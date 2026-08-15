@@ -17,6 +17,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+class ChromeToolError(Exception):
+    """Raised when an unknown/unimplemented chrome tool is dispatched."""
+
+
 CDP_PORT = int(os.environ.get("SBA_CHROME_CDP_PORT", "9222"))
 BASE_CDP_PORT = 9222
 
@@ -912,10 +917,10 @@ async def execute_chrome_tool(tool_name: str, tool_args: dict[str, Any], chrome:
         return json.dumps(leads, ensure_ascii=False, default=str)[:4000]
     method_name = CHROME_TOOL_DISPATCH.get(tool_name)
     if not method_name:
-        return f"Unknown chrome tool: {tool_name}"
+        raise ChromeToolError(f"Unknown chrome tool: {tool_name}")
     method = getattr(chrome, method_name, None)
     if not method:
-        return f"chrome tool '{tool_name}' not implemented"
+        raise ChromeToolError(f"chrome tool '{tool_name}' not implemented")
     try:
         result = await method(**tool_args)
     except Exception as exc:

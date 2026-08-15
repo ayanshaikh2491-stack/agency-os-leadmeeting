@@ -560,7 +560,7 @@ def build_sba_graph() -> StateGraph:
 # ── Convenience wrapper ────────────────────────────────────────────────────
 
 
-def run_sba_graph(
+async def run_sba_graph(
     message: str,
     *,
     workspace_name: str = "TAGS Agency",
@@ -569,8 +569,45 @@ def run_sba_graph(
 ) -> dict:
     """Run SBA LangGraph and return results.
 
-    This is a convenience wrapper for when you don't need the compiled graph.
-    For production, call build_sba_graph() and invoke() directly.
+    Convenience wrapper that builds the graph, assembles the initial
+    ``SBAGraphState``, and invokes it. Returns a dict:
+      - ``{"status": "ok", "response": <final_output>, "workspace": ...}``
+      - ``{"status": "error", "error": <str>}`` on failure (never raises).
     """
-    # This will be called from SBAAgent.chat() — see sba.py
-    raise NotImplementedError("Use SBAAgent.chat() with a compiled graph instance instead.")
+    resolved_client = client_name or workspace_name
+    graph = build_sba_graph()
+    initial_state: SBAGraphState = {
+        "messages": [{"role": "user", "content": message}],
+        "workspace_name": workspace_name,
+        "client_name": resolved_client,
+        "browser_name": "sba",
+        "stealth_mode": False,
+        "conversation_history": conversation_history or [],
+        "thinking_phases": [],
+        "tool_round": 0,
+        "final_output": "",
+        "error": None,
+    }
+
+    try:
+        result = await graph.ainvoke(
+            initial_state,
+            config={
+                "configurable": {"thread_id": f"sba_{workspace_name}"},
+                # 10 tool rounds x 2 nodes + finalize > default 25
+                "recursion_limit": 100,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("run_sba_graph failed for workspace '%s'", workspace_name)
+        return {"status": "error", "error": str(exc)}
+
+    final_output = result.get("final_output", "")
+    if not final_output and result.get("error"):
+        final_output = f"SBA error: {result['error'][:200]}"
+
+    return {
+        "status": "ok",
+        "response": final_output,
+        "workspace": workspace_name,
+    }

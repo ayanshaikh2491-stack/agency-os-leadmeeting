@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["extra"])
 
+from admin.agency.agent_monitor import _AGENT_PROBES, get_monitor  # noqa: E402  (probe table + monitor)
+
 
 @router.get("/api/status", tags=["system"])
 async def api_status() -> dict[str, Any]:
@@ -77,6 +79,7 @@ _AGENT_STATUS_KEYS = {
     "content-creator": "content",
     "ads-runner": "ads",
     "analytics-bot": "analytics",
+    "memory-agent": "memory",  # probes admin.workspace.agents.memory (currently missing)
 }
 
 
@@ -84,16 +87,107 @@ _AGENT_STATUS_KEYS = {
 async def api_agent_status(agent_id: str) -> dict[str, Any]:
     """Agent status used by the agent pages' mount check.
 
-    The agent pages call GET /api/agents/{slug}/status and treat the agent as
-    online when `success && <slug-key>.status === 'running'`. This backend is
-    the live orchestration layer, so all registered agents are reported as
-    running (they proxy to this backend for chat/actions).
+    Previously returned a hardcoded `running` for every registered agent,
+    which hid real construction failures until a user opened the chat. Now it
+    reads live health from the AgentHealthMonitor (probed every few minutes),
+    falling back to a construction probe if the monitor has not polled yet.
     """
     key = _AGENT_STATUS_KEYS.get(agent_id, agent_id.replace("-", "_"))
+
+    # Frontend slugs (seo-engine, memory-agent, ...) -> internal probe slug.
+    # _AGENT_STATUS_KEYS maps frontend-slug -> internal-role; the monitor probe
+    # table (_AGENT_PROBES) is keyed by the internal role.
+    probe_slug = None
+    if agent_id in _AGENT_STATUS_KEYS:
+        probe_slug = _AGENT_STATUS_KEYS[agent_id]  # internal role (seo, memory, ...)
+    elif agent_id in _AGENT_PROBES:
+        probe_slug = agent_id
+    elif key in _AGENT_PROBES:
+        probe_slug = key
+
+    if probe_slug in _AGENT_PROBES:
+        try:
+            health = await get_monitor().get_health()
+            rec = health["agents"].get(probe_slug)
+            if rec is None:
+                rec = get_monitor()._health.get(probe_slug) or _probe_now(probe_slug)
+            status = rec["status"]
+        except Exception:  # noqa: BLE001
+            status = _probe_now(probe_slug)["status"]
+    else:
+        # Slugs we don't actively probe default healthy so the frontend mount
+        # check still passes; the monitor surfaces gaps for probed slugs.
+        status = "running"
+
     return {
         "success": True,
         "agent_id": agent_id,
-        key: {"status": "running"},
+        key: {"status": status},
+    }
+
+
+def _probe_now(agent_id: str) -> dict[str, Any]:
+    from admin.agency.agent_monitor import probe_agent, _AGENT_PROBES
+
+    return probe_agent(agent_id, _AGENT_PROBES[agent_id])
+
+
+@router.get("/api/agents/health")
+async def api_agents_health() -> dict[str, Any]:
+    """Agency-wide agent health summary from the 24/7 monitor."""
+    from admin.agency.agent_monitor import get_monitor
+
+    return await get_monitor().get_health()
+
+
+@router.get("/api/issues")
+async def api_issues(workspace_id: str | None = None) -> dict[str, Any]:
+    """Aggregated issue list for the admin Issues page.
+
+    Combines the two real "todo-ish" data sources the backend already tracks:
+      - CEO pending reviews (content/quality review tasks awaiting action)
+      - agent routing/error logs (failures needing attention)
+
+    Returns a normalized list of issues with a stable shape the frontend renders:
+      { id, title, status: 'todo'|'in_progress'|'done', agent, prio: 'High'|'Medium'|'Low' }
+    """
+    from admin.workspace.manager import list_errors, list_pending_reviews
+
+    issues: list[dict[str, Any]] = []
+
+    # 1) CEO pending reviews -> todo issues assigned to the content/CEO review queue.
+    try:
+        for r in list_pending_reviews():
+            rid = str(r.get("id") or r.get("review_id") or "")
+            issues.append({
+                "id": f"REV-{rid}" if rid else f"REV-{len(issues)+1}",
+                "title": r.get("title") or r.get("summary") or "Pending content review",
+                "status": "todo",
+                "agent": r.get("agent") or "Content Creator",
+                "prio": "Medium",
+            })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("issues: reviews failed: %s", exc)
+
+    # 2) Unresolved errors -> high-priority issues.
+    try:
+        for e in list_errors(workspace_id, unresolved_only=True):
+            eid = str(e.get("id") or e.get("error_id") or "")
+            issues.append({
+                "id": f"ERR-{eid}" if eid else f"ERR-{len(issues)+1}",
+                "title": e.get("message") or e.get("summary") or "Agent routing error",
+                "status": "todo",
+                "agent": e.get("agent") or e.get("agent_type") or "System",
+                "prio": "High",
+            })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("issues: errors failed: %s", exc)
+
+    open_count = len([i for i in issues if i["status"] in ("todo", "in_progress")])
+    return {
+        "success": True,
+        "issues": issues,
+        "counts": {"total": len(issues), "open": open_count, "done": len(issues) - open_count},
     }
 
 

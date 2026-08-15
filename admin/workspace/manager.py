@@ -388,6 +388,7 @@ async def route_to_agent(
         "social": ("admin.workspace.agents.social", "SocialAgent"),
         "content": ("admin.workspace.agents.content", "ContentAgent"),
         "analytics": ("admin.workspace.agents.analytics", "AnalyticsAgent"),
+        "memory": ("admin.workspace.agents.memory", "MemoryAgent"),
     }
 
     if agent_type in _domain_agents:

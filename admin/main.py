@@ -71,8 +71,13 @@ async def lifespan(app: FastAPI):
 
     # Organic scheduler: dispatch due scheduled posts every 60s.
     scheduler_task = asyncio.create_task(_organic_scheduler_loop())
+
+    # Agency-wide agent health monitor (24/7 construction probe).
+    from admin.agency.agent_monitor import start_monitor, stop_monitor
+    await start_monitor()
+
     yield
-    scheduler_task.cancel()
+    await stop_monitor()
     try:
         await scheduler_task
     except asyncio.CancelledError:
