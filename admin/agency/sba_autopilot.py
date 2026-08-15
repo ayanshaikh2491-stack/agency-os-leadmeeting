@@ -60,6 +60,12 @@ def _s(v) -> str:
 
 INTERVAL_MINUTES = int(os.environ.get("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 DAILY_EMAIL_CAP = int(os.environ.get("SBA_DAILY_EMAIL_CAP", "30"))
+# Global cap on REAL SMTP sends per autopilot cycle ACROSS ALL workspaces.
+# Each workspace still has its own DAILY_EMAIL_CAP, but without this global
+# ceiling N client workspaces would multiply the load (N x 30 sends and N x
+# CPU per cycle). The runner shares one counter so the whole agency never
+# burns more than this per 15-min pass. Future-proofs multi-client scaling.
+GLOBAL_CYCLE_EMAIL_CAP = int(os.environ.get("SBA_GLOBAL_CYCLE_EMAIL_CAP", "30"))
 # Hard ceiling for one full pass. A wedged CDP/Supabase call (seen: 9h hang)
 # must not freeze the loop; on timeout the pass is dropped and the browser
 # handle is reset for the next iteration.
@@ -599,8 +605,14 @@ class SBAAutopilot:
             return email, provenance
         return "", ""
 
-    async def _email_lead(self, url: str, key: str, lead: dict, angle: str | None = None) -> str:
-        """Send a professional cold email if lead is in business hours."""
+    async def _email_lead(self, url: str, key: str, lead: dict, angle: str | None = None,
+                          global_budget: dict[str, int] | None = None) -> str:
+        """Send a professional cold email if lead is in business hours.
+
+        global_budget: optional shared {"sent": int} counter. When the agency
+        ceiling is reached this pass, sends are skipped (returned as a no-op)
+        so one workspace can't starve the others of the global quota.
+        """
         email = _s(lead.get("email"))
         provenance = _s(lead.get("email_provenance"))
         status = lead.get("status") or "new"
@@ -667,6 +679,8 @@ class SBAAutopilot:
                 "provenance": provenance,
                 "category": lead.get("category") or "",
             }, log_path=self._journal_path)
+            if global_budget is not None:
+                global_budget["sent"] = global_budget.get("sent", 0) + 1
             return "sent"
         self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
         return "send_failed"
@@ -935,8 +949,14 @@ class SBAAutopilot:
                 # kind == "other": nothing actionable, leave the lead as-is.
         return stats
 
-    async def run_once(self) -> dict:
-        """One full autopilot pass. Returns stats."""
+    async def run_once(self, global_budget: dict[str, int] | None = None) -> dict:
+        """One full autopilot pass. Returns stats.
+
+        global_budget: optional shared {"sent": int} counter the runner uses
+        to cap REAL SMTP sends across all workspaces in one cycle (multi-client
+        fairness). When provided, this workspace stops sending once the shared
+        ceiling is reached for the whole agency this pass.
+        """
         stats: dict[str, Any] = {
             "emails_sent": 0, "deferred_to_business_hours": 0, "no_email": 0,
             "invalid_email": 0, "send_failed": 0, "owner_notified": 0,
@@ -958,7 +978,12 @@ class SBAAutopilot:
         leads = reason.prioritize(ws_leads)
         attempts = 0
         for lead in leads:
-            result = await self._email_lead(url, key, lead, angle=angle)
+            # Honour the shared agency-wide send ceiling for this cycle.
+            if global_budget is not None and global_budget.get("sent", 0) >= GLOBAL_CYCLE_EMAIL_CAP:
+                logger.info("global cycle email cap (%d) reached; %s workspace pausing sends",
+                            GLOBAL_CYCLE_EMAIL_CAP, self.workspace_name)
+                break
+            result = await self._email_lead(url, key, lead, angle=angle, global_budget=global_budget)
             if result == "sent":
                 stats["emails_sent"] += 1
                 attempts += 1
@@ -1065,12 +1090,21 @@ class SBAWorkspaceRunner:
 
     async def run_all_once(self) -> dict[str, Any]:
         from admin.agency import sba_biztypes as biztypes
+        # One shared send budget for the whole agency this cycle: even with N
+        # client workspaces, the autopilot never exceeds GLOBAL_CYCLE_EMAIL_CAP
+        # real sends per pass, so CPU/SMTP load stays flat as clients scale.
+        global_budget: dict[str, int] = {"sent": 0}
         stats: dict[str, Any] = {}
-        for ws in biztypes.list_sba_workspaces():
+        for i, ws in enumerate(biztypes.list_sba_workspaces()):
             name = ws.get("name") or "agency"
+            # Tiny stagger between workspaces so their (cheap) CPU bursts don't
+            # land on the same instant as the client count grows. Browser/
+            # enrichment work is already bounded; this just spreads the load.
+            if i:
+                await asyncio.sleep(2)
             try:
                 ap = SBAAutopilot(workspace_name=name, owner_email=ws.get("owner_email") or "")
-                s = await asyncio.wait_for(ap.run_once(), timeout=PASS_TIMEOUT_SECONDS)
+                s = await asyncio.wait_for(ap.run_once(global_budget=global_budget), timeout=PASS_TIMEOUT_SECONDS)
                 stats[name] = {k: v for k, v in s.items() if k != "last_run"}
             except asyncio.TimeoutError:
                 logger.exception("workspace %s pass timed out", name)

@@ -8,8 +8,13 @@ Type=simple
 WorkingDirectory=/home/ubuntu/sba-backend
 EnvironmentFile=/home/ubuntu/sba-backend/.env
 ExecStart=/home/ubuntu/sba-backend/venv/bin/python -m admin.agency.sba_autopilot
-Restart=always
-RestartSec=10
+# CPU-safe restart: the autopilot has its own inner per-pass try/except + an
+# outer retry/backoff guard, so it should never hard-crash. If it does, back
+# off (30s) and stop after 5 fails in 5 min instead of tight-looping the CPU.
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
 User=root
 
 [Install]

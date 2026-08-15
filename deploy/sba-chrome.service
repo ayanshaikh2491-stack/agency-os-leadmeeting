@@ -7,9 +7,13 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/sba-backend
 ExecStart=/home/ubuntu/sba-backend/venv/bin/python -m admin.tools.browser_daemon --workspace agency
-Restart=always
-RestartSec=3
-StartLimitInterval=0
+# CPU-safe restart: was RestartSec=3 + StartLimitInterval=0 = restart every 3s
+# forever. If the daemon ever crashes it would peg the box. Now it backs off
+# and stops after 5 failures in 5 min (reset with `systemctl reset-failed`).
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

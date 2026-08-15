@@ -129,6 +129,7 @@ FILES = [
     "deploy/sba-autopilot.service",
     "deploy/sba.service",
     "deploy/sba-chrome.service",
+    "deploy/sba-gateway.service",
     "docs/sba_autopilot_deploy.md",
 ]
 
@@ -336,10 +337,14 @@ def main() -> int:
     )
     log("enrichment deps ready.")
 
-    # 6. autopilot unit + swap services
+    # 6. Install + activate all hardened systemd units (CPU-safe RestartSec +
+    # StartLimit so a future crash cannot tight-loop the box). The autopilot
+    # unit takes over from the old sba-worker.service (disabled below).
     r = ssh(
-        "sudo cp %s/deploy/sba-autopilot.service /etc/systemd/system/ && "
+        "cd %s/deploy && "
+        "sudo cp sba.service sba-autopilot.service sba-chrome.service sba-gateway.service /etc/systemd/system/ && "
         "sudo systemctl daemon-reload && "
+        "sudo systemctl reset-failed sba.service sba-autopilot.service sba-chrome.service sba-gateway.service && "
         "sudo systemctl stop sba-worker.service 2>/dev/null; "
         "sudo systemctl disable sba-worker.service 2>/dev/null; "
         "sudo systemctl enable sba-autopilot.service && "
@@ -354,20 +359,13 @@ def main() -> int:
         j = ssh("journalctl -u sba-autopilot.service -n 20 --no-pager | tail -15", timeout=30)
         log((j.stdout or j.stderr or "").strip()[-1200:])
         return 6
-
-    # 6b. Install hardened sba.service (CPU-safe RestartSec + StartLimit).
-    # Replaces the hand-created unit that tight-looped the CPU during the
-    # 2026-08-15 missing-module incident.
-    r = ssh(
-        "sudo cp %s/deploy/sba.service /etc/systemd/system/ && "
-        "sudo systemctl daemon-reload && echo SBA_UNIT_OK" % REMOTE_ROOT,
-        timeout=60,
-    )
-    if "SBA_UNIT_OK" not in (r.stdout or ""):
-        log("sba.service install FAILED:")
-        log((r.stdout or r.stderr or "").strip()[-500:])
-        return 6
-    log("sba.service hardened + installed.")
+    # Apply the hardened chrome + gateway units now if they are already running.
+    for unit in ("sba-chrome.service", "sba-gateway.service"):
+        ssh(
+            "sudo systemctl restart %s && echo RESTARTED_%s" % (unit, unit.replace(".", "_")),
+            timeout=60,
+        )
+    log("all hardened service units installed.")
 
     # 7. restart backend
     r = ssh("sudo systemctl restart sba.service && sleep 6 && systemctl is-active sba.service",
