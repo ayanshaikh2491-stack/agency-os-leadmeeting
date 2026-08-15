@@ -98,6 +98,49 @@ STORE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_store_logo",
+            "description": (
+                "Set the client's store/website logo (image URL). The Website Agent reads "
+                "this when building/updating the client's site. Use when the client shares "
+                "a logo link."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID, e.g. ws_agency"},
+                    "logo_url": {"type": "string", "description": "Public image URL of the logo"},
+                    "client": {"type": "string", "description": "Client name (default: Client)"},
+                },
+                "required": ["workspace_id", "logo_url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_store_product",
+            "description": (
+                "Add a product to the client's store (name, price, description, image). "
+                "The client's live site shows it after an update. Use when the client wants "
+                "a new product listed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID, e.g. ws_agency"},
+                    "name": {"type": "string", "description": "Product name"},
+                    "price": {"type": "string", "description": "Price, e.g. 4999 or ₹4,999"},
+                    "description": {"type": "string", "description": "Short product description"},
+                    "image_url": {"type": "string", "description": "Product image URL (optional)"},
+                    "client": {"type": "string", "description": "Client name (default: Client)"},
+                },
+                "required": ["workspace_id", "name", "price"],
+            },
+        },
+    },
 ]
 
 
@@ -275,6 +318,62 @@ def publish_client_store(workspace_id: str, client: str | None = None, deploy: b
         return json.dumps({"error": f"publish_client_store failed: {exc}"}, indent=2)
 
 
+def update_store_logo(workspace_id: str, logo_url: str, client: str | None = None) -> str:
+    """Set the client's store logo (image URL). Returns JSON text."""
+    ws = _norm_workspace(workspace_id)
+    cl = _norm_client(client)
+    logo_url = (logo_url or "").strip()
+    if not logo_url:
+        return json.dumps({"error": "logo_url required"}, indent=2)
+    try:
+        from admin.store.store_store import upsert_settings
+
+        row = upsert_settings(ws, cl, {"logo_url": logo_url})
+        if not row:
+            return json.dumps({"error": "Logo update failed (store backend unavailable)"}, indent=2)
+        return json.dumps({
+            "ok": True,
+            "logo_url": logo_url,
+            "message": "Logo set. Ab Website Agent ko bolo site update kare (update_store_site).",
+        }, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"update_store_logo failed: {exc}"}, indent=2)
+
+
+def add_store_product(
+    workspace_id: str,
+    name: str,
+    price: str,
+    description: str = "",
+    image_url: str = "",
+    client: str | None = None,
+) -> str:
+    """Add a product to the client's store. Returns JSON text."""
+    ws = _norm_workspace(workspace_id)
+    cl = _norm_client(client)
+    name = (name or "").strip()
+    price = (price or "").strip()
+    if not name or not price:
+        return json.dumps({"error": "name and price required"}, indent=2)
+    try:
+        from admin.store.store_store import create_product
+
+        product = create_product(
+            ws, cl,
+            {"name": name, "price": price, "description": (description or "").strip(),
+             "image_url": (image_url or "").strip(), "active": True},
+        )
+        if not product:
+            return json.dumps({"error": "Product add failed (store backend unavailable)"}, indent=2)
+        return json.dumps({
+            "ok": True,
+            "product": {"name": product.get("name"), "price": product.get("price")},
+            "message": "Product added. Ab Website Agent ko bolo site update kare (update_store_site).",
+        }, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"add_store_product failed: {exc}"}, indent=2)
+
+
 def execute_store_tool(name: str, args: dict[str, Any]) -> str:
     """Dispatch for agent tool runners. Returns JSON text (always)."""
     if name == "get_client_store_link":
@@ -297,6 +396,21 @@ def execute_store_tool(name: str, args: dict[str, Any]) -> str:
             args.get("workspace_id", ""),
             args.get("client"),
             bool(args.get("deploy", True)),
+        )
+    if name == "update_store_logo":
+        return update_store_logo(
+            args.get("workspace_id", ""),
+            args.get("logo_url", ""),
+            args.get("client"),
+        )
+    if name == "add_store_product":
+        return add_store_product(
+            args.get("workspace_id", ""),
+            args.get("name", ""),
+            args.get("price", ""),
+            args.get("description", ""),
+            args.get("image_url", ""),
+            args.get("client"),
         )
     return json.dumps({"error": f"Unknown store tool: {name}"})
 

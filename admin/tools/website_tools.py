@@ -536,13 +536,16 @@ def _html_section(sec: str, ctx: dict) -> str:
     return f'<section class="{sec}" id="{sec}"><h2>{sec.title()}</h2><p>Content for the {sec} section.</p></section>'
 
 
-def _html_nav(pages: list[tuple[str, str]], active: str = "index", title: str = "") -> str:
+def _html_nav(pages: list[tuple[str, str]], active: str = "index", title: str = "", logo_url: str = "") -> str:
     links = []
     for route, label in pages:
         href = "index.html" if route == "index" else f"{route}.html"
         active_cls = ' class="active"' if route == active else ""
         links.append(f'<a href="{href}"{active_cls}>{_escape_html(label)}</a>')
-    brand = f'<span class="brand">{_escape_html(title)}</span>' if title else ""
+    if logo_url:
+        brand = f'<img class="brand-logo" src="{_escape_html(logo_url)}" alt="{_escape_html(title)}"/>'
+    else:
+        brand = f'<span class="brand">{_escape_html(title)}</span>' if title else ""
     return f"<nav>{brand}{''.join(links)}</nav>"
 
 
@@ -1356,6 +1359,7 @@ def _build_website_project(
     skills: list[str] | None = None,
     products: list[dict] | None = None,
     view_tracking: dict | None = None,
+    logo_url: str = "",
 ) -> dict[str, Any]:
     """Build a complete website project dict (rel_path -> content). Deterministic, no network, no LLM.
 
@@ -1396,6 +1400,7 @@ def _build_website_project(
         "category": category,
         "data": _category_data(category),
         "view_tracking": view_tracking,
+        "logo_url": (logo_url or "").strip(),
     }
 
     # Real client products (from the store) override the canned catalog.
@@ -1439,7 +1444,7 @@ def _build_website_project(
         for route, spec in page_map.items():
             body = "".join(_html_section(s, ctx) for s in spec["sections"])
             fname = "index.html" if route == "index" else f"{route}.html"
-            files[fname] = _html_page(ctx, body, _html_nav(pages, route, title))
+            files[fname] = _html_page(ctx, body, _html_nav(pages, route, title, logo_url))
         files["style.css"] = _html_css(ctx)
         page_code = files.get("index.html", "")
         components = {}
@@ -2183,6 +2188,7 @@ def build_site(
     skills: list[str] | None = None,
     products: list[dict] | None = None,
     view_tracking: dict | None = None,
+    logo_url: str = "",
 ) -> dict[str, Any]:
     """Build a complete website project on disk from business info.
 
@@ -2217,6 +2223,7 @@ def build_site(
         skills=skills or [],
         products=products,
         view_tracking=view_tracking,
+        logo_url=logo_url,
     )
     if not output_dir:
         output_dir = os.path.join("generated_sites", _slugify(project["title"]))
@@ -2274,6 +2281,7 @@ def build_site_from_store(
         color_primary=(settings.get("color_primary") or "#2563EB").strip(),
         framework=(settings.get("framework") or "nextjs").strip(),
         business_email=(settings.get("contact_email") or "").strip(),
+        logo_url=(settings.get("logo_url") or "").strip(),
         output_dir=os.path.join("generated_sites", "store_" + _slugify(workspace) + "_" + _slugify(client)),
         products=products,
         services=services,
@@ -2312,6 +2320,145 @@ def build_site_from_store(
         "site_url": site_url,
         "sync": {"workspace": workspace, "client": client},
     }
+
+
+def update_store_site(
+    workspace: str = "Default",
+    client: str = "Client",
+    deploy: bool = True,
+) -> dict[str, Any]:
+    """UPDATE a client's existing storefront in place (no full rebuild).
+
+    Reads the client's current products + settings from the store and patches
+    ONLY the already-generated site files (shop.html product grid + logo in the
+    nav of every page). It does NOT regenerate the whole project, CSS, nav
+    links, or framework scaffolding — so the client's existing site layout is
+    preserved; only the catalog and logo change.
+
+    This is the Website Agent's store-aware *update* path: the client edits a
+    product or logo in their portal, the agent pushes just that change live.
+    """
+    from admin.store import store_store
+
+    products = store_store.list_products(workspace, client, active_only=True)
+    services = store_store.list_services(workspace, client, active_only=True)
+    settings = store_store.get_settings(workspace, client)
+
+    out_dir = os.path.join(
+        "generated_sites", "store_" + _slugify(workspace) + "_" + _slugify(client)
+    )
+    if not os.path.isdir(out_dir):
+        # No existing site yet — fall back to a full build.
+        logger.info("update_store_site: no existing site at %s, building fresh", out_dir)
+        return build_site_from_store(workspace=workspace, client=client, deploy=deploy)
+
+    title = (settings.get("store_name") or "").strip() or client
+    logo_url = (settings.get("logo_url") or "").strip()
+    color_primary = (settings.get("color_primary") or "#2563EB").strip() or "#2563EB"
+
+    # Mirror _build_website_project's product wiring so _html_section renders
+    # the real store catalog (tuples for cards + raw dicts for image/stock).
+    norm_products = [_product_to_tuple(p) for p in products if isinstance(p, dict)]
+    ctx = {
+        "title": title,
+        "tagline": (settings.get("tagline") or "").strip(),
+        "business_email": (settings.get("contact_email") or "").strip(),
+        "services": [(s.get("name", ""), s.get("description", "")) for s in services],
+        "colors": {"primary": color_primary, "accent": color_primary},
+        "data": {
+            "products": norm_products or list(_SECTION_FALLBACK_CONTENT["products"]),
+            "products_raw": products,
+        },
+    }
+    try:
+        section = _html_section("products", ctx)
+        new_grid = section.split('<div class="grid">', 1)[1].rsplit("</div>", 1)[0]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("update_store_site: grid render failed: %s", e)
+        return build_site_from_store(workspace=workspace, client=client, deploy=deploy)
+
+    updated_files = []
+    for fname in ("shop.html", "index.html"):
+        fpath = os.path.join(out_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            html = _read_text(fpath)
+            html = _patch_products_grid(html, new_grid)
+            html = _patch_logo(html, logo_url, title)
+            _write_text(fpath, html)
+            updated_files.append(fname)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("update_store_site: failed to patch %s: %s", fname, e)
+
+    try:
+        from admin.agency.website_supabase import log_website_event
+        log_website_event(workspace, client, "store_update",
+                          f"Store updated in place: {len(products)} products, logo={'set' if logo_url else 'none'}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("update_store_site: persistence log failed: %s", e)
+
+    result: dict[str, Any] = {
+        "status": "updated",
+        "mode": "in_place_update",
+        "workspace": workspace,
+        "client": client,
+        "output_dir": out_dir,
+        "files_updated": updated_files,
+        "product_count": len(products),
+        "logo_set": bool(logo_url),
+        "rebuilt": False,
+    }
+    if not deploy:
+        return result
+
+    deployed = deploy_vercel(
+        project_path=out_dir,
+        project_name=f"store-{_slugify(workspace)}",
+    )
+    site_url = deployed.get("url") or ""
+    result["deployed"] = deployed.get("status") == "deployed"
+    result["deploy"] = deployed
+    result["site_url"] = site_url
+    return result
+
+
+def _patch_products_grid(html: str, new_grid_inner: str) -> str:
+    """Replace the inner content of the products section's <div class="grid">."""
+    import re
+
+    # The product grid is `<div class="grid">...</div>` whose closing tag is
+    # immediately followed by `<p class="hint">` (or `</section>`). Match the
+    # whole grid block and swap only its inner cards.
+    pat = re.compile(r"<div class=\"grid\">.*?</div>(?=\s*<p class=\"hint\">|\s*</section>)", re.S)
+
+    def repl(m: "re.Match[str]") -> str:
+        return f'<div class="grid">{new_grid_inner}</div>'
+
+    return pat.sub(repl, html, count=1)
+
+
+def _patch_logo(html: str, logo_url: str, title: str) -> str:
+    """Update the brand/nav logo. If a logo is set, render <img>; else text brand."""
+    import re
+
+    if logo_url:
+        logo_html = f'<img class="brand-logo" src="{_escape_html(logo_url)}" alt="{_escape_html(title)}"/>'
+    else:
+        logo_html = f'<span class="brand">{_escape_html(title)}</span>'
+    html = re.sub(r'<img class="brand-logo"[^>]*/>', logo_html, html)
+    html = re.sub(r'<span class="brand">[^<]*</span>', logo_html, html)
+    return html
+
+
+def _read_text(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _write_text(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3395,6 +3542,29 @@ WEBSITE_TOOLS = [
             },
         },
     },
+    # ── Store-aware tools (Website Agent <-> Client Store Portal) ──────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "update_store_site",
+            "description": (
+                "Update a client's existing storefront in place from their store portal "
+                "(products + logo). Patches only the live site's product grid and logo — "
+                "does NOT rebuild the whole site. Use when the client adds/edits a product "
+                "or logo in their portal and wants the change pushed to their live website. "
+                "This is the Website Agent's store path, NOT SBA."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID, e.g. ws_agency"},
+                    "client": {"type": "string", "description": "Client name (default: Client)"},
+                    "deploy": {"type": "boolean", "description": "Deploy to Vercel after update (default true)", "default": True},
+                },
+                "required": ["workspace_id"],
+            },
+        },
+    },
 ]
 
 
@@ -3487,6 +3657,11 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "domain_status": lambda a: domain_status(
             project=a["project"],
             domain=a["domain"],
+        ),
+        "update_store_site": lambda a: update_store_site(
+            workspace=a.get("workspace_id", "Default"),
+            client=a.get("client"),
+            deploy=bool(a.get("deploy", True)),
         ),
     }
     fn = dispatch.get(name)

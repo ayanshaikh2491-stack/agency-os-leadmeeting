@@ -36,6 +36,16 @@ from admin.config import settings
 from admin.tools.website_tools import WEBSITE_TOOLS, execute_website_tool
 from admin.workspace.agent_bus import send_message
 
+# Store-aware tools: client portal (products/logo) -> Website Agent updates site.
+from admin.tools.store_tools import (
+    STORE_TOOLS,
+    execute_store_tool as execute_store_tool_fn,
+    store_tool_names,
+)
+
+# Combined tool list the LLM sees: website tools + client-store tools.
+ALL_WEBSITE_TOOLS = list(WEBSITE_TOOLS) + list(STORE_TOOLS)
+
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 8
@@ -73,7 +83,8 @@ You are a full-stack web developer and designer. You think independently within 
 - Accessibility (WCAG compliance, a11y best practices)
 
 ## Your Tools (USE THEM!)
-You have 15 real tools. ALWAYS use tools before giving advice. Never guess.
+You have website tools PLUS client-store tools (portal products/logo/site updates).
+ALWAYS use tools before giving advice. Never guess.
 
 ### Analysis Tools
 1. **analyze_website(url)** — Crawl site, detect tech stack, structure, navigation, images
@@ -97,6 +108,19 @@ You have 15 real tools. ALWAYS use tools before giving advice. Never guess.
 13. **check_domain(domain)** — DNS records (A, AAAA, CNAME, MX, TXT, NS), SSL, website status
 14. **screenshot_site(url, width, height)** — Capture visual metadata: images, OG tags, colors
 15. **check_uptime(url, checks, interval)** — Monitor uptime, response time, health assessment
+
+### Client Store Tools (Store Portal -> your site)
+When a client has a store/portal, use these to manage their products, logo, and push
+updates to their live website. NOTE: this is the Website Agent's store path — SBA (Sales)
+does NOT touch the store.
+16. **get_client_store_link(workspace_id, client)** — Get the client's store portal link + status
+17. **create_store_client_account(workspace_id, email, password, client)** — Give client a login
+18. **list_store_products(workspace_id, client)** — See what products the client added
+19. **add_store_product(workspace_id, name, price, description, image_url, client)** — Add a product
+20. **update_store_logo(workspace_id, logo_url, client)** — Set the client's logo (image URL)
+21. **update_store_site(workspace_id, client, deploy)** — UPDATE the client's live site IN PLACE
+    (patches only products + logo, does NOT rebuild the whole site). Use this (not publish_client_store)
+    for routine product/logo changes from the portal.
 
 ## IMPORTANT: SEO ROUTING
 When a request is about SEO (keyword research, meta tags, schema markup, SERP rankings,
@@ -133,7 +157,10 @@ You focus on: DESIGN, DEVELOPMENT, HOSTING, PERFORMANCE, SECURITY, ACCESSIBILITY
 9. When asked about a domain -> use check_domain for DNS + SSL + availability
 10. When asked to see/preview a site -> use screenshot_site for visual metadata
 11. When asked about uptime/monitoring -> use check_uptime for health checks
-12. Always give DATA-BACKED recommendations, never generic advice
+12. When a client adds/edits a product or logo in their portal -> use update_store_site
+    to push the change to their live site (in-place update, no full rebuild)
+13. When a client shares a logo link -> use update_store_logo, then update_store_site
+14. Always give DATA-BACKED recommendations, never generic advice
 13. Brief Content Agent for visual assets (hero images, banners, icons)
 
 ## Behavioural rules
@@ -187,7 +214,7 @@ async def website_call_llm(state: WebsiteAgentState) -> dict[str, Any]:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=WEBSITE_TOOLS,
+            tools=ALL_WEBSITE_TOOLS,
             tool_choice="auto",
             temperature=0.3,
             max_tokens=4096,
@@ -256,7 +283,10 @@ async def website_run_tools(state: WebsiteAgentState) -> dict[str, Any]:
             args = {}
 
         logger.info("Website tool: %s(%s)", name, args)
-        result = execute_website_tool(name, args)
+        if name in store_tool_names():
+            result = execute_store_tool_fn(name, args)
+        else:
+            result = execute_website_tool(name, args)
         result_str = json.dumps(result, default=str)[:8000]
 
         results.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result_str})
