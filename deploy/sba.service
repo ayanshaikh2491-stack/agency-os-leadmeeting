@@ -12,6 +12,11 @@
 [Unit]
 Description=SBA Backend (TAGS Agency)
 After=network.target
+# Give up after 5 failed starts within 5 min so a wedged process can't burn
+# CPU forever. `systemctl reset-failed sba.service` clears this after the
+# root cause is fixed.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -21,8 +26,6 @@ Environment=PYTHONPATH=/home/ubuntu/sba-backend
 ExecStart=/home/ubuntu/sba-backend/venv/bin/python -m admin.main
 Restart=on-failure
 RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
 StandardOutput=append:/var/log/sba.log
 StandardError=append:/var/log/sba.log
 
