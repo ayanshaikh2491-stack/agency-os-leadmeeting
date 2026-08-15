@@ -8,6 +8,10 @@ Har step mein LLM ko deep SEO thinking karni padti hai.
 
 SEO_UNDERSTAND_SYSTEM = """You are an expert SEO strategist for an agency.
 
+## Rules
+- Do all your internal reasoning inside a ```think block. NEVER emit ```think / <think> content in the JSON you return — the JSON must be clean and parseable.
+- Return ONLY the JSON object (no markdown fences, no commentary outside the ```think block).
+
 ## Your Task
 Parse the SEO request and understand it deeply. Extract every detail.
 
@@ -66,6 +70,10 @@ Return ONLY the JSON object, no other text."""
 # ── Step 2: RESEARCH ──────────────────────────────────────────────────────────
 
 SEO_RESEARCH_SYSTEM = """You are an SEO research specialist gathering data before taking action.
+
+## Rules
+- Do all your internal reasoning inside a ```think block. NEVER emit ```think / <think> content in the JSON you return — the JSON must be clean and parseable.
+- Return ONLY the JSON object (no markdown fences, no commentary outside the ```think block).
 
 ## Your Task
 Based on the understood request, identify what data we need and what research to conduct.
@@ -139,6 +147,10 @@ Return ONLY the JSON object, no other text."""
 # ── Step 3: STRATEGIZE ────────────────────────────────────────────────────────
 
 SEO_STRATEGIZE_SYSTEM = """You are an SEO strategy architect creating an action plan.
+
+## Rules
+- Do all your internal reasoning inside a ```think block. NEVER emit ```think / <think> content in the JSON you return — the JSON must be clean and parseable.
+- Return ONLY the JSON object (no markdown fences, no commentary outside the ```think block).
 
 ## Your Task
 Based on the research, create a comprehensive SEO strategy with prioritized actions.
@@ -214,6 +226,10 @@ Return ONLY the JSON object, no other text."""
 
 SEO_EXECUTE_SYSTEM = """You are an SEO specialist implementing the strategy.
 
+## Rules
+- Do all your internal reasoning inside a ```think block. NEVER emit ```think / <think> content in the JSON you return — the JSON must be clean and parseable.
+- Return ONLY the JSON object (no markdown fences, no commentary outside the ```think block).
+
 ## Your Task
 Execute the SEO strategy by:
 1. Running the planned tool calls
@@ -271,6 +287,7 @@ Execute the SEO strategy by:
     },
     "tool_results": "summary of tool outputs",
     "implementation_guide": "step-by-step instructions",
+    "client_report": "client-ready markdown report: Executive Summary, Findings, Prioritized Action Plan (quick wins first), Deliverables (paste-ready code), and Measurement (KPI + target)",
     "reasoning": "2-3 sentences on execution approach"
 }
 
@@ -280,6 +297,10 @@ Return ONLY the JSON object, no other text."""
 # ── Step 5: VALIDATE ──────────────────────────────────────────────────────────
 
 SEO_VALIDATE_SYSTEM = """You are an SEO quality assurance specialist reviewing the work.
+
+## Rules
+- Do all your internal reasoning inside a ```think block. NEVER emit ```think / <think> content in the JSON you return — the JSON must be clean and parseable.
+- Return ONLY the JSON object (no markdown fences, no commentary outside the ```think block).
 
 ## Your Task
 Validate the SEO work across 8 dimensions and assign a quality score (1-10).

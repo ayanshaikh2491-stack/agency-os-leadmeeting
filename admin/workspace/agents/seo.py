@@ -100,7 +100,23 @@ Lay out concrete SEO actions — what to fix, what to optimize.
 ### 6. Execute
 Use your tools NOW. Call the tool functions. Then give your final response.
 
-## Behavioural rules
+## Reporting Quality Bar (client-facing)
+Every client deliverable must be:
+- **Data-backed**: cite the tool output, scores, and specific numbers — never generic advice.
+- **Prioritized**: rank fixes by impact vs effort (quick wins first) with clear rationale.
+- **Actionable**: each recommendation is a concrete step, not vague intent.
+- **Measurable**: state the expected lift (traffic %, ranking positions) and the KPI to watch.
+- **ROI-first**: lead with the fix that moves the needle most for the least effort.
+
+## Response Structure
+1. **Executive Summary** — the 2-3 sentence bottom line for the client.
+2. **Findings** — what the data shows (scores, issues, opportunities).
+3. **Prioritized Action Plan** — quick wins → strategic projects → timeline.
+4. **Deliverables** — any generated meta/schema/report code, ready to paste.
+5. **Measurement** — KPI, target, and how we track it.
+
+## Reasoning Discipline
+- Do your internal reasoning inside a ```think block. NEVER let ```think / <think> content reach the client — all final answers must be clean, ready-to-ship text.
 - Be direct and data-driven. Use numbers, scores, specific findings.
 - Use Hinglish when it helps communicate better.
 - Always think about ROI — what SEO fix gives the biggest impact first.
@@ -153,13 +169,34 @@ def _extract_seo_phases(content: str) -> list[dict[str, Any]]:
     return phases
 
 
-def _strip_think_blocks(content: str) -> str:
+def _strip_think_blocks(content: str | None) -> str:
+    if not content:
+        return ""
     cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
     cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
     return cleaned.strip()
 
 
 # ── Graph Nodes ──────────────────────────────────────────────────────────────
+
+MAX_LLM_RETRIES = 2
+LLM_TIMEOUT_SECONDS = 120
+
+
+def _get_llm_client() -> "openai.AsyncOpenAI":
+    """OpenAI-compatible client with CEO-key fallback (gold standard).
+
+    Uses per-workspace key/base first, then agency CEO key/base. Never
+    hard-codes a hy3 model. CPU-friendly: no local inference.
+    """
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    return (
+        openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        if base_url
+        else openai.AsyncOpenAI(api_key=api_key)
+    )
+
 
 async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
     """Call the LLM with tools. Returns tool calls or final response."""
@@ -169,40 +206,39 @@ async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
     )
 
     messages = [{"role": "system", "content": system}]
-    messages.extend(state.get("messages", []))
+    messages.extend(state.get("messages", []) or [])
 
-    client = openai.AsyncOpenAI(
-        api_key=settings.WORKSPACE_API_KEY or None,
-        base_url=settings.WORKSPACE_API_BASE or None,
-    )
+    model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
 
-    try:
-        resp = await client.chat.completions.create(
-            model=settings.WORKSPACE_AGENT_MODEL,
-            messages=messages,
-            tools=SEO_TOOLS,
-            tool_choice="auto",
-            temperature=0.7,
-            max_tokens=4096,
-        )
-    except Exception as e:
-        logger.exception("SEO Agent LLM call failed")
-        return {"error": f"LLM call failed: {str(e)[:200]}"}
+    last_error: str | None = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            client = _get_llm_client()
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=SEO_TOOLS,
+                tool_choice="auto",
+                temperature=0.7,
+                max_tokens=4096,
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+            break
+        except Exception as e:  # noqa: BLE001 — network/API errors are broad
+            last_error = str(e)
+            logger.warning("SEO Agent LLM call failed (attempt %d/%d): %s", attempt, MAX_LLM_RETRIES, e)
+    else:
+        logger.exception("SEO Agent LLM call failed after %d attempts", MAX_LLM_RETRIES)
+        return {"error": f"LLM call failed: {(last_error or '')[:200]}"}
 
     choice = resp.choices[0]
     content = choice.message.content or ""
     tool_calls = choice.message.tool_calls or []
 
     new_messages = []
+    best_phases = []
     if content:
-        phases = _extract_seo_phases(content)
-        if phases:
-            new_messages.append({"role": "assistant", "content": content, "tool_calls": []})
-            return {
-                "messages": new_messages,
-                "thinking_phases": phases,
-                "final_output": content if not tool_calls else "",
-            }
+        best_phases = _extract_seo_phases(content)
         new_messages.append({"role": "assistant", "content": content})
 
     if tool_calls:
@@ -222,7 +258,7 @@ async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
             ],
         })
 
-        # Execute tools
+        # Execute tools (each guarded so one bad tool can't crash the run)
         for tc in tool_calls:
             tool_name = tc.function.name
             try:
@@ -231,8 +267,12 @@ async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
                 args = {}
 
             logger.info("SEO tool call: %s(%s)", tool_name, args)
-            result = execute_seo_tool(tool_name, args)
-            result_str = json.dumps(result, default=str)[:8000]
+            try:
+                result = execute_seo_tool(tool_name, args)
+                result_str = json.dumps(result, default=str)[:8000]
+            except Exception as tool_exc:  # noqa: BLE001
+                logger.exception("SEO tool %s failed", tool_name)
+                result_str = json.dumps({"error": f"{tool_name} failed: {str(tool_exc)[:200]}"}, default=str)
 
             new_messages.append({
                 "role": "tool",
@@ -240,14 +280,14 @@ async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
                 "content": result_str,
             })
 
-        return {"messages": new_messages}
+        return {"messages": new_messages, "thinking_phases": best_phases}
 
     # No tool calls — this is the final response
     final = _strip_think_blocks(content)
     if not final:
         final = "SEO analysis complete. Check the thinking phases above for details."
 
-    return {"messages": new_messages, "final_output": final}
+    return {"messages": new_messages, "thinking_phases": best_phases, "final_output": final}
 
 
 def seo_route(state: SEOAgentState) -> str:
@@ -304,13 +344,16 @@ def build_seo_graph(checkpointer=None) -> StateGraph:
 # ── Agent Class ──────────────────────────────────────────────────────────────
 
 class SEOAgent:
-    """SEO Agent for a specific workspace — with real tools."""
+    """SEO Agent scoped to ONE workspace + client (no shared global state)."""
 
-    def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
+    def __init__(self, workspace_name: str = "Default", client_name: str = "Client",
+                 workspace_id: str | None = None, client_id: str | None = None):
         self.workspace_name = workspace_name
         self.client_name = client_name
-        self.graph = build_seo_graph(get_checkpointer(self.workspace_name, "seo"))
-        self._thread_id = f"seo_{workspace_name}"
+        self.workspace_id = workspace_id or workspace_name
+        self.client_id = client_id or client_name
+        self._thread_id = f"seo_{self.workspace_id}"
+        self.graph = build_seo_graph(get_checkpointer(self.workspace_id, "seo"))
 
     async def chat(
         self,
@@ -318,8 +361,13 @@ class SEOAgent:
         conversation_history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Chat with SEO agent. Returns (response, thinking_phases)."""
+        initial_messages = [{"role": "user", "content": message}]
+        if conversation_history:
+            for m in conversation_history:
+                if isinstance(m, dict) and m.get("role") and m.get("content"):
+                    initial_messages.insert(-1, {"role": m["role"], "content": m["content"]})
         initial_state = {
-            "messages": [{"role": "user", "content": message}],
+            "messages": initial_messages,
             "workspace_name": self.workspace_name,
             "client_name": self.client_name,
             "thinking_phases": [],
@@ -331,7 +379,7 @@ class SEOAgent:
         try:
             result = await self.graph.ainvoke(
                 initial_state,
-                config={"configurable": {"thread_id": self._thread_id}},
+                config={"configurable": {"thread_id": self._thread_id, "workspace_id": self.workspace_id}},
             )
         except Exception:
             logger.exception("SEO Agent execution failed")
@@ -369,7 +417,7 @@ class SEOAgent:
         4. On completion, Content Agent notifies SEO Agent back
         """
         brief_content = (
-            f"SEO Content Request:\n"
+            f"SEO Content Request (workspace: {self.workspace_id}, client: {self.client_name}):\n"
             f"- Type: {content_type}\n"
             f"- Topic: {topic}\n"
             f"- Platform: {platform}\n"
@@ -382,7 +430,7 @@ class SEOAgent:
             send_message(
                 from_agent="seo",
                 to_agent="content",
-                workspace_id=self.workspace_name,
+                workspace_id=self.workspace_id,
                 subject=f"SEO needs {content_type}: {topic[:50]}",
                 content=brief_content,
                 message_type="brief",
@@ -391,6 +439,8 @@ class SEOAgent:
                     "platform": platform,
                     "style": style,
                     "priority": priority,
+                    "workspace_id": self.workspace_id,
+                    "client_id": self.client_id,
                 },
             )
             logger.info(

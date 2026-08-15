@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Annotated, Any, TypedDict
 
 import openai
@@ -25,6 +26,35 @@ from admin.workspace.agent_bus import send_message
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
+MAX_LLM_RETRIES = 2
+LLM_TIMEOUT_SECONDS = 120
+
+
+def _strip_think_blocks(content: str) -> str:
+    """Remove model ```think / <think> reasoning blocks from client-facing text.
+
+    Mirrors the gold-standard _strip_think_blocks in sba.py / website.py so
+    thinking traces never leak into ads copy or strategy output.
+    """
+    cleaned = re.sub(r"```think.*?```", "", content or "", flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
+
+
+def _get_llm_client() -> "openai.AsyncOpenAI":
+    """OpenAI-compatible client with CEO-key fallback (gold standard).
+
+    Uses the per-workspace key/base first, then the agency CEO key/base, and
+    never hard-codes a hy3 model. CPU-friendly: no local inference.
+    """
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    return (
+        openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        if base_url
+        else openai.AsyncOpenAI(api_key=api_key)
+    )
+
 
 ADS_SYSTEM_PROMPT = """You are the Ads Agent for workspace '{workspace_name}' (client: {client_name}).
 
@@ -101,12 +131,30 @@ You are a performance marketing specialist focused on paid advertising.
 
 {workspace_context}
 
+## Ad Copy Quality Bar (client-facing)
+When you write ad copy or a brief, every deliverable must be:
+- **Platform-native**: hook-first, scannable, native to Meta/Google style — no corporate fluff.
+- **Framework-driven**: apply PAS (Problem-Agitate-Solution), BAB (Before-After-Bridge), or a proven hook formula (curiosity, objection, identity, social proof).
+- **Specific & measurable**: name the audience, the offer, the CTA, and the metric target (CPA/ROAS).
+- **Varied**: always ship 3+ variants with a clear A/B hypothesis per variant.
+- **Compliant**: no banned claims, no missing disclaimers, platform policy-safe.
+
+## Response Structure (when delivering strategy or copy)
+1. **Situation** — what's true for this client right now (goal, budget, audience).
+2. **Strategy** — the 1-2 punch that maximizes ROAS (prospecting + retargeting).
+3. **Deliverables** — concrete copy/brief/plan, each with a hypothesis.
+4. **Measurement** — the KPI, the target, and the kill/pivot threshold.
+
+## Reasoning Discipline
+- Do your internal reasoning inside a ```think block. NEVER let ```think / <think> content reach the client — all final copy must be clean, ready-to-ship text.
+- Be direct and data-driven. Use numbers, scores, specific findings. Never give generic advice.
+
 ## Thinking Process
 1. What's the advertising goal?
 2. What budget/platforms are available?
 3. What's the target audience?
 4. What approach maximizes ROAS?
-5. What's my specific recommendation?
+5. What's my specific recommendation (with variants + measurement)?
 """
 
 
@@ -133,23 +181,31 @@ async def ads_call_llm(state: AdsAgentState) -> dict:
     if not any(m.get("role") == "user" for m in messages):
         messages.append({"role": "user", "content": "Hello"})
 
-    try:
-        client_api = openai.AsyncOpenAI(
-            api_key=settings.WORKSPACE_API_KEY or None,
-            base_url=settings.WORKSPACE_API_BASE or None,
-        )
-        response = await client_api.chat.completions.create(
-            model=settings.WORKSPACE_AGENT_MODEL,
-            messages=messages,
-            tools=ADS_TOOLS,
-            tool_choice="auto",
-        )
-    except Exception as exc:
-        logger.exception("Ads Agent LLM call failed")
-        return {"error": str(exc), "messages": [], "tool_round": state.get("tool_round", 0)}
+    model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
+
+    last_error: str | None = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            client_api = _get_llm_client()
+            response = await client_api.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=ADS_TOOLS,
+                tool_choice="auto",
+                temperature=0.7,
+                max_tokens=4096,
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 — network/API errors are broad
+            last_error = str(exc)
+            logger.warning("Ads Agent LLM call failed (attempt %d/%d): %s", attempt, MAX_LLM_RETRIES, exc)
+    else:
+        logger.exception("Ads Agent LLM call failed after %d attempts", MAX_LLM_RETRIES)
+        return {"error": last_error, "messages": [], "tool_round": state.get("tool_round", 0)}
 
     msg = response.choices[0].message
-    assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+    assistant_msg: dict[str, Any] = {"role": "assistant", "content": _strip_think_blocks(msg.content) or ""}
     if msg.tool_calls:
         assistant_msg["tool_calls"] = [
             {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
@@ -191,9 +247,9 @@ async def ads_run_tools(state: AdsAgentState) -> dict:
 
 
 async def ads_finalize(state: AdsAgentState) -> dict:
-    for msg in reversed(state.get("messages", [])):
+    for msg in reversed(state.get("messages", []) or []):
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
-            return {"final_output": msg["content"]}
+            return {"final_output": _strip_think_blocks(msg["content"])}
     if state.get("error"):
         return {"final_output": f"Ads Agent error: {state['error'][:200]}"}
     return {"final_output": "Ads Agent analysis complete."}
@@ -212,25 +268,40 @@ def build_ads_graph(checkpointer=None) -> StateGraph:
 
 
 class AdsAgent:
-    """Ads Agent for a specific workspace."""
+    """Ads Agent scoped to ONE workspace + client (no shared global state).
 
-    def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
+    `workspace_id`/`client_id` are threaded everywhere so multiple workspaces
+    and clients never cross-contaminate checkpointers, thread IDs, or bus messages.
+    """
+
+    def __init__(self, workspace_name: str = "Default", client_name: str = "Client",
+                 workspace_id: str | None = None, client_id: str | None = None):
         self.workspace_name = workspace_name
         self.client_name = client_name
-        self._thread_id = f"ads_{workspace_name}"
-        self.graph = build_ads_graph(get_checkpointer(self.workspace_name, "ads"))
+        self.workspace_id = workspace_id or workspace_name
+        self.client_id = client_id or client_name
+        self._thread_id = f"ads_{self.workspace_id}"
+        self.graph = build_ads_graph(get_checkpointer(self.workspace_id, "ads"))
 
-    async def chat(self, message: str) -> tuple[str, str]:
-        workspace_context = f"Workspace: {self.workspace_name}, Client: {self.client_name}"
+    async def chat(self, message: str, conversation_history: list[dict[str, str]] | None = None) -> tuple[str, str]:
+        workspace_context = f"Workspace: {self.workspace_name} ({self.workspace_id}), Client: {self.client_name}"
+        initial_messages = [{"role": "user", "content": message}]
+        if conversation_history:
+            for m in conversation_history:
+                if isinstance(m, dict) and m.get("role") and m.get("content"):
+                    initial_messages.insert(-1, {"role": m["role"], "content": m["content"]})
         initial_state = {
-            "messages": [{"role": "user", "content": message}],
+            "messages": initial_messages,
             "workspace_name": self.workspace_name,
             "client_name": self.client_name,
             "workspace_context": workspace_context,
             "tool_round": 0, "final_output": "", "error": None,
         }
         try:
-            result = await self.graph.ainvoke(initial_state, config={"configurable": {"thread_id": self._thread_id}})
+            result = await self.graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": self._thread_id, "workspace_id": self.workspace_id}},
+            )
         except Exception:
             logger.exception("Ads Agent execution failed")
             return "Ads Agent temporarily unavailable.", self._thread_id
@@ -292,11 +363,11 @@ class AdsAgent:
             send_message(
                 from_agent="ads",
                 to_agent="content",
-                workspace_id=self.workspace_name,
+                workspace_id=self.workspace_id,
                 subject=f"Ads needs {content_type}: {topic[:50]}",
                 content=brief_content,
                 message_type="brief",
-                metadata=brief,
+                metadata={**brief, "workspace_id": self.workspace_id, "client_id": self.client_id},
             )
             logger.info(
                 "Ads Agent requested content: %s (%s) x%d | objective=%s, hook=%s",

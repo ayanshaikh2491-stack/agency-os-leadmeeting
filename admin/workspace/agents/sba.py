@@ -142,7 +142,17 @@ Don't just talk about finding leads. ACTUALLY browse and find them.
 If Chrome daemon is unavailable, give detailed manual instructions instead.
 
 ### 6. Report
-Summarise what you found. List leads with scores. Suggest next steps.
+Summarise what you found in a CLIENT-FACING, scannable way. When you have lead
+data, present it as a clear, structured list — one block per lead — containing:
+  - **Name / Business** (as saved)
+  - **Source** (platform you found them on)
+  - **Fit score (0-100)** + verdict (Hot / Warm / Cold)
+  - **Why they're a fit** (one line tied to the client's ICP)
+  - **Next action** (save, email, or book a meeting)
+End with a short "Recommended next steps" line for the owner.
+
+Do NOT dump raw tool JSON to the owner. Summarise it into plain language.
+Think blocks stay hidden from the owner; only this Report section is shown.
 
 ## BEHAVIORAL RULES
 - You are a SALES AGENT. You find leads and close deals.
@@ -232,6 +242,7 @@ def _merge_phases(
 class SBAAgentState(TypedDict):
     messages: Annotated[list[dict[str, Any]], _append_messages]
     workspace_name: str
+    workspace_id: str
     client_name: str
     thinking_phases: Annotated[list[dict[str, Any]], _merge_phases]
     tool_round: int
@@ -270,22 +281,63 @@ def _extract_sba_phases(content: str) -> list[dict[str, Any]]:
 
 
 def _strip_think_blocks(content: str) -> str:
+    """Remove model "thinking" tokens so only the final answer reaches the client.
+
+    Tolerates every known model-output quirk (mirrors langgraph_sba.py gold standard):
+      1. ```think ... ``` fenced blocks
+      2. <think> ... </think> tags (case-insensitive, including stray leading `<`)
+      3. Plain "think" prefix (some small models prepend it)
+      4. A trailing ``` with no opening fence (truncate it)
+    Returns the cleaned text, or "" if nothing usable remains.
+    """
+    if not content:
+        return ""
+
+    # 1. Fenced ```think blocks
     cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
-    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
-    return cleaned.strip()
+    # 4. Stray trailing fence with no matching opener
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    # 3. Plain "think" prefix on the whole content
+    if cleaned.strip().lower().startswith("think"):
+        body = cleaned.strip()[5:].strip()
+        # Drop numbered thinking sections ("1. Deconstruct: ...") and keep any
+        # trailing response that follows a blank line — mirrors langgraph_sba.
+        lines = body.split("\n")
+        response_lines: list[str] = []
+        in_thinking = False
+        for line in lines:
+            if re.match(r"^\s*\d+\.\s+\w", line):
+                in_thinking = True
+                continue
+            if in_thinking and re.match(r"^\s*$", line):
+                in_thinking = False
+                continue
+            if not in_thinking:
+                response_lines.append(line)
+        cleaned = "\n".join(response_lines).strip() or body
+    # 2. <think>...</think> tags (also tolerate a stray leading `<`)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+    # Tidy any leftover stray fence markers
+    cleaned = re.sub(r"```", "", cleaned).strip()
+    return cleaned
+
+
+def _get_llm_client() -> "openai.AsyncOpenAI":
+    """OpenAI-compatible async client (hardened mirror of website.py).
+
+    Uses settings.WORKSPACE_API_KEY / WORKSPACE_API_BASE / WORKSPACE_AGENT_MODEL
+    — the hy3-free model (big-pickle on https://opencode.ai/zen/v1) in this
+    project's .env. Never defaults to a Groq hy3 (70b) model.
+    """
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or None
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    return openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 # ── Combine tools ────────────────────────────────────────────────────────────
 
-# SBA has ALL Chrome tools + SBA-specific tools
-SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS
-
-# Store tools (client storefront link, client account, products, publish)
-try:
-    from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
-    SBA_ALL_TOOLS = SBA_ALL_TOOLS + _STORE_TOOLS
-except Exception:  # noqa: BLE001
-    pass
+# SBA_ALL_TOOLS (the full, deduplicated, import-safe tool list) is assembled
+# further below, AFTER SBA_EMAIL_TOOLS is defined (see _load_all_sba_tools).
 
 # ── SBA Email/Meeting/Translate Tool Definitions ────────────────────────────
 
@@ -395,15 +447,41 @@ SBA_EMAIL_TOOLS = [
     },
 ]
 
-# Extend SBA_ALL_TOOLS with email/meeting/translate tools
-SBA_ALL_TOOLS = CHROME_TOOLS + SBA_TOOLS + SBA_EMAIL_TOOLS
+# ── Combine all tools (once, deduplicated, import-safe) ──────────────────────
 
-# Store tools (client storefront link, client account, products, publish)
-try:
-    from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
-    SBA_ALL_TOOLS = SBA_ALL_TOOLS + _STORE_TOOLS
-except Exception:  # noqa: BLE001
-    pass
+
+def _load_all_sba_tools() -> list[dict[str, Any]]:
+    """Build the deduplicated tool list from every SBA tool group.
+
+    Order: Chrome (lead browsing) + SBA-specific + email/meeting/translate +
+    Store tools. Deduplicated by tool name so schema tests and the LLM's
+    function-calling always see a clean, unique tool set.
+    """
+    tools: list[dict[str, Any]] = list(CHROME_TOOLS) + list(SBA_TOOLS) + list(SBA_EMAIL_TOOLS)
+    try:
+        from admin.tools.store_tools import STORE_TOOLS as _STORE_TOOLS
+
+        tools = tools + list(_STORE_TOOLS)
+    except Exception:  # noqa: BLE001
+        pass
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for t in tools:
+        name = (t or {}).get("function", {}).get("name")
+        if name in seen:
+            continue
+        seen.add(name)
+        deduped.append(t)
+    return deduped
+
+
+# Single source of truth for every SBA entrypoint.
+SBA_ALL_TOOLS = _load_all_sba_tools()
+
+
+# NOTE: SBA_ALL_TOOLS is assembled once above by _load_all_sba_tools()
+# (Chrome + SBA_TOOLS + SBA_EMAIL_TOOLS + Store tools, deduplicated).
+# Do NOT re-append here — it previously caused duplicate tool names.
 
 
 # ── Graph Nodes─────
@@ -419,23 +497,27 @@ async def _llm_call_with_retry(
     client_api: openai.AsyncOpenAI,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
+    model: str | None = None,
 ) -> Any:
     """Call the LLM with tools, retrying on tool_use_failed errors.
 
-    Lower temperature keeps function calling stable, and a corrective
-    system note helps the model recover if it emits a malformed call.
+    Lower temperature keeps function calling stable, a timeout prevents the
+    agent from hanging a workspace, and a corrective system note helps the
+    model recover if it emits a malformed call.
     """
+    model = model or settings.WORKSPACE_AGENT_MODEL or "big-pickle"
     last_exc: Exception | None = None
 
     for attempt in range(MAX_LLM_TOOL_RETRIES + 1):
         try:
             return await client_api.chat.completions.create(
-                model=settings.WORKSPACE_AGENT_MODEL,
+                model=model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
                 temperature=0.3,
                 max_tokens=4096,
+                timeout=90.0,
             )
         except openai.BadRequestError as exc:
             last_exc = exc
@@ -490,14 +572,13 @@ async def sba_call_llm(state: SBAAgentState) -> dict[str, Any]:
         })
 
     try:
-        client_api = openai.AsyncOpenAI(
-            api_key=settings.WORKSPACE_API_KEY or None,
-            base_url=settings.WORKSPACE_API_BASE or None,
-        )
+        client_api = _get_llm_client()
+        model = settings.WORKSPACE_AGENT_MODEL or "big-pickle"  # hy3-free default
         response = await _llm_call_with_retry(
             client_api,
             messages=messages,
             tools=SBA_ALL_TOOLS,
+            model=model,
         )
     except Exception as exc:
         logger.exception("SBA Agent LLM call failed")
@@ -580,6 +661,8 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
     # Get Chrome tool from registry or create one
     from admin.agency.langgraph_sba import _chrome_registry
     workspace = state.get("workspace_name", "agency")
+    # Single, stable workspace_id for this run so tool calls never cross clients.
+    workspace_id = state.get("workspace_id") or workspace
     chrome = _chrome_registry.get(workspace)
     if chrome is None:
         chrome = ChromeTool(browser_name="sba", workspace=workspace)
@@ -611,12 +694,12 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
         else:
             # Check if it's an email/meeting/translate tool (async)
             SBA_NEW_TOOLS = {
-                "send_lead_email": None,
-                "check_lead_replies": None,
-                "create_meeting": None,
-                "translate_for_owner": None,
-                "translate_for_client": None,
-                "generate_meeting_summary": None,
+                "send_lead_email",
+                "check_lead_replies",
+                "create_meeting",
+                "translate_for_owner",
+                "translate_for_client",
+                "generate_meeting_summary",
             }
             if tool_name in SBA_NEW_TOOLS:
                 try:
@@ -624,9 +707,9 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                     from admin.tools.sba_meeting import SBAMeetingManager
                     from admin.tools.sba_translate import SBATranslationEngine
 
-                    async def _dispatch_new_tool(name: str, args: dict) -> str:
+                    async def _dispatch_new_tool(name: str, args: dict, ws_id: str) -> str:
                         if name == "send_lead_email":
-                            c = build_workspace_email_client(workspace)
+                            c = build_workspace_email_client(ws_id)
                             sent = await c.send_email(
                                 to_email=args.get("to_email", ""),
                                 subject=args.get("subject", ""),
@@ -634,11 +717,20 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                             )
                             return json.dumps({"sent": sent})
                         elif name == "check_lead_replies":
-                            c = build_workspace_email_client(workspace)
+                            c = build_workspace_email_client(ws_id)
                             replies = await c.check_replies(mark_read=args.get("mark_read", True))
                             return json.dumps(replies, default=str, indent=2)[:4000]
                         elif name == "create_meeting":
-                            m = SBAMeetingManager(email_client=build_workspace_email_client(workspace))
+                            # Guard every required field so a malformed call
+                            # returns a clean error instead of a KeyError crash.
+                            required = ("lead_id", "lead_name", "lead_email", "proposed_time")
+                            missing = [k for k in required if not str(args.get(k, "")).strip()]
+                            if missing:
+                                return json.dumps({
+                                    "error": "create_meeting missing fields",
+                                    "missing": missing,
+                                })
+                            m = SBAMeetingManager(email_client=build_workspace_email_client(ws_id))
                             meeting = await m.create_meeting(
                                 lead_id=args["lead_id"],
                                 lead_name=args["lead_name"],
@@ -649,14 +741,14 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                         elif name == "translate_for_owner":
                             t = SBATranslationEngine()
                             result = await t.translate_for_owner(
-                                text=args["text"],
+                                text=args.get("text", ""),
                                 source_lang=args.get("source_lang", "English"),
                             )
                             return json.dumps({"translation": result})
                         elif name == "translate_for_client":
                             t = SBATranslationEngine()
                             result = await t.translate_for_client(
-                                text=args["text"],
+                                text=args.get("text", ""),
                                 target_lang=args.get("target_lang", "English"),
                             )
                             return json.dumps({"translation": result})
@@ -666,7 +758,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                             return json.dumps(summary, default=str, indent=2)[:4000]
                         return json.dumps({"error": f"Unknown new tool: {name}"})
 
-                    result_text = await _dispatch_new_tool(tool_name, tool_args)
+                    result_text = await _dispatch_new_tool(tool_name, tool_args, workspace_id)
                 except Exception as exc:
                     result_text = f"Error executing {tool_name}: {exc}"
                 tool_results.append({
@@ -685,7 +777,14 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                 if tool_name in STORE_TOOL_NAMES:
                     try:
                         from admin.tools.store_tools import execute_store_tool
-                        result_text = execute_store_tool(tool_name, tool_args)
+                        # Ensure every store call is scoped to THIS workspace so
+                        # one client never touches another client's store.
+                        store_args = dict(tool_args)
+                        if not store_args.get("workspace_id"):
+                            store_args["workspace_id"] = workspace_id
+                        if not store_args.get("client"):
+                            store_args["client"] = state.get("client_name", "Client")
+                        result_text = execute_store_tool(tool_name, store_args)
                     except Exception as exc:
                         result_text = f"Error executing {tool_name}: {exc}"
                     tool_results.append({
@@ -713,13 +812,13 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
 
 
 async def sba_finalize(state: SBAAgentState) -> dict[str, Any]:
-    """Extract the final output from the conversation."""
+    """Extract a clean, client-facing final output from the conversation."""
     # Check if we already have a final output
     output = state.get("final_output", "")
     if output:
         return {"final_output": _strip_think_blocks(output)}
 
-    # Walk messages backward to find last assistant content
+    # Walk messages backward to find last assistant content (think-free).
     for msg in reversed(state.get("messages", [])):
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
             full = msg["content"]
@@ -727,33 +826,40 @@ async def sba_finalize(state: SBAAgentState) -> dict[str, Any]:
             if stripped and len(stripped) > 20:
                 return {"final_output": stripped}
             if not stripped and full:
+                # Only the think block survived — better than nothing.
                 return {"final_output": full}
 
     if state.get("error"):
         return {"final_output": f"SBA Agent error: {state['error'][:200]}"}
 
     # Synthesize a readable summary from tool results (max-rounds case).
+    # Group by tool so the owner sees structured, not concatenated, data.
     tool_outputs: list[str] = []
+    seen: set[str] = set()
     for msg in state.get("messages", []):
         if isinstance(msg, dict) and msg.get("role") == "tool" and msg.get("content"):
             text = str(msg["content"]).strip()
-            if text and text not in tool_outputs:
+            key = text[:200]
+            if text and key not in seen:
+                seen.add(key)
                 tool_outputs.append(text[:600])
 
     if tool_outputs:
-        lines = ["SBA lead generation summary (tool data):", ""]
+        lines = ["SBA lead generation summary:", ""]
         for i, text in enumerate(tool_outputs[:8], 1):
             lines.append(f"{i}. {text}")
             lines.append("")
-        return {"final_output": "\n".join(lines)}
+        return {"final_output": "\n".join(lines).strip()}
 
     # Use thinking phases as fallback
     phases = state.get("thinking_phases", [])
     if phases:
         summary = "SBA Lead Generation complete:\n\n"
         for p in phases:
-            summary += f"**{p['phase'].title()}**: {p['content'][:200]}...\n\n"
-        return {"final_output": summary}
+            phase = p.get("phase", "step")
+            content = p.get("content", "")
+            summary += f"**{phase.title()}**: {content[:200]}...\n\n"
+        return {"final_output": summary.strip()}
 
     return {"final_output": "SBA Agent lead generation complete."}
 
@@ -805,7 +911,8 @@ class SBAAgent:
     ):
         self.workspace_name = workspace_name
         self.client_name = client_name
-        self.workspace_id = workspace_id or workspace_name
+        # Stable id for ALL tool calls — never let a blank value cross clients.
+        self.workspace_id = (workspace_id or workspace_name or "agency").strip() or "agency"
         self.graph = build_sba_workspace_graph(get_checkpointer(self.workspace_name, "sba"))
         self._thread_id = f"sba_ws_{workspace_name}"
 
@@ -824,6 +931,7 @@ class SBAAgent:
         initial_state: SBAAgentState = {
             "messages": [{"role": "user", "content": message}],
             "workspace_name": self.workspace_name,
+            "workspace_id": self.workspace_id,
             "client_name": self.client_name,
             "thinking_phases": [],
             "tool_round": 0,

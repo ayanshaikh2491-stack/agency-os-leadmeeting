@@ -14,6 +14,16 @@ UNDERSTAND_SYSTEM = """You are a Visual Content Strategist for an agency.
 
 Your job: DEEPLY understand the incoming brief before creating anything.
 
+CONTEXT AWARENESS:
+- You may be given workspace_id, client_name, and industry in the brief/brand data.
+- Tailor every decision to THAT client. Never mix two clients' brand assets.
+- If industry is provided, use its conventions (e.g. realestate = trust + aspiration,
+  fitness = energy + transformation, finance = credibility + clarity).
+
+OUTPUT RULES:
+- Return ONLY valid JSON (no markdown, no <think> blocks, no commentary).
+- Every field must be concrete and usable by a downstream prompt engineer.
+
 Analyze the brief and extract:
 1. CONTENT_TYPE — What exactly needs to be created? (ad_creative, social_post, hero_image, carousel, story, video, ugc, etc.)
 2. PLATFORM — Where will this be published? (instagram, facebook, youtube, linkedin, tiktok, website, etc.)
@@ -211,3 +221,22 @@ Return your validation as JSON:
     "minor_polish": ["..."],
     "reasoning": "Your quality assessment..."
 }"""
+
+# Step ordering used by ReasoningChain.run (single source of truth).
+REASONING_STEP_ORDER = ["understand", "research", "strategize", "execute", "validate"]
+
+
+def build_context_line(workspace_id: str = "", client_name: str = "", industry: str = "") -> str:
+    """Return a compact context line to inject into user prompts.
+
+    Keeps multi-tenant reasoning isolated and explicit. Empty parts are
+    omitted so prompts stay clean when context is unknown.
+    """
+    parts = []
+    if workspace_id:
+        parts.append(f"workspace_id={workspace_id}")
+    if client_name:
+        parts.append(f"client={client_name}")
+    if industry:
+        parts.append(f"industry={industry}")
+    return " | ".join(parts)

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
@@ -63,6 +64,8 @@ from admin.workspace.agents.content_templates import (
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
+MAX_LLM_RETRIES = 2
+LLM_TIMEOUT_SECONDS = 120
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -104,13 +107,102 @@ class ContentState(TypedDict):
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _strip_think_blocks(content: str | None) -> str:
+    """Remove model "thinking" tokens so only the final answer reaches the client.
+
+    Tolerates every known model-output quirk (mirrors sba.py gold standard):
+      ```think ... ``` fences, <think>...</think> tags, a plain "think" prefix,
+      and a stray trailing ``` fence. Returns cleaned text or "" if none usable.
+    """
+    if not content:
+        return ""
+    cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    if cleaned.strip().lower().startswith("think"):
+        body = cleaned.strip()[5:].strip()
+        lines = body.split("\n")
+        response_lines: list[str] = []
+        in_thinking = False
+        for line in lines:
+            if re.match(r"^\s*\d+\.\s+\w", line):
+                in_thinking = True
+                continue
+            if in_thinking and re.match(r"^\s*$", line):
+                in_thinking = False
+                continue
+            if not in_thinking:
+                response_lines.append(line)
+        cleaned = "\n".join(response_lines).strip() or body
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+    cleaned = re.sub(r"```", "", cleaned).strip()
+    return cleaned
+
+
 def _get_llm_client() -> openai.OpenAI:
-    """OpenAI-compatible LLM client (works with Groq, OpenRouter, etc.)."""
+    """OpenAI-compatible client with CEO-key fallback (gold standard).
+
+    Uses per-workspace key/base first, then agency CEO key/base. Never
+    hard-codes a hy3 model. CPU-friendly: no local inference.
+    """
     api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
     base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
-    if base_url:
-        return openai.OpenAI(api_key=api_key, base_url=base_url)
-    return openai.OpenAI(api_key=api_key)
+    return openai.OpenAI(api_key=api_key, base_url=base_url) if base_url else openai.OpenAI(api_key=api_key)
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    """Extract the first balanced JSON object from arbitrary LLM text.
+
+    Handles: ```json fences, bare ``` fences, and JSON embedded in prose.
+    Raises json.JSONDecodeError / ValueError if no usable object is found.
+    """
+    if not text:
+        raise ValueError("empty text")
+
+    # 1. Inside a fenced block (```json ... ``` or ``` ... ```)
+    fence_text = text
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 3:
+            block = parts[1]
+            if block.lstrip().lower().startswith("json"):
+                block = block.lstrip()[4:]
+            fence_text = block.strip()
+
+    # 2. Try the whole thing directly
+    try:
+        parsed = json.loads(fence_text)
+        if isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 3. Find first balanced {...} span (tolerates surrounding prose)
+    start = fence_text.find("{")
+    if start == -1:
+        raise ValueError("no JSON object found")
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(fence_text)):
+        ch = fence_text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(fence_text[start : i + 1])
+
+    raise ValueError("unbalanced JSON object")
 
 
 def _load_agency_knowledge(workspace_id: str) -> dict[str, Any]:
@@ -233,23 +325,33 @@ def _llm_call(
     temperature: float = 0.3,
     max_tokens: int = 2000,
 ) -> str:
-    """Simple LLM call — returns assistant content string."""
-    client = _get_llm_client()
+    """Simple LLM call — returns assistant content string (think-block stripped).
+
+    Retries up to MAX_LLM_RETRIES times with a hard timeout so a slow/failed
+    upstream model never hangs the content pipeline.
+    """
     model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        logger.exception("LLM call failed")
-        return f"Error: {e}"
+    last_error: str | None = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            client = _get_llm_client()
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+            raw = response.choices[0].message.content or ""
+            return _strip_think_blocks(raw) or raw
+        except Exception as e:  # noqa: BLE001 — network/API errors are broad
+            last_error = str(e)
+            logger.warning("Content LLM call failed (attempt %d/%d): %s", attempt, MAX_LLM_RETRIES, e)
+    logger.exception("Content LLM call failed after %d attempts", MAX_LLM_RETRIES)
+    return f"Error: {last_error or 'unknown'}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -293,18 +395,12 @@ def parse_brief(state: ContentState) -> dict[str, Any]:
 
     raw_response = _llm_call(system_prompt, user_text)
 
-    # Parse LLM response
+    # Parse LLM response (tolerant of code fences, think blocks, and surrounding prose)
     parsed_brief: dict[str, Any] = {}
     try:
-        # Try to extract JSON from response
-        text = raw_response.strip()
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.strip()
-        parsed_brief = json.loads(text)
-    except (json.JSONDecodeError, IndexError):
+        text = _strip_think_blocks(raw_response).strip()
+        parsed_brief = _extract_json_object(text)
+    except (json.JSONDecodeError, IndexError, ValueError):
         logger.warning("LLM brief parse failed, using fallback detection")
         parsed_brief = {}
 

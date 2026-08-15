@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Annotated, Any, TypedDict
 
 import openai
@@ -51,6 +52,8 @@ from admin.workspace.agent_bus import send_message
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 8
+MAX_LLM_RETRIES = 2
+LLM_TIMEOUT_SECONDS = 120
 
 
 # ── System Prompt ────────────────────────────────────────────────────────────
@@ -114,9 +117,48 @@ class SocialAgentState(TypedDict):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_llm_client() -> openai.OpenAI:
+    """OpenAI-compatible client with CEO-key fallback (gold standard).
+
+    Uses per-workspace key/base first, then agency CEO key/base. Never
+    hard-codes a hy3 model. CPU-friendly: no local inference.
+    """
     api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
     base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
     return openai.OpenAI(api_key=api_key, base_url=base_url) if base_url else openai.OpenAI(api_key=api_key)
+
+
+def _strip_think_blocks(content: str | None) -> str:
+    """Remove model "thinking" tokens so only the final answer reaches the client.
+
+    Tolerates every known model-output quirk (mirrors sba.py gold standard):
+      1. ```think ... ``` fenced blocks
+      2. <think> ... </think> tags (case-insensitive, including stray leading `<`)
+      3. Plain "think" prefix (some small models prepend it)
+      4. A trailing ``` with no opening fence (truncate it)
+    Returns the cleaned text, or "" if nothing usable remains.
+    """
+    if not content:
+        return ""
+    cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    if cleaned.strip().lower().startswith("think"):
+        body = cleaned.strip()[5:].strip()
+        lines = body.split("\n")
+        response_lines: list[str] = []
+        in_thinking = False
+        for line in lines:
+            if re.match(r"^\s*\d+\.\s+\w", line):
+                in_thinking = True
+                continue
+            if in_thinking and re.match(r"^\s*$", line):
+                in_thinking = False
+                continue
+            if not in_thinking:
+                response_lines.append(line)
+        cleaned = "\n".join(response_lines).strip() or body
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+    cleaned = re.sub(r"```", "", cleaned).strip()
+    return cleaned
 
 
 # ── Graph Nodes ──────────────────────────────────────────────────────────────
@@ -142,57 +184,50 @@ async def social_call_llm(state: SocialAgentState) -> dict[str, Any]:
     client = _get_llm_client()
     model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=SOCIAL_TOOLS,
-            tool_choice="auto",
-            temperature=0.3,
-            max_tokens=4096,
-        )
-    except Exception as e:
-        logger.exception("Social Agent LLM call failed")
-        return {"error": f"LLM call failed: {str(e)[:200]}"}
+    last_error: str | None = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            client = _get_llm_client()
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=SOCIAL_TOOLS,
+                tool_choice="auto",
+                temperature=0.3,
+                max_tokens=4096,
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+            break
+        except Exception as e:  # noqa: BLE001 — network/API errors are broad
+            last_error = str(e)
+            logger.warning("Social Agent LLM call failed (attempt %d/%d): %s", attempt, MAX_LLM_RETRIES, e)
+    else:
+        logger.exception("Social Agent LLM call failed after %d attempts", MAX_LLM_RETRIES)
+        return {"error": f"LLM call failed: {(last_error or '')[:200]}"}
 
     choice = response.choices[0]
     content = choice.message.content or ""
     tool_calls = choice.message.tool_calls or []
 
-    new_messages = []
-
+    # Tool calls: emit the assistant message with tool_calls ONLY.
+    # Execution is delegated to social_run_tools -> the graph re-enters call_llm
+    # after tool results, so we must NOT execute tools here (avoids double execution).
     if tool_calls:
-        new_messages.append({
-            "role": "assistant",
-            "content": content,
-            "tool_calls": [
-                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                for tc in tool_calls
-            ],
-        })
-
-        for tc in tool_calls:
-            tool_name = tc.function.name
-            try:
-                args = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-
-            logger.info("Social tool call: %s(%s)", tool_name, args)
-            result = execute_social_tool(tool_name, args)
-            result_str = json.dumps(result, default=str)[:8000]
-
-            new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
-
-        return {"messages": new_messages, "error": None}
-
-    # No tool calls — final response
-    new_messages.append({"role": "assistant", "content": content})
-    return {"messages": new_messages, "final_output": content, "error": None}
+        return {
+            "messages": [{
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in tool_calls
+                ],
+            }],
+            "error": None,
+        }
 
 
 def social_route(state: SocialAgentState) -> str:
-    """Route: tool_calls -> loop, no calls -> finalize."""
+    """Route: tool_calls -> run_tools, tool results -> call_llm, else finalize."""
     if state.get("error"):
         return "finalize"
     if state.get("tool_round", 0) >= MAX_TOOL_ROUNDS:
@@ -206,11 +241,15 @@ def social_route(state: SocialAgentState) -> str:
     if isinstance(last, dict) and last.get("tool_calls"):
         return "run_tools"
 
+    # Tool results -> re-enter LLM with fresh tool decisions
+    if isinstance(last, dict) and last.get("role") == "tool":
+        return "call_llm"
+
     return "finalize"
 
 
 async def social_run_tools(state: SocialAgentState) -> dict[str, Any]:
-    """Execute tools from last message."""
+    """Execute tools from last message (each guarded so one bad tool can't crash the run)."""
     messages = state.get("messages", [])
     last = messages[-1] if messages else {}
     tool_calls = last.get("tool_calls", []) if isinstance(last, dict) else []
@@ -227,8 +266,12 @@ async def social_run_tools(state: SocialAgentState) -> dict[str, Any]:
             args = {}
 
         logger.info("Social tool: %s(%s)", name, args)
-        result = execute_social_tool(name, args)
-        result_str = json.dumps(result, default=str)[:8000]
+        try:
+            result = execute_social_tool(name, args)
+            result_str = json.dumps(result, default=str)[:8000]
+        except Exception as tool_exc:  # noqa: BLE001
+            logger.exception("Social tool %s failed", name)
+            result_str = json.dumps({"error": f"{name} failed: {str(tool_exc)[:200]}"}, default=str)
 
         results.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result_str})
 
@@ -236,14 +279,14 @@ async def social_run_tools(state: SocialAgentState) -> dict[str, Any]:
 
 
 def social_finalize(state: SocialAgentState) -> dict[str, Any]:
-    """Extract final output."""
+    """Extract final output (think-block stripped)."""
     output = state.get("final_output", "")
     if output:
-        return {"final_output": output}
+        return {"final_output": _strip_think_blocks(output)}
 
     for msg in reversed(state.get("messages", [])):
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
-            return {"final_output": msg["content"]}
+            return {"final_output": _strip_think_blocks(msg["content"])}
 
     if state.get("error"):
         return {"final_output": f"Social Agent error: {state['error'][:200]}"}
@@ -261,6 +304,7 @@ def build_social_graph(checkpointer=None) -> StateGraph:
     graph.set_entry_point("call_llm")
     graph.add_conditional_edges("call_llm", social_route, {
         "run_tools": "run_tools",
+        "call_llm": "call_llm",
         "finalize": "finalize",
     })
     graph.add_edge("run_tools", "call_llm")
@@ -280,13 +324,15 @@ def get_social_graph() -> StateGraph:
 # ── SocialAgent Class ──────────────────────────────────────────────────────
 
 class SocialAgent:
-    """Social Media Strategist with real tools."""
+    """Social Media Strategist with real tools. Scoped to ONE workspace + client."""
 
-    def __init__(self, workspace_name: str = "Default", client_name: str = "Client"):
+    def __init__(self, workspace_name: str = "Default", client_name: str = "Client",
+                 workspace_id: str | None = None):
         self.workspace_name = workspace_name
         self.client_name = client_name
-        self._thread_id = f"social_{workspace_name}"
-        self._graph = build_social_graph(get_checkpointer(self.workspace_name, "social"))
+        self.workspace_id = workspace_id or workspace_name
+        self._thread_id = f"social_{self.workspace_id}"
+        self._graph = build_social_graph(get_checkpointer(self.workspace_id, "social"))
 
     async def chat(self, message: str) -> tuple[str, str]:
         """Process a social media request."""
@@ -360,7 +406,7 @@ class SocialAgent:
             send_message(
                 from_agent="social",
                 to_agent="content",
-                workspace_id=self.workspace_name,
+                workspace_id=self.workspace_id,
                 subject=f"Social needs {content_type}: {topic[:50]}",
                 content=brief_content,
                 message_type="brief",

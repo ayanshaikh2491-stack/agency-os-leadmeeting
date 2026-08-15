@@ -13,8 +13,10 @@ agents already write to.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 from typing import Annotated, Any, TypedDict
 
 import openai
@@ -28,6 +30,61 @@ from admin.workspace.agent_bus import send_message
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
+# hy3-free default model (OpenCode Zen). Falls back to configured WORKSPACE_AGENT_MODEL.
+DEFAULT_MEMORY_MODEL = settings.WORKSPACE_AGENT_MODEL or "big-pickle"
+LLM_TIMEOUT_SECONDS = 60.0
+LLM_MAX_RETRIES = 2
+
+
+def _get_llm_client() -> openai.AsyncOpenAI:
+    """Build an OpenAI-compatible AsyncOpenAI client (hy3-free, no global state)."""
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    if base_url:
+        return openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return openai.AsyncOpenAI(api_key=api_key)
+
+
+def _strip_think_blocks(content: str) -> str:
+    """Remove model ``<think>...</think>`` / ```think``` output reliably."""
+    if not content:
+        return ""
+    cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
+
+
+async def _call_llm_with_retry(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> Any:
+    """Call the LLM with timeout + retry. Returns the raw response object."""
+    model = DEFAULT_MEMORY_MODEL
+    last_exc: Exception | None = None
+    for attempt in range(1, LLM_MAX_RETRIES + 1):
+        try:
+            client = _get_llm_client()
+            return await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    temperature=0.3,
+                    max_tokens=4096,
+                ),
+                timeout=LLM_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            logger.warning(
+                "Memory LLM call attempt %d/%d failed: %s",
+                attempt, LLM_MAX_RETRIES, exc,
+            )
+            await asyncio.sleep(min(1.5 * attempt, 5.0))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Memory LLM call failed for unknown reasons")
 
 
 MEMORY_SYSTEM_PROMPT = """You are the Memory Agent for workspace '{workspace_name}' (client: {client_name}).
@@ -81,7 +138,7 @@ class MemoryAgentState(TypedDict):
 
 
 async def memory_call_llm(state: MemoryAgentState) -> dict:
-    """Call LLM with Memory agent system prompt."""
+    """Call LLM with Memory agent system prompt (retry + timeout hardened)."""
     system_prompt = MEMORY_SYSTEM_PROMPT.format(
         workspace_name=state.get("workspace_name", "Unknown"),
         client_name=state.get("client_name", "Unknown"),
@@ -97,23 +154,21 @@ async def memory_call_llm(state: MemoryAgentState) -> dict:
         messages.append({"role": "user", "content": "Hello"})
 
     try:
-        client_api = openai.AsyncOpenAI(
-            api_key=settings.WORKSPACE_API_KEY or None,
-            base_url=settings.WORKSPACE_API_BASE or None,
-        )
-        response = await client_api.chat.completions.create(
-            model=settings.WORKSPACE_AGENT_MODEL,
-            messages=messages,
-            tools=MEMORY_TOOLS,
-            tool_choice="auto",
-        )
+        response = await _call_llm_with_retry(messages, MEMORY_TOOLS)
     except Exception as exc:
         logger.exception("Memory Agent LLM call failed")
-        return {"error": str(exc), "messages": [], "tool_round": state.get("tool_round", 0)}
+        return {
+            "error": f"LLM call failed: {str(exc)[:200]}",
+            "messages": [],
+            "tool_round": state.get("tool_round", 0),
+        }
 
     msg = response.choices[0].message
 
-    assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+    assistant_msg: dict[str, Any] = {
+        "role": "assistant",
+        "content": _strip_think_blocks(msg.content or ""),
+    }
     if msg.tool_calls:
         assistant_msg["tool_calls"] = [
             {
@@ -152,21 +207,35 @@ async def memory_run_tools(state: MemoryAgentState) -> dict:
     if not tool_calls:
         return {"messages": [], "tool_round": state.get("tool_round", 0) + 1}
 
+    # Scope tool calls to the workspace so no client's memory leaks to another.
+    ws = state.get("workspace_name", "Default")
+
     results = []
     for tc in tool_calls:
-        name = tc["function"]["name"]
+        name = tc.get("function", {}).get("name", "")
         try:
-            args = json.loads(tc["function"]["arguments"])
-        except (json.JSONDecodeError, KeyError):
+            args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+        except (json.JSONDecodeError, KeyError, TypeError):
+            args = {}
+
+        if not isinstance(args, dict):
             args = {}
 
         # Always bind the workspace so tool handlers know the scope.
-        args.setdefault("workspace", state.get("workspace_name", "Default"))
+        args.setdefault("workspace", ws)
 
-        tool_result = execute_memory_tool(name, args)
+        try:
+            tool_result = execute_memory_tool(name, args)
+        except Exception as exc:  # noqa: BLE001 — one bad tool must not kill the run
+            logger.exception("Memory tool %s failed", name)
+            tool_result = {"status": "error", "error": f"tool {name} failed: {str(exc)[:200]}"}
+
         result_text = json.dumps(tool_result, indent=2, default=str)
-
-        results.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result_text})
+        results.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id", ""),
+            "content": result_text,
+        })
 
     return {"messages": results, "tool_round": state.get("tool_round", 0) + 1}
 
@@ -175,7 +244,9 @@ async def memory_finalize(state: MemoryAgentState) -> dict:
     messages = state.get("messages", [])
     for msg in reversed(messages):
         if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
-            return {"final_output": msg["content"]}
+            final = _strip_think_blocks(msg["content"])
+            if final:
+                return {"final_output": final}
 
     if state.get("error"):
         return {"final_output": f"Memory Agent error: {state['error'][:200]}"}
@@ -207,7 +278,18 @@ class MemoryAgent:
 
     async def chat(self, message: str) -> tuple[str, str]:
         """Chat with Memory agent. Returns (response, thread_id)."""
+        # Build a reliable workspace context by reading what is actually stored.
         workspace_context = f"Workspace: {self.workspace_name}, Client: {self.client_name}"
+        try:
+            from admin.tools.memory_tools import execute_memory_tool
+
+            listing = execute_memory_tool("list_memory", {"workspace": self.workspace_name})
+            items = listing.get("items", {}) if isinstance(listing, dict) else {}
+            if isinstance(items, dict) and items:
+                keys = ", ".join(sorted(items.keys()))
+                workspace_context += f"\nStored memory keys: {keys}"
+        except Exception as exc:  # noqa: BLE001 — context is best-effort only
+            logger.warning("Memory context lookup failed: %s", exc)
 
         initial_state = {
             "messages": [{"role": "user", "content": message}],

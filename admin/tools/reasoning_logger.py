@@ -22,10 +22,11 @@ _REASONING_DIR = Path(__file__).parent.parent.parent / "data" / "reasoning_logs"
 class ReasoningLogger:
     """Logs each reasoning step for a visual job."""
 
-    def __init__(self, job_id: str, workspace_id: str, domain: str = "content"):
+    def __init__(self, job_id: str, workspace_id: str, domain: str = "content", client_name: str = ""):
         self.job_id = job_id
         self.workspace_id = workspace_id
         self.domain = domain
+        self.client_name = client_name
         self.steps: dict[str, dict[str, Any]] = {}
         self.start_time = time.time()
         self.total_tokens = 0
@@ -57,6 +58,7 @@ class ReasoningLogger:
         return {
             "job_id": self.job_id,
             "workspace_id": self.workspace_id,
+            "client_name": self.client_name,
             "domain": self.domain,
             "steps": self.steps,
             "total_tokens": self.total_tokens,

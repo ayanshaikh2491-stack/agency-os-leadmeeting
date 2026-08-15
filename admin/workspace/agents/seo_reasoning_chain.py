@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import logging
 from typing import Any
 
+from admin.config import settings
 from admin.workspace.agents.seo_reasoning_prompts import (
     SEO_UNDERSTAND_SYSTEM,
     SEO_RESEARCH_SYSTEM,
@@ -23,12 +25,25 @@ from admin.tools.reasoning_logger import ReasoningLogger
 logger = logging.getLogger(__name__)
 
 
+def _strip_think_blocks(text: str | None) -> str:
+    """Remove model ```think / <think> reasoning blocks (gold standard)."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"```think.*?```", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
+
+
 def _get_llm_client():
-    """OpenAI-compatible LLM client."""
-    api_key = os.getenv("AGENCY_CEO_API_KEY", "dummy")
-    base_url = os.getenv("AGENCY_CEO_API_BASE", None)
+    """OpenAI-compatible LLM client with CEO-key fallback (gold standard).
+
+    Never hard-codes a hy3 model. CPU-friendly: remote API only.
+    """
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
     try:
         import openai
+
         if base_url:
             return openai.OpenAI(api_key=api_key, base_url=base_url)
         return openai.OpenAI(api_key=api_key)
@@ -37,38 +52,53 @@ def _get_llm_client():
         return None
 
 
-def _llm_call(system_prompt: str, user_prompt: str, temperature: float = 0.3, max_tokens: int = 2000) -> str:
-    """Simple LLM call."""
+def _llm_call(system_prompt_text: str, user_prompt: str, temperature: float = 0.3, max_tokens: int = 2000) -> str:
+    """LLM call with retry + timeout + fallback key (crash-proof)."""
     client = _get_llm_client()
     if not client:
         return '{"error": "LLM client not available"}'
 
-    model = os.getenv("WORKSPACE_AGENT_MODEL", "llama-3.3-70b-versatile")
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        logger.exception("LLM call failed")
-        return json.dumps({"error": str(e)})
+    model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
+    last_err: str | None = None
+    for attempt in range(1, 3):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt_text},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=120,
+            )
+            return _strip_think_blocks(response.choices[0].message.content) or ""
+        except Exception as e:  # noqa: BLE001
+            last_err = str(e)
+            logger.warning("SEO reasoning LLM call failed (attempt %d/2): %s", attempt, e)
+    logger.exception("SEO reasoning LLM call failed after 2 attempts")
+    return json.dumps({"error": last_err or "unknown"})
 
 
 def _parse_json(text: str) -> dict[str, Any]:
-    """LLM response se JSON extract karo."""
+    """Tolerant JSON extract: strip think blocks, fenced code, then parse."""
+    if not text:
+        return {"raw_response": "", "parse_error": True}
+    t = _strip_think_blocks(text).strip()
+    # Drop any non-JSON preamble before the first {
+    first_brace = t.find("{")
+    last_brace = t.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        t = t[first_brace : last_brace + 1]
+    if "```" in t:
+        # Grab the first fenced block (json or otherwise)
+        parts = t.split("```")
+        if len(parts) >= 2:
+            block = parts[1]
+            if block.startswith("json"):
+                block = block[4:]
+            t = block.strip()
     try:
-        t = text.strip()
-        if "```" in t:
-            t = t.split("```")[1]
-            if t.startswith("json"):
-                t = t[4:]
-            t = t.strip()
         return json.loads(t)
     except (json.JSONDecodeError, IndexError):
         return {"raw_response": text, "parse_error": True}
@@ -82,14 +112,20 @@ class SEOReasoningChain:
         result = chain.run(brief_text, brand_context)
     """
 
-    def __init__(self, workspace_id: str = ""):
+    def __init__(self, workspace_id: str = "", client_id: str | None = None):
         self.workspace_id = workspace_id
+        self.client_id = client_id or workspace_id
         self.job_id = ReasoningLogger.create_job_id()
         self.logger = ReasoningLogger(self.job_id, workspace_id, "seo")
+
+    def _ctx_header(self, brief_text: str) -> str:
+        return f"[Workspace: {self.workspace_id} | Client: {self.client_id}]\n\n{brief_text}"
 
     def run(self, brief_text: str, brand_context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Full 5-step SEO reasoning chain run karo."""
         brand_context = brand_context or {}
+        brand_context.setdefault("_workspace_id", self.workspace_id)
+        brand_context.setdefault("_client_id", self.client_id)
         start = time.time()
 
         # Step 1: UNDERSTAND
@@ -139,7 +175,7 @@ class SEOReasoningChain:
     def _step_understand(self, brief_text: str, brand_context: dict) -> dict[str, Any]:
         """Step 1: SEO request ko deeply samjho."""
         t0 = time.time()
-        user_prompt = f"SEO Request:\n{brief_text}\n\nBrand Context:\n{json.dumps(brand_context, indent=2)}"
+        user_prompt = f"SEO Request:\n{self._ctx_header(brief_text)}\n\nBrand Context:\n{json.dumps(brand_context, indent=2)}"
         raw = _llm_call(SEO_UNDERSTAND_SYSTEM, user_prompt)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000

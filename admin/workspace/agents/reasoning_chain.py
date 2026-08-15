@@ -3,11 +3,17 @@
 Yeh module Content Agent ko "samajhne ki ability" deta hai.
 Brief aane pe sochta hai, research karta hai, strategize karta hai,
 phir execute karta hai, aur validate bhi karta hai.
+
+Hardened version:
+- Settings-driven, hy3-free HTTP client (no global mutable model state).
+- Think-block stripping on EVERY LLM path (mirrors website.py / sba.py).
+- Workspace + client context threaded through (multi-tenant safe).
+- CPU-friendly / offline-safe: never imports heavy GPU deps.
 """
 from __future__ import annotations
 
 import json
-import os
+import re
 import time
 import logging
 from typing import Any
@@ -18,36 +24,70 @@ from admin.workspace.agents.reasoning_prompts import (
     STRATEGIZE_SYSTEM,
     EXECUTE_SYSTEM,
     VALIDATE_SYSTEM,
+    build_context_line,
 )
+from admin.config import settings
 from admin.tools.reasoning_logger import ReasoningLogger
 
 logger = logging.getLogger(__name__)
 
+# Hy3-free default model (cheap, fast, CPU-friendly inference path).
+# Overridable per-workspace via settings.WORKSPACE_AGENT_MODEL.
+DEFAULT_REASONING_MODEL = "llama-3.3-70b-versatile"
+
+
+def _strip_think_blocks(content: str) -> str:
+    """Remove model ``<think>...</think>`` / ```think``` blocks.
+
+    Mirrors the hardened sba.py / seo.py behavior so reasoning JSON is
+    never polluted by chain-of-thought noise.
+    """
+    if not content:
+        return ""
+    cleaned = re.sub(r"```think.*?```", "", content, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
+
 
 def _get_llm_client():
-    """OpenAI-compatible LLM client."""
-    api_key = os.getenv("AGENCY_CEO_API_KEY", "dummy")
-    base_url = os.getenv("AGENCY_CEO_API_BASE", None)
+    """OpenAI-compatible LLM client (hy3-free path, per-workspace safe).
+
+    Uses the owner's OpenAI-compatible key/base from settings. Falls back to
+    a dummy client when openai is unavailable so callers degrade gracefully.
+    """
     try:
         import openai
-        if base_url:
-            return openai.OpenAI(api_key=api_key, base_url=base_url)
-        return openai.OpenAI(api_key=api_key)
     except ImportError:
         logger.warning("openai not installed, using dummy client")
         return None
 
+    api_key = settings.WORKSPACE_API_KEY or settings.AGENCY_CEO_API_KEY or "dummy"
+    base_url = settings.WORKSPACE_API_BASE or settings.AGENCY_CEO_API_BASE or None
+    if base_url:
+        return openai.OpenAI(api_key=api_key, base_url=base_url)
+    return openai.OpenAI(api_key=api_key)
 
-def _llm_call(system_prompt: str, user_prompt: str, temperature: float = 0.3, max_tokens: int = 2000) -> str:
-    """Simple LLM call."""
+
+def _llm_call(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.3,
+    max_tokens: int = 2000,
+    model: str | None = None,
+) -> str:
+    """Simple LLM call. Returns stripped assistant content string.
+
+    Never raises: on any failure returns a JSON error string so the
+    downstream parse step stays crash-free.
+    """
     client = _get_llm_client()
     if not client:
         return '{"error": "LLM client not available"}'
 
-    model = os.getenv("WORKSPACE_AGENT_MODEL", "llama-3.3-70b-versatile")
+    resolved_model = model or settings.WORKSPACE_AGENT_MODEL or DEFAULT_REASONING_MODEL
     try:
         response = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -55,23 +95,31 @@ def _llm_call(system_prompt: str, user_prompt: str, temperature: float = 0.3, ma
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content or ""
+        return _strip_think_blocks(content)
     except Exception as e:
         logger.exception("LLM call failed")
         return json.dumps({"error": str(e)})
 
 
 def _parse_json(text: str) -> dict[str, Any]:
-    """LLM response se JSON extract karo."""
+    """LLM response se JSON extract karo. Crash-safe."""
+    if not text:
+        return {"raw_response": "", "parse_error": True}
     try:
         t = text.strip()
+        # Strip fenced code blocks (```json ... ```)
         if "```" in t:
-            t = t.split("```")[1]
+            parts = t.split("```")
+            # take the first code block if present, else the original
+            t = parts[1] if len(parts) > 1 else t
             if t.startswith("json"):
                 t = t[4:]
             t = t.strip()
+        # Drop a leading/trailing ``` if it survived splitting
+        t = t.strip("`").strip()
         return json.loads(t)
-    except (json.JSONDecodeError, IndexError):
+    except (json.JSONDecodeError, IndexError, ValueError):
         return {"raw_response": text, "parse_error": True}
 
 
@@ -79,19 +127,38 @@ class ReasoningChain:
     """Content Agent ka 5-step reasoning workflow.
 
     Usage:
-        chain = ReasoningChain(workspace_id="xyz", domain="ads")
+        chain = ReasoningChain(workspace_id="xyz", domain="ads", client_name="Acme")
         result = chain.run(brief_text, brand_context)
     """
 
-    def __init__(self, workspace_id: str = "", domain: str = "content"):
-        self.workspace_id = workspace_id
-        self.domain = domain
+    def __init__(
+        self,
+        workspace_id: str = "",
+        domain: str = "content",
+        client_name: str = "",
+        industry: str = "",
+        model: str | None = None,
+    ):
+        self.workspace_id = workspace_id or ""
+        self.domain = domain or "content"
+        self.client_name = client_name or ""
+        self.industry = industry or ""
+        self.model = model
         self.job_id = ReasoningLogger.create_job_id()
-        self.logger = ReasoningLogger(self.job_id, workspace_id, domain)
+        self.logger = ReasoningLogger(
+            self.job_id, workspace_id, domain, client_name=client_name
+        )
 
-    def run(self, brief_text: str, brand_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run(
+        self, brief_text: str, brand_context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Full 5-step reasoning chain run karo."""
         brand_context = brand_context or {}
+        # Thread workspace/client/industry so the LLM tailors output per client.
+        brand_context.setdefault("workspace_id", self.workspace_id)
+        brand_context.setdefault("client_name", self.client_name)
+        brand_context.setdefault("industry", self.industry)
+
         start = time.time()
 
         # Step 1: UNDERSTAND
@@ -123,6 +190,8 @@ class ReasoningChain:
         return {
             "status": "success",
             "job_id": self.job_id,
+            "workspace_id": self.workspace_id,
+            "domain": self.domain,
             "reasoning_chain": {
                 "understand": step1,
                 "research": step2,
@@ -140,8 +209,13 @@ class ReasoningChain:
     def _step_understand(self, brief_text: str, brand_context: dict) -> dict[str, Any]:
         """Step 1: Brief ko deeply samjho."""
         t0 = time.time()
-        user_prompt = f"Brief:\n{brief_text}\n\nBrand Context:\n{json.dumps(brand_context, indent=2)}"
-        raw = _llm_call(UNDERSTAND_SYSTEM, user_prompt)
+        ctx = build_context_line(self.workspace_id, self.client_name, self.industry)
+        user_prompt = (
+            f"[Context: {ctx}]" if ctx else ""
+            f"Brief:\n{brief_text}\n\n"
+            f"Brand Context:\n{json.dumps(brand_context, indent=2, ensure_ascii=False)}"
+        )
+        raw = _llm_call(UNDERSTAND_SYSTEM, user_prompt, model=self.model)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000
 
@@ -157,8 +231,13 @@ class ReasoningChain:
     def _step_research(self, understand: dict, brand_context: dict) -> dict[str, Any]:
         """Step 2: Context gather karo."""
         t0 = time.time()
-        user_prompt = f"Parsed Brief:\n{json.dumps(understand, indent=2)}\n\nBrand Data:\n{json.dumps(brand_context, indent=2)}"
-        raw = _llm_call(RESEARCH_SYSTEM, user_prompt)
+        ctx = build_context_line(self.workspace_id, self.client_name, self.industry)
+        user_prompt = (
+            f"[Context: {ctx}]\n\n" if ctx else ""
+            f"Parsed Brief:\n{json.dumps(understand, indent=2, ensure_ascii=False)}\n\n"
+            f"Brand Data:\n{json.dumps(brand_context, indent=2, ensure_ascii=False)}"
+        )
+        raw = _llm_call(RESEARCH_SYSTEM, user_prompt, model=self.model)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000
 
@@ -174,11 +253,13 @@ class ReasoningChain:
     def _step_strategize(self, understand: dict, research: dict) -> dict[str, Any]:
         """Step 3: Visual strategy banao."""
         t0 = time.time()
+        ctx = build_context_line(self.workspace_id, self.client_name, self.industry)
         user_prompt = (
-            f"Brief Understanding:\n{json.dumps(understand, indent=2)}\n\n"
-            f"Research:\n{json.dumps(research, indent=2)}"
+            f"[Context: {ctx}]\n\n" if ctx else ""
+            f"Brief Understanding:\n{json.dumps(understand, indent=2, ensure_ascii=False)}\n\n"
+            f"Research:\n{json.dumps(research, indent=2, ensure_ascii=False)}"
         )
-        raw = _llm_call(STRATEGIZE_SYSTEM, user_prompt)
+        raw = _llm_call(STRATEGIZE_SYSTEM, user_prompt, model=self.model)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000
 
@@ -194,12 +275,14 @@ class ReasoningChain:
     def _step_execute(self, understand: dict, research: dict, strategize: dict) -> dict[str, Any]:
         """Step 4: Prompts generate karo for GPU."""
         t0 = time.time()
+        ctx = build_context_line(self.workspace_id, self.client_name, self.industry)
         user_prompt = (
-            f"Brief:\n{json.dumps(understand, indent=2)}\n\n"
-            f"Research:\n{json.dumps(research, indent=2)}\n\n"
-            f"Strategy:\n{json.dumps(strategize, indent=2)}"
+            f"[Context: {ctx}]\n\n" if ctx else ""
+            f"Brief:\n{json.dumps(understand, indent=2, ensure_ascii=False)}\n\n"
+            f"Research:\n{json.dumps(research, indent=2, ensure_ascii=False)}\n\n"
+            f"Strategy:\n{json.dumps(strategize, indent=2, ensure_ascii=False)}"
         )
-        raw = _llm_call(EXECUTE_SYSTEM, user_prompt)
+        raw = _llm_call(EXECUTE_SYSTEM, user_prompt, model=self.model)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000
 
@@ -215,12 +298,14 @@ class ReasoningChain:
     def _step_validate(self, understand: dict, strategize: dict, execute: dict) -> dict[str, Any]:
         """Step 5: Quality validation karo."""
         t0 = time.time()
+        ctx = build_context_line(self.workspace_id, self.client_name, self.industry)
         user_prompt = (
-            f"Brief Requirements:\n{json.dumps(understand, indent=2)}\n\n"
-            f"Strategy:\n{json.dumps(strategize, indent=2)}\n\n"
-            f"Generated Prompts:\n{json.dumps(execute, indent=2)}"
+            f"[Context: {ctx}]\n\n" if ctx else ""
+            f"Brief Requirements:\n{json.dumps(understand, indent=2, ensure_ascii=False)}\n\n"
+            f"Strategy:\n{json.dumps(strategize, indent=2, ensure_ascii=False)}\n\n"
+            f"Generated Prompts:\n{json.dumps(execute, indent=2, ensure_ascii=False)}"
         )
-        raw = _llm_call(VALIDATE_SYSTEM, user_prompt)
+        raw = _llm_call(VALIDATE_SYSTEM, user_prompt, model=self.model)
         result = _parse_json(raw)
         duration = (time.time() - t0) * 1000
 
@@ -234,7 +319,19 @@ class ReasoningChain:
         return result
 
 
-def run_reasoning_chain(brief_text: str, workspace_id: str = "", domain: str = "content", brand_context: dict | None = None) -> dict[str, Any]:
+def run_reasoning_chain(
+    brief_text: str,
+    workspace_id: str = "",
+    domain: str = "content",
+    brand_context: dict | None = None,
+    client_name: str = "",
+    industry: str = "",
+) -> dict[str, Any]:
     """Quick function to run the reasoning chain."""
-    chain = ReasoningChain(workspace_id=workspace_id, domain=domain)
+    chain = ReasoningChain(
+        workspace_id=workspace_id,
+        domain=domain,
+        client_name=client_name,
+        industry=industry,
+    )
     return chain.run(brief_text, brand_context=brand_context)

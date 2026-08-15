@@ -642,3 +642,167 @@ def get_platform_format(text: str) -> str:
     if any(kw in text_lower for kw in ["banner", "skyscraper", "leaderboard"]):
         return "banner"
     return "post"  # default
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEFAULT BRIEF TEMPLATES (premium, client-facing starting points)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# These are opinionated, high-quality defaults. Domain agents clone them and
+# override with their own brief fields, so every generated brief starts from a
+# strong, usable baseline instead of an empty shell. Pure data — no network.
+
+DEFAULT_BRIEF_TEMPLATES: dict[str, dict[str, Any]] = {
+    "ads_lead_gen": {
+        "domain": "ads",
+        "content_type": "ad_creative",
+        "platform": "facebook",
+        "style": "bold",
+        "priority": "high",
+        "quantity": 3,
+        "objective": "lead_generation",
+        "emotional_hook": "curiosity",
+        "cta": "sign_up",
+        "key_message": "Your problem solved — faster and simpler than you expected.",
+        "target_audience": {
+            "age": "25-45",
+            "interests": ["solutions", "deals", "productivity"],
+            "pain_points": ["too expensive", "too complicated", "slow results"],
+        },
+        "copy_text": "",
+        "competitor_context": "Competitors use feature-heavy static ads; we lead with outcome.",
+        "constraints": "Must leave clean CTA space; no body copy on image.",
+        "brand_voice": "confident",
+        "tone": "aspirational",
+        "success_metric": "Lead form fills / CTR",
+        "do_nots": "Avoid clutter,avoid small text,avoid stocky clip-art",
+        "description": (
+            "Conversion-focused ad creative. One bold visual idea that stops the "
+            "scroll and makes the CTA inevitable. Brand-forward but never busy."
+        ),
+    },
+    "social_engagement": {
+        "domain": "social",
+        "content_type": "social_post",
+        "platform": "instagram",
+        "style": "vibrant",
+        "priority": "normal",
+        "quantity": 2,
+        "objective": "engagement",
+        "emotional_hook": "excitement",
+        "cta": "learn_more",
+        "key_message": "A moment worth stopping for.",
+        "target_audience": {
+            "age": "18-34",
+            "interests": ["lifestyle", "trends", "community"],
+            "pain_points": ["boring feed", "missing out"],
+        },
+        "copy_text": "",
+        "competitor_context": "Trend-driven carousel formats are winning engagement.",
+        "constraints": "Square or portrait; safe text area for overlay.",
+        "brand_voice": "playful",
+        "tone": "energetic",
+        "success_metric": "Saves / shares / comments",
+        "do_nots": "Avoid heavy text overlay,avoid generic stock photos",
+        "description": (
+            "Scroll-stopping social visual built for pattern interrupt and "
+            "emotional resonance. Optimized for saves and shares."
+        ),
+    },
+    "seo_traffic": {
+        "domain": "seo",
+        "content_type": "blog_hero",
+        "platform": "blog_hero",
+        "style": "professional",
+        "priority": "normal",
+        "quantity": 1,
+        "objective": "traffic",
+        "emotional_hook": "trust",
+        "cta": "learn_more",
+        "key_message": "Authoritative, useful, and instantly credible.",
+        "target_audience": {
+            "age": "25-55",
+            "interests": ["research", "how-to", "comparisons"],
+            "pain_points": ["unclear info", "untrustworthy sources"],
+        },
+        "copy_text": "",
+        "competitor_context": "Top-ranking pages use clean hero + clear value prop.",
+        "constraints": "Wide format, left-safe text area for H1 overlay.",
+        "brand_voice": "authoritative",
+        "tone": "calm",
+        "success_metric": "Organic CTR from SERP",
+        "do_nots": "Avoid clutter,avoid low-contrast text on image",
+        "description": (
+            "SEO hero image that earns the click from search results. Clean, "
+            "trustworthy, and built to pair with an optimized title + meta."
+        ),
+    },
+    "website_trust": {
+        "domain": "website",
+        "content_type": "hero_image",
+        "platform": "website",
+        "style": "elegant",
+        "priority": "normal",
+        "quantity": 1,
+        "objective": "trust",
+        "emotional_hook": "trust",
+        "cta": "contact_us",
+        "key_message": "We are the safe, premium choice.",
+        "target_audience": {
+            "age": "30-60",
+            "interests": ["quality", "reliability", "service"],
+            "pain_points": ["risk of bad vendor", "unclear pricing"],
+        },
+        "copy_text": "",
+        "competitor_context": "Category leaders use restrained, premium hero shots.",
+        "constraints": "Above-the-fold hero; text-free focal area.",
+        "brand_voice": "trustworthy",
+        "tone": "calm",
+        "success_metric": "Time on page / contact conversions",
+        "do_nots": "Avoid busy backgrounds,avoid hard-sell imagery",
+        "description": (
+            "Trust-building hero for an above-the-fold website section. Premium, "
+            "restrained, and clearly communicates value at a glance."
+        ),
+    },
+}
+
+
+def get_default_brief_template(template_name: str) -> dict[str, Any]:
+    """Return a deep copy of a default brief template (safe to mutate).
+
+    Falls back to ``social_engagement`` for unknown names so callers always
+    get a usable baseline instead of None.
+    """
+    import copy
+
+    template = DEFAULT_BRIEF_TEMPLATES.get(template_name)
+    if not template:
+        template = DEFAULT_BRIEF_TEMPLATES["social_engagement"]
+    return copy.deepcopy(template)
+
+
+def resolve_content_type_config(content_type: str) -> dict[str, Any]:
+    """Lookup CONTENT_TYPE_CONFIGS with a safe fallback (CPU-only)."""
+    return CONTENT_TYPE_CONFIGS.get(content_type, CONTENT_TYPE_CONFIGS["image"])
+
+
+def resolve_platform_config(platform: str) -> dict[str, Any]:
+    """Lookup PLATFORM_CONFIGS with a safe fallback (CPU-only)."""
+    return PLATFORM_CONFIGS.get(platform, PLATFORM_CONFIGS["instagram"])
+
+
+def resolve_style_preset(style: str) -> dict[str, str]:
+    """Lookup STYLE_PRESETS with a safe fallback (CPU-only)."""
+    return STYLE_PRESETS.get(style, STYLE_PRESETS["bold"])
+
+
+def get_negative_prompt(is_video: bool = False) -> str:
+    """Return the appropriate baseline negative prompt (CPU-only)."""
+    return VIDEO_NEGATIVE_PROMPT if is_video else IMAGE_NEGATIVE_PROMPT
+
+
+def is_video_content_type(content_type: str) -> bool:
+    """Heuristic: does this content type produce video? (CPU-only)."""
+    cfg = resolve_content_type_config(content_type)
+    return cfg.get("tool") in ("generate_video",)
