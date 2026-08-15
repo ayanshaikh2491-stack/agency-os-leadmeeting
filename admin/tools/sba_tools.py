@@ -152,7 +152,7 @@ def detect_lead_sources(industry: str, market: str = "global") -> dict[str, Any]
     }
 
 
-def save_lead_record(
+async def save_lead_record(
     name: str = "",
     business_name: str = "",
     email: str = "",
@@ -167,6 +167,10 @@ def save_lead_record(
     so bad addresses never enter the pipeline. Use find_lead_email instead.
 
     Returns the created lead record.
+
+    Async: the SBA graph runner (sba_run_tools) is itself async, so we await
+    create_lead directly instead of loop-juggling (which deadlocked inside the
+    running event loop).
     """
     email = (email or "").strip()
     if email and not _valid_email(email):
@@ -177,47 +181,30 @@ def save_lead_record(
                        "real business email before saving."),
         }
     notes_list = []
-    notes_list = []
     if notes:
-        notes_list.append({"text": notes, "timestamp": __import__("datetime").datetime.now().isoformat()})
+        import datetime
+        notes_list.append({"text": notes, "timestamp": datetime.datetime.now().isoformat()})
 
-    # Run async create_lead synchronously
+    payload = {
+        "name": name,
+        "business_name": business_name,
+        "email": email,
+        "phone": phone,
+        "source": source,
+        "score": score,
+        "notes": notes_list,
+    }
+
     try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        lead = asyncio.run_coroutine_threadsafe(
-            create_lead({
-                "name": name,
-                "business_name": business_name,
-                "email": email,
-                "phone": phone,
-                "source": source,
-                "score": score,
-                "notes": notes_list,
-            }),
-            loop,
-        ).result(timeout=10)
-        return {"status": "ok", "lead_id": lead.get("id", ""), "lead": {k: v for k, v in lead.items() if k in ("id", "name", "business_name", "source", "score", "status")}}
-    except RuntimeError:
-        # No event loop running — create a new one
-        import asyncio
-        try:
-            lead = asyncio.run(
-                create_lead({
-                    "name": name,
-                    "business_name": business_name,
-                    "email": email,
-                    "phone": phone,
-                    "source": source,
-                    "score": score,
-                    "notes": notes_list,
-                })
-            )
-            return {"status": "ok", "lead_id": lead.get("id", ""), "lead": {k: v for k, v in lead.items() if k in ("id", "name", "business_name", "source", "score", "status")}}
-        except Exception as e2:
-            return {"status": "error", "error": str(e2)}
+        lead = await create_lead(payload)
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+    return {
+        "status": "ok",
+        "lead_id": lead.get("id", ""),
+        "lead": {k: v for k, v in lead.items() if k in ("id", "name", "business_name", "source", "score", "status")},
+    }
 
 
 def list_saved_leads(status: str | None = None) -> list[dict[str, Any]]:
@@ -440,8 +427,13 @@ SBA_TOOL_DISPATCH: dict[str, str] = {
 }
 
 
-def execute_sba_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Execute an SBA tool by name and return the result."""
+async def execute_sba_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Execute an SBA tool by name and return the result.
+
+    Async because save_lead_record now awaits create_lead directly. Other
+    tools remain synchronous and are detected/awaited via run_coroutine_threadsafe
+    only when actually a coroutine.
+    """
     dispatch = {
         "detect_lead_sources": lambda: detect_lead_sources(
             args.get("industry", ""), args.get("market", "global"),
@@ -486,7 +478,10 @@ def execute_sba_tool(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Unknown SBA tool: {tool_name}"}
 
     try:
+        import asyncio
         result = fn()
+        if asyncio.iscoroutine(result):
+            result = await result
         return result
     except Exception as e:
         logger.exception("SBA tool %s failed", tool_name)

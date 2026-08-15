@@ -81,9 +81,13 @@ def test_sba_tools_registry():
 def test_sba_tool_dispatch():
     from admin.tools.sba_tools import SBA_TOOL_DISPATCH, execute_sba_tool
 
-    assert "update_lead_info" in SBA_TOOL_DISPATCH
-    res = execute_sba_tool("list_saved_leads", {})
-    assert isinstance(res, (dict, list))
+    async def _run():
+        assert "update_lead_info" in SBA_TOOL_DISPATCH
+        res = await execute_sba_tool("list_saved_leads", {})
+        assert isinstance(res, (dict, list))
+        return True
+
+    assert asyncio.run(_run())
 
 
 def test_sba_graph_builds():

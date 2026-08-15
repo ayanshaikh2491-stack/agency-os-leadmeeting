@@ -674,10 +674,81 @@ class SBAAutopilot:
     def _is_owner(self, from_addr: str) -> bool:
         """True when the reply came from this workspace's owner (the agency
         owner or the client workspace's owner_email) — such replies are owner
-        commands, not lead replies."""
-        low = (from_addr or "").lower()
+        commands, not lead replies.
+
+        Matches on any of:
+          - the canonical OWNER_EMAIL,
+          - the per-workspace owner_email configured for this client,
+          - the domain of the workspace's own configured inbox (so owner
+            aliases / replies from the agency domain count as owner).
+        """
+        low = (from_addr or "").lower().strip()
+        if not low:
+            return False
         candidates = {OWNER_EMAIL, self._owner_email}
+        # Add the agency's own inbox domain so owner aliases resolve too.
+        for c in (OWNER_EMAIL, self._owner_email):
+            if "@" in c:
+                candidates.add("@" + c.split("@", 1)[1].lower())
         return any(bool(e) and e.lower() in low for e in candidates)
+
+    def _match_lead(self, from_addr: str, leads: list[dict]) -> dict | None:
+        """Match an incoming reply to a stored lead.
+
+        Tries, in order: exact email substring (original behaviour), then a
+        softer match on the sender's domain, then on distinctive name tokens.
+        This stops legit replies from being silently dropped just because the
+        stored email differs in casing/alias from the sender's From address.
+        """
+        low = (from_addr or "").lower()
+        # 1) exact email substring (original behaviour)
+        exact = next((l for l in leads if (l.get("email") or "").lower() and (l.get("email") or "").lower() in low), None)
+        if exact:
+            return exact
+        # 2) same domain as a stored lead
+        dom = low.split("@")[-1] if "@" in low else ""
+        if dom:
+            for l in leads:
+                le = (l.get("email") or "").lower()
+                if "@" in le and le.split("@")[-1] == dom:
+                    return l
+        # 3) distinctive name tokens from the lead appear in the sender address
+        for l in leads:
+            name = (l.get("name") or "").lower()
+            tokens = [t for t in re.findall(r"[a-z0-9]+", name) if len(t) > 2]
+            if tokens and any(t in low for t in tokens):
+                return l
+        return None
+
+    def _is_auto_reply(self, subject: str, from_addr: str) -> bool:
+        """Delegate to the email client's auto-reply detector if present."""
+        fn = getattr(self.email, "_is_auto", None)
+        if callable(fn):
+            try:
+                return bool(fn(subject, from_addr))
+            except Exception:  # noqa: BLE001
+                return False
+        return False
+
+    def _looks_like_lead(self, from_addr: str) -> bool:
+        """Conservative gate for sending an unsolicited auto-ack to an unknown
+        sender. Reuse the same lead-email validity rules as the send gate so we
+        never ack obvious auto/noreply/junk addresses (avoids spam ping-pong)."""
+        low = (from_addr or "").lower().strip()
+        if not low or "@" not in low:
+            return False
+        # Reuse the autopilot's lead-email validity filter (imports locally to
+        # avoid a top-level cycle with lead_enrichment).
+        try:
+            from admin.tools.lead_enrichment import _is_valid_email
+        except Exception:  # noqa: BLE001
+            _is_valid_email = None
+        if callable(_is_valid_email):
+            return bool(_is_valid_email(low))
+        # Fallback: block obvious auto/junk local parts.
+        local = low.split("@", 1)[0]
+        junk = ("noreply", "no-reply", "donotreply", "mailer", "postmaster", "bounce")
+        return not any(local.startswith(j) for j in junk)
 
     def _resolve_owner_lead(self, cmd_lead_id: str, leads: list[dict]) -> dict | None:
         """The lead an owner reply refers to: try the id embedded in the reply,
@@ -697,7 +768,7 @@ class SBAAutopilot:
         return None
 
     async def _process_replies(self, url: str, key: str, leads: list[dict]) -> dict[str, int]:
-        stats = {"owner_notified": 0, "meetings_scheduled": 0, "rejected": 0}
+        stats = {"owner_notified": 0, "meetings_scheduled": 0, "rejected": 0, "unmatched_sender": 0}
         replies = await self.email.check_replies(mark_read=True)
         for rep in replies:
             from_addr = rep.get("from_addr", "")
@@ -707,6 +778,33 @@ class SBAAutopilot:
                 cmd = parse_owner_command(subject, body)
                 lead = self._resolve_owner_lead(cmd.get("lead_id") or "", leads)
                 if not lead or cmd.get("action") == "unknown":
+                    # Owner asked a question we can't attribute to a lead. Be
+                    # HONEST: never fabricate. If the analysis model is down,
+                    # tell the owner the real raw reply count instead of a
+                    # made-up answer. Otherwise just note we couldn't act on it.
+                    owner_to = self._owner_email or OWNER_EMAIL
+                    raw_count = len(replies)
+                    try:
+                        await self.email.send_email(
+                            to_email=owner_to,
+                            subject="About your question",
+                            body_text=(
+                                "I couldn't fully answer that from the data I have. "
+                                f"I saw {raw_count} raw reply/replies in the inbox this pass and "
+                                "couldn't parse them because the analysis model is rate-limited "
+                                "(or the message didn't map to a tracked lead). "
+                                "No action was taken - here are the replies I have:\n\n"
+                                + "\n".join(
+                                    f"- {r.get('from_addr') or '?'}: "
+                                    f"{(r.get('subject') or '')[:80]}"
+                                    for r in replies
+                                )
+                            ),
+                            cc_owner=False,
+                        )
+                        stats["owner_notified"] += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("owner notify failed: %s", exc)
                     continue
                 if cmd["action"] == "haan":
                     hour = None
@@ -742,9 +840,50 @@ class SBAAutopilot:
                     "intent": kind,
                     "meeting_time": meeting_time,
                     "reason": rep.get("reason") or "",
+                    "uncertain": bool(rep.get("uncertain")),
                 }, log_path=self._journal_path)
-                lead = next((l for l in leads if (l.get("email") or "").lower() in from_addr.lower()), None)
+                lead = self._match_lead(from_addr, leads)
                 if not lead:
+                    # An unmatched sender arrived: never silently drop it.
+                    stats["unmatched_sender"] += 1
+                    body_preview = (body or "")[:200]
+                    reason.log_decision({
+                        "event": "unmatched_sender",
+                        "from": from_addr,
+                        "subject": subject,
+                        "body_preview": body_preview,
+                    }, log_path=self._journal_path)
+                    owner_to = self._owner_email or OWNER_EMAIL
+                    try:
+                        await self.email.send_email(
+                            to_email=owner_to,
+                            subject="Unmatched email in inbox",
+                            body_text=(
+                                f"Got an email from {from_addr} I couldn't match to a "
+                                f"lead - {subject}\n\nPreview:\n{body_preview}"
+                            ),
+                            cc_owner=False,
+                        )
+                        stats["owner_notified"] += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("owner notify (unmatched) failed: %s", exc)
+                    # Optional, conservative sender ack: only if it looks like a
+                    # real business/lead and is NOT an auto-reply (avoid spamming).
+                    if (not self._is_auto_reply(subject, from_addr)
+                            and self._looks_like_lead(from_addr)):
+                        try:
+                            await self.email.send_email(
+                                to_email=from_addr, subject="Thanks for reaching out",
+                                body_text=(
+                                    "Thanks for your email - I'm the autopilot for this "
+                                    "business and I'll get your message to the right person. "
+                                    "I couldn't auto-match it to an existing lead, but a human "
+                                    "owner has been notified."
+                                ),
+                                cc_owner=False,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("sender ack failed: %s", exc)
                     continue
                 if kind in ("yes", "maybe"):
                     # The lead said yes - the agent books the meeting right away
@@ -802,7 +941,7 @@ class SBAAutopilot:
             "emails_sent": 0, "deferred_to_business_hours": 0, "no_email": 0,
             "invalid_email": 0, "send_failed": 0, "owner_notified": 0,
             "meetings_scheduled": 0, "rejected": 0, "new_leads_found": 0,
-            "retry_backoff": 0,
+            "retry_backoff": 0, "unmatched_sender": 0,
         }
         cfg = supabase_config()
         if not cfg:

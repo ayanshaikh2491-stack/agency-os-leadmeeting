@@ -696,7 +696,7 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                     continue
                 # SBA-specific tool (sync)
                 try:
-                    result = execute_sba_tool(tool_name, tool_args)
+                    result = await execute_sba_tool(tool_name, tool_args)
                     result_text = json.dumps(result, indent=2, default=str)[:4000]
                 except Exception as exc:
                     result_text = f"Error executing {tool_name}: {exc}"

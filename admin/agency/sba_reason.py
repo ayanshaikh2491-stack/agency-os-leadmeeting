@@ -139,10 +139,17 @@ async def understand_reply(text: str) -> dict[str, Any]:
         return {"intent": intent, "meeting_time": mt, "reason": str(data.get("reason") or "")[:300]}
     except Exception as exc:  # noqa: BLE001
         logger.info("understand_reply fallback: %s", exc)
+        # Be HONEST when the analysis model is unavailable (e.g. free key hit a
+        # 429 rate limit): do NOT fabricate an answer. The caller surfaces the
+        # raw reply count and flags the uncertainty instead of inventing intent.
         from admin.agency.sba_pipeline import classify_reply  # lazy: avoid cycles
 
         kind = classify_reply(text)
-        return {"intent": kind, "meeting_time": "", "reason": ""}
+        return {
+            "intent": kind, "meeting_time": "", "reason": "",
+            "uncertain": True,
+            "note": "LLM unavailable — could not analyze reply (raw count still surfaced)",
+        }
 
 
 def prioritize(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:

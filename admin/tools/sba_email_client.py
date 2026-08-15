@@ -341,4 +341,6 @@ class SBAEmailClient:
                 "score_change": 0,
                 "summary": "Could not analyze reply.",
                 "needs_followup": False,
+                "uncertain": True,
+                "reason": "LLM unavailable - could not analyze",
             }
