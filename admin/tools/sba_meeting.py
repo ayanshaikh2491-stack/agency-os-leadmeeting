@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from admin.agency import sba_store
@@ -130,17 +130,22 @@ class SBAMeetingManager:
     async def _generate_meet_link(self) -> str:
         """Generate a Google Meet link via the gws CLI.
 
-        Creates a brief placeholder calendar event with conference data so
-        Google returns a Meet URL. Falls back to a date-based placeholder
-        if the CLI is unavailable.
+        Creates a brief placeholder calendar event with conference data
+        (``--meet``) so Google returns a Meet URL. Falls back to a
+        date-based placeholder only if the gws CLI is unavailable or
+        returns no link.
         """
         try:
+            now = datetime.now(timezone.utc)
+            start = now.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            end = (now + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
             proc = await asyncio.create_subprocess_exec(
-                "gws", "calendar", "insert",
-                "--title", "SBA Meeting Placeholder",
-                "--start", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
-                "--duration", "15",
-                "--conference", "true",
+                "gws", "calendar", "+insert",
+                "--summary", "SBA Meeting Placeholder",
+                "--start", start,
+                "--end", end,
+                "--attendee", OWNER_EMAIL,
+                "--meet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -164,15 +169,18 @@ class SBAMeetingManager:
     ) -> str | None:
         """Create a Google Calendar event via the gws CLI with attendees."""
         try:
+            start_dt = datetime.fromisoformat(proposed_time)
+            end_dt = start_dt + timedelta(minutes=duration_minutes)
             proc = await asyncio.create_subprocess_exec(
-                "gws", "calendar", "insert",
-                "--title", f"Meeting: {lead_name} — TAGS Agency",
+                "gws", "calendar", "+insert",
+                "--summary", f"Meeting: {lead_name} — TAGS Agency",
                 "--description",
                 f"SBA-scheduled meeting with {lead_name}.\nLink: {meeting_link}",
-                "--start", proposed_time,
-                "--duration", str(duration_minutes),
-                "--attendees", lead_email,
-                "--attendees", OWNER_EMAIL,
+                "--start", start_dt.isoformat(),
+                "--end", end_dt.isoformat(),
+                "--attendee", lead_email,
+                "--attendee", OWNER_EMAIL,
+                "--meet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

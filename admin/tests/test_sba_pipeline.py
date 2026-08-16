@@ -139,5 +139,115 @@ def test_orchestrator_sba_functions_exist():
     assert inspect.iscoroutinefunction(orch.ceo_process_sba_handoff)
 
 
+def test_sba_meeting_uses_correct_gws_argv():
+    """Regression guard for the SBA meeting booking bug.
+
+    The gws CLI requires `calendar +insert` (not `insert`) with
+    `--summary/--start/--end/--attendee/--meet` flags. The old code used
+    `insert --title --duration --conference --attendees`, which the real CLI
+    rejects, so every meeting silently fell back to a FAKE meet link. This
+    test captures the argv actually passed to asyncio.create_subprocess_exec
+    and asserts the corrected command shape, so the bug can't return.
+    """
+    import asyncio
+    import subprocess
+
+    captured = []
+
+    class _FakeProc:
+        def _comm(self):
+            out = (
+                '{"htmlLink":"x","hangoutLink":"https://meet.google.com/abc-defg-hij"}'
+            ).encode()
+            return (out, b"")
+
+    async def _fake_exec(*args, **kwargs):
+        captured.append(list(args))
+        proc = _FakeProc()
+        # communicate() must be awaitable, matching asyncio subprocess API.
+        proc.communicate = lambda timeout=None: _await(proc._comm())
+        return proc
+
+    async def _await(val):
+        return val
+
+    from admin.tools import sba_meeting as mm_mod
+
+    monkeypatch_exec = _make_exec_patch(_fake_exec)
+
+    async def _run():
+        with monkeypatch_exec():
+            mgr = mm_mod.SBAMeetingManager(email_client=_FakeEmail())
+            meeting = await mgr.create_meeting(
+                lead_id="L1", lead_name="Test Lead",
+                lead_email="lead@example.com",
+                proposed_time="2026-08-20T04:30:00+00:00",
+                duration_minutes=30,
+            )
+            return meeting
+
+    meeting = asyncio.run(_run())
+
+    # A real Meet link must come back (not a fake placeholder).
+    # notes[0] = calendar event, notes[1] = meeting link.
+    notes = meeting.get("notes", [])
+    link_note = next((n for n in notes if n.get("type") == "meeting_link"), {})
+    assert "meet.google.com" in link_note.get("url", "")
+
+    # Two gws calls: placeholder Meet link + calendar event.
+    gws_calls = [c for c in captured if c[:1] == ["gws"]]
+    assert len(gws_calls) == 2, f"expected 2 gws calls, got {len(gws_calls)}"
+
+    # The placeholder (call 0) uses `now()`; the calendar event (call 1) must
+    # use the proposed time and a derived end time.
+    event_call = gws_calls[1]
+    for call in gws_calls:
+        # Must use the real subcommand and real flags.
+        assert "+insert" in call, f"must use 'calendar +insert', got {call}"
+        assert "--summary" in call, f"missing --summary in {call}"
+        assert "--start" in call, f"missing --start in {call}"
+        assert "--end" in call, f"missing --end in {call}"
+        assert "--attendee" in call, f"missing --attendee in {call}"
+        assert "--meet" in call, f"missing --meet in {call}"
+        # The broken flags must never appear again.
+        assert "--title" not in call, f"--title is invalid gws flag: {call}"
+        assert "--duration" not in call, f"--duration is invalid gws flag: {call}"
+        assert "--conference" not in call, f"--conference is invalid gws flag: {call}"
+        assert "--attendees" not in call, f"--attendees (plural) is invalid: {call}"
+
+    # Calendar event must carry start+end (derived from proposed time + duration).
+    idx = event_call.index("--start")
+    assert event_call[idx + 1] == "2026-08-20T04:30:00+00:00"
+    eidx = event_call.index("--end")
+    assert eidx + 1 < len(event_call)
+    # end = start + 30min
+    assert event_call[eidx + 1] == "2026-08-20T05:00:00+00:00"
+
+
+def _make_exec_patch(fake_exec):
+    """Return a context manager that monkeypatches asyncio.create_subprocess_exec."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        import asyncio
+
+        orig = asyncio.create_subprocess_exec
+        asyncio.create_subprocess_exec = fake_exec
+        try:
+            yield
+        finally:
+            asyncio.create_subprocess_exec = orig
+
+    return _cm
+
+
+class _FakeEmail:
+    enabled = True
+
+    async def send_email(self, *args, **kwargs):
+        return True
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
