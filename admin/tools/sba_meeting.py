@@ -65,9 +65,30 @@ class SBAMeetingManager:
 
         Returns:
             Meeting record dict as stored in sba_store.
+
+        Raises:
+            RuntimeError: if a real Google Meet link / Calendar event could not
+            be booked (gws CLI unavailable or not authenticated). We deliberately
+            do NOT fabricate a placeholder link and report success, because a
+            silent fake "meet.google.com/..." URL would mislead the owner into
+            thinking a real meeting was booked. Callers must handle this and
+            fall back to a manual-booking record + owner notification.
         """
         # 1. Generate Google Meet link
         meeting_link = await self._generate_meet_link()
+        if not meeting_link:
+            # Real Meet link could not be created. Record a pending booking and
+            # alert the owner instead of silently shipping a fake link.
+            await self._record_pending_booking(
+                lead_id=lead_id, lead_name=lead_name, lead_email=lead_email,
+                proposed_time=proposed_time, duration_minutes=duration_minutes,
+                purpose=purpose,
+                reason="Google Meet link generation failed (gws CLI missing/unauthenticated)",
+            )
+            raise RuntimeError(
+                "Meeting booking failed: no real Google Meet link. "
+                "Owner notified for manual booking."
+            )
 
         # 2. Create Google Calendar event with attendees
         calendar_event_id = await self._create_calendar_event(
@@ -77,6 +98,17 @@ class SBAMeetingManager:
             duration_minutes=duration_minutes,
             meeting_link=meeting_link,
         )
+        if not calendar_event_id:
+            await self._record_pending_booking(
+                lead_id=lead_id, lead_name=lead_name, lead_email=lead_email,
+                proposed_time=proposed_time, duration_minutes=duration_minutes,
+                purpose=purpose,
+                reason="Google Calendar event creation failed (gws CLI missing/unauthenticated)",
+            )
+            raise RuntimeError(
+                "Meeting booking failed: calendar event not created. "
+                "Owner notified for manual booking."
+            )
 
         # 3. Build structured notes with calendar / meet metadata
         notes_list: list[dict[str, Any]] = []
@@ -157,7 +189,9 @@ class SBAMeetingManager:
         except Exception:
             logger.warning("Google Meet link generation failed, using placeholder")
 
-        return f"https://meet.google.com/{datetime.now().strftime('%Y%m%d')}-sba-mtg"
+        # No real link could be generated. Return empty so callers surface the
+        # failure explicitly instead of sending a fake "confirmed" meeting.
+        return ""
 
     async def _create_calendar_event(
         self,
@@ -185,10 +219,74 @@ class SBAMeetingManager:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate(timeout=15)
-            return stdout.decode().strip() or None
+            event_id = stdout.decode().strip()
+            if not event_id:
+                # gws returned no event id (e.g. parse drift in output). Surface
+                # the failure rather than recording a phantom calendar event.
+                logger.warning("Calendar event created but no id returned by gws")
+                return None
+            return event_id
         except Exception as exc:
             logger.warning("Calendar event creation failed: %s", exc)
             return None
+
+    # ── Manual-booking fallback (no silent fake link) ───────────────────────
+
+    async def _record_pending_booking(
+        self,
+        lead_id: str,
+        lead_name: str,
+        lead_email: str,
+        proposed_time: str,
+        duration_minutes: int,
+        purpose: str,
+        reason: str,
+    ) -> None:
+        """Persist a pending manual-booking record and alert the owner.
+
+        Used when the gws CLI cannot book a real meeting (binary missing or
+        not authenticated). We never send the lead a fake confirmation; the
+        owner is told to book manually.
+        """
+        try:
+            dt = datetime.fromisoformat(proposed_time)
+            await sba_store.create_meeting({
+                "lead_id": lead_id,
+                "lead_name": lead_name,
+                "title": f"PENDING booking: {lead_name} — TAGS Agency",
+                "purpose": purpose,
+                "date": dt.strftime("%Y-%m-%d"),
+                "time": dt.strftime("%H:%M"),
+                "duration_minutes": duration_minutes,
+                "status": "pending_manual_booking",
+                "notes": [{
+                    "type": "booking_failed",
+                    "text": reason,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }],
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not persist pending booking record: %s", exc)
+
+        try:
+            await self._email.send_email(
+                to_email=OWNER_EMAIL,
+                subject=f"Action needed: book meeting with {lead_name} manually",
+                body_text=(
+                    f"Hi {OWNER_NAME},\n\n"
+                    f"The autopilot could not auto-book a Google Meet with "
+                    f"{lead_name} ({lead_email}) for {proposed_time[:10]} "
+                    f"{proposed_time[11:16]} ({duration_minutes} min).\n\n"
+                    f"Reason: {reason}\n\n"
+                    f"The lead has NOT been sent a confirmation. Please book this "
+                    f"meeting manually and update the lead status.\n\n"
+                    f"(This usually means the gws CLI is missing or not "
+                    f"authenticated on the server.)"
+                ),
+                cc_owner=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Owner notification for pending booking failed: %s", exc)
 
     # ── Meeting CRUD helpers ───────────────────
 

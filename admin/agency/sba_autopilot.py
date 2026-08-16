@@ -48,6 +48,26 @@ from admin.tools.sba_time import (  # noqa: E402
 logger = logging.getLogger("sba.autopilot")
 
 
+async def _safe_book_meeting(self, lead: dict, iso: str) -> str:
+    """Book a meeting, degrading gracefully if the gws CLI can't.
+
+    Returns ``"booked"`` on success, ``"pending_manual"`` if the real meeting
+    could not be created (the meeting module records a pending booking and
+    alerts the owner). Never lets a fake link be reported as a success.
+    """
+    try:
+        await self.meetings.create_meeting(
+            lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
+            lead_email=lead.get("email") or "", proposed_time=iso,
+        )
+        return "booked"
+    except RuntimeError as exc:
+        # Meeting module already persisted a pending_manual_booking record and
+        # notified the owner. Mark the lead so we don't claim a meeting happened.
+        logger.warning("Meeting auto-book failed (manual booking queued): %s", exc)
+        return "pending_manual"
+
+
 def _s(v) -> str:
     """Coerce a DB value to a stripped string. PocketBase's json fields can
     return digit-only values as int (e.g. 3464049915); every .strip() call on
@@ -829,12 +849,15 @@ class SBAAutopilot:
                         except (TypeError, ValueError):
                             hour = None
                     iso, text = meeting_slot(lead, OWNER_TZ, hour=hour)
-                    await self.meetings.create_meeting(
-                        lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
-                        lead_email=lead.get("email") or "", proposed_time=iso,
-                    )
-                    sb_patch_lead(url, key, str(lead["id"]), {"status": "meeting"})
-                    stats["meetings_scheduled"] += 1
+                    result = await _safe_book_meeting(self, lead, iso)
+                    if result == "booked":
+                        sb_patch_lead(url, key, str(lead["id"]), {"status": "meeting"})
+                        stats["meetings_scheduled"] += 1
+                    else:
+                        # Manual booking queued + owner alerted by meeting module.
+                        sb_patch_lead(url, key, str(lead["id"]),
+                                      {"status": "pending_manual_booking"})
+                        stats["owner_notified"] += 1
                 else:
                     await self.email.send_email(
                         to_email=lead.get("email") or "", subject="Thanks",
@@ -912,26 +935,30 @@ class SBAAutopilot:
                         except (TypeError, ValueError):
                             hour = None
                     iso, text = meeting_slot(lead, OWNER_TZ, hour=hour)
-                    await self.meetings.create_meeting(
-                        lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
-                        lead_email=lead.get("email") or "", proposed_time=iso,
-                    )
-                    sb_patch_lead(url, key, str(lead["id"]), {"status": "meeting"})
-                    stats["meetings_scheduled"] += 1
-                    owner_to = self._owner_email or OWNER_EMAIL
-                    await self.email.send_email(
-                        to_email=owner_to,
-                        subject="Meeting booked automatically!",
-                        body_text=(
-                            f"{lead.get('name') or 'Lead'} said yes, so the agent "
-                            f"booked the meeting on its own.\n\n{text}\n\n"
-                            f"Lead email: {lead.get('email') or ''}\n"
-                            f"Their reply: {body[:300]}\n\n"
-                            "No action needed - the lead got the confirmation "
-                            "with the Meet link."
-                        ),
-                        cc_owner=False,
-                    )
+                    result = await _safe_book_meeting(self, lead, iso)
+                    if result == "booked":
+                        sb_patch_lead(url, key, str(lead["id"]), {"status": "meeting"})
+                        stats["meetings_scheduled"] += 1
+                        owner_to = self._owner_email or OWNER_EMAIL
+                        await self.email.send_email(
+                            to_email=owner_to,
+                            subject="Meeting booked automatically!",
+                            body_text=(
+                                f"{lead.get('name') or 'Lead'} said yes, so the agent "
+                                f"booked the meeting on its own.\n\n{text}\n\n"
+                                f"Lead email: {lead.get('email') or ''}\n"
+                                f"Their reply: {body[:300]}\n\n"
+                                "No action needed - the lead got the confirmation "
+                                "with the Meet link."
+                            ),
+                            cc_owner=False,
+                        )
+                    else:
+                        # Manual booking queued + owner alerted by meeting module;
+                        # do NOT claim a meeting was booked here.
+                        sb_patch_lead(url, key, str(lead["id"]),
+                                      {"status": "pending_manual_booking"})
+                        stats["owner_notified"] += 1
                     reason.log_decision({
                         "event": "meeting_auto_booked",
                         "lead_id": str(lead.get("id") or ""),

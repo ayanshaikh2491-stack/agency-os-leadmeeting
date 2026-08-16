@@ -224,6 +224,54 @@ def test_sba_meeting_uses_correct_gws_argv():
     assert event_call[eidx + 1] == "2026-08-20T05:00:00+00:00"
 
 
+def test_sba_meeting_no_silent_fake_link_on_gws_failure():
+    """Guard: when gws cannot book a real meeting, we must NOT send a fake link.
+
+    The old code fabricated `meet.google.com/<date>-sba-mtg` and reported
+    success. The hardened code raises RuntimeError (and the meeting module
+    records a pending manual booking + alerts the owner) so a fake "confirmed"
+    meeting can never be reported.
+    """
+    import asyncio
+
+    # gws returns NO meet link (simulates missing/unauthenticated CLI).
+    class _NoLinkProc:
+        def communicate(self, timeout=None):
+            async def _c():
+                return (b"", b"no meet link returned")
+            return _c()
+
+    async def _fake_exec_no_link(*args, **kwargs):
+        return _NoLinkProc()
+
+    from admin.tools import sba_meeting as mm_mod
+
+    async def _run():
+        with _make_exec_patch(_fake_exec_no_link)():
+            mgr = mm_mod.SBAMeetingManager(email_client=_FakeEmailAlert())
+            try:
+                await mgr.create_meeting(
+                    lead_id="LX", lead_name="No Link Lead",
+                    lead_email="nolead@example.com",
+                    proposed_time="2026-08-20T04:30:00+00:00",
+                    duration_minutes=30,
+                )
+                return "no_error"
+            except RuntimeError as exc:
+                return f"raised:{exc}"
+
+    res = asyncio.run(_run())
+    assert res.startswith("raised:"), f"expected RuntimeError on gws failure, got {res!r}"
+
+
+class _FakeEmailAlert:
+    enabled = True
+
+    async def send_email(self, *args, **kwargs):
+        # Captured by the meeting module's pending-booking owner notification.
+        return True
+
+
 def _make_exec_patch(fake_exec):
     """Return a context manager that monkeypatches asyncio.create_subprocess_exec."""
     from contextlib import contextmanager
