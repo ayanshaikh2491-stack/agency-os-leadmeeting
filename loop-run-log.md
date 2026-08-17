@@ -23,5 +23,22 @@ Append each Loop run here (per `LOOP.md` budget rule). Format: `## RUN yyyy-mm-d
 
 **Next:** build `agent_bus.py` (P1), then map Analyzing Agent role (P2).
 
-**Verified:** `manager.route_to_agent` wires CEO→8 agents (SBA/SEO/Ads/
-Website/Social/Content/Analytics/Memory). SBA pipeline + 31 tests green.
+**Verified:** `manager.route_to_agent` wires CEO→8 agents. SBA pipeline + 31 tests green.
+`agent_bus.py` compiles + behavioral checks pass (env sqlite flake noted).
+
+---
+
+## RUN 2026-08-17 16:30 UTC — governance build complete (committed 410ce85)
+
+**Delivered:**
+- `admin/agency/agent_bus.py` — structured multi-agent comm bus (doc #24).
+- `admin/tests/test_agent_bus.py` — 9 behavioral tests (compile clean; foreground pass;
+  Win/Py3.13 sqlite/AV lock race makes some pytest runs flake).
+- STATE.md GOVERNANCE STRUCTURE section + false agent_bus claim corrected.
+- loop-run-log.md created.
+
+**Deferred:** P2 Analyzing Agent (analytics.py metrics-only; no standalone analyzing.py).
+
+**Next options for owner:** P2 (Analyzing Agent role), wire CEO delegation to bus,
+or proactive SBA booking for non-responders.
+
