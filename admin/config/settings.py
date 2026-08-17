@@ -101,11 +101,18 @@ SBA_DAILY_EMAIL_CAP: int = int(os.getenv("SBA_DAILY_EMAIL_CAP", "30"))
 # OFF by default. Mass re-emailing non-responders is a high-impact action
 # (prompt #14), so the autopilot NEVER sends follow-ups unless the owner
 # explicitly opts in via .env / env var. When ON, only 'contacted' leads that
-# have NOT replied after FOLLOWUP_MIN_DAYS are touched, at most once
-# (followup_sent flag), inside business hours, under the same daily/SMTP caps.
+# have NOT replied after FOLLOWUP_MIN_DAYS are touched, under a bounded
+# multi-touch cadence (FOLLOWUP_TOUCHES separate sends, each after its own
+# gap), each inside business hours, under the same daily/SMTP caps. Once a
+# lead has received all its touches it leaves the follow-up pool permanently.
+# A proposed meeting slot can optionally be suggested in the email
+# (FOLLOWUP_SUGGEST_CALENDAR).
 SBA_FOLLOWUP_ENABLED: bool = os.getenv("SBA_FOLLOWUP_ENABLED", "false").lower() in ("1", "true", "yes")
 SBA_FOLLOWUP_MIN_DAYS: int = int(os.getenv("SBA_FOLLOWUP_MIN_DAYS", "4"))
 SBA_FOLLOWUP_MAX_PER_PASS: int = int(os.getenv("SBA_FOLLOWUP_MAX_PER_PASS", "10"))
+SBA_FOLLOWUP_TOUCHES: int = int(os.getenv("SBA_FOLLOWUP_TOUCHES", "1"))
+SBA_FOLLOWUP_GAP_DAYS: int = int(os.getenv("SBA_FOLLOWUP_GAP_DAYS", "7"))
+SBA_FOLLOWUP_SUGGEST_CALENDAR: bool = os.getenv("SBA_FOLLOWUP_SUGGEST_CALENDAR", "false").lower() in ("1", "true", "yes")
 
 # Lowercase aliases (consumed by tests and some call sites).
 sba_owner_timezone: str = SBA_OWNER_TIMEZONE

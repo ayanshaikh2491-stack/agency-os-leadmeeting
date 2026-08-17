@@ -31,6 +31,7 @@ AGENT_SLUG_MAP: dict[str, str] = {
     "analytics-bot": "analytics",
     "social-manager": "social",
     "memory-agent": "memory",
+    "analyzing-bot": "analyzing",
 }
 
 AGENT_META: dict[str, dict[str, str]] = {
@@ -41,6 +42,7 @@ AGENT_META: dict[str, dict[str, str]] = {
     "analytics-bot": {"name": "Analytics Bot", "role": "analytics"},
     "social-manager": {"name": "Social Manager", "role": "social"},
     "memory-agent": {"name": "Memory Agent", "role": "memory"},
+    "analyzing-bot": {"name": "Analyzing Agent", "role": "analyzing"},
 }
 
 

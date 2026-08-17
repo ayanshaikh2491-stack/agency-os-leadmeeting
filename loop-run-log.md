@@ -80,3 +80,67 @@ email, deeper Analyzing Agent role.
 **Next:** owner enables follow-up in prod .env, OR I proceed to P2 (multi-touch +
 Analyzing Agent) autonomously, OR delete dead `swarm.py`.
 
+---
+
+## RUN 2026-08-17 18:13 UTC — "ok sab kardo": multi-touch + Analyzing Agent + dead-code cleanup
+
+**Owner approved (Hinglish "ok sab kardo") doing ALL deferred items autonomously:**
+1. Delete dead `swarm.py` (agency + api/routes).
+2. Multi-touch follow-up cadence + calendar-suggest.
+3. Build the standalone Analyzing Agent (P2).
+
+**Delivered:**
+
+### Dead-code removal
+- `admin/agency/swarm.py` + `admin/api/routes/swarm.py` deleted.
+- `admin/api/routes/swarm.py` import + `app.include_router(swarm_routes)` removed from
+  `admin/main.py`.
+
+### Multi-touch follow-up cadence + calendar-suggest (SBA)
+- `admin/config/settings.py`: `SBA_FOLLOWUP_TOUCHES=1` (default, opt-in),
+  `SBA_FOLLOWUP_GAP_DAYS=7`, `SBA_FOLLOWUP_SUGGEST_CALENDAR` (default **false**).
+- `admin/agency/sba_autopilot.py`: follow-up state model upgraded from a bare
+  timestamp (`self._contacted_at`) to `self._followup_state[lid] =
+  {"touches": int, "last": float}` with legacy normalization in `_load_followup_state`.
+  `_process_followups` rewritten for a bounded multi-touch cadence: first touch after
+  `MIN_DAYS` since first contact, later touches after `GAP_DAYS` since the previous
+  touch, up to `TOUCHES` total, persisted per-lead so the cadence + once-only
+  guarantee survive restarts. Optional `SUGGEST_CALENDAR` appends a concrete meeting
+  slot (via `meeting_slot`) on the FIRST touch only, so the lead can accept in one word.
+- `admin/tools/sba_email_draft.py`: `draft_followup`/`fallback_followup` now take
+  `touch_index`/`total_touches`; copy varies per touch (first = soft follow-up,
+  later = "last note" with a one-word opt-out).
+- `admin/tests/test_sba_autopilot.py`: existing 4 follow-up tests migrated to the new
+  state model; +3 new tests (multi-touch caps at TOUCHES; calendar-suggest only on
+  first touch). 6 follow-up/multitouch/calendar tests pass; module 20 pass.
+
+### Analyzing Agent (P2) — senior cross-channel insight engine
+- `admin/workspace/agents/analyzing.py` (NEW): LangGraph agent modeled on
+  `website.py`, owns the same 20 analytics tools but SYNTHESIZES across them —
+  trend direction + magnitude, root-cause hypotheses, anomaly/alert triage, ROI,
+  forecasting, and a structured decision brief (Executive Summary / Evidence /
+  Trend & Drivers / Risks / Recommended Actions). Distinct from the thin
+  `/api/analytics/*` metrics reporter.
+- `admin/api/routes/analyzing.py` (NEW): `POST /api/analyzing/chat`, `GET
+  /api/analyzing/status`, `GET /api/analyzing/tools`. Registered in `main.py`.
+- `admin/workspace/manager.py`: `analyzing` added to `DEFAULT_AGENTS` and routed via
+  `_domain_agents` in `route_to_agent`.
+- `admin/api/routes/agent_aliases.py`: `analyzing-bot` → `analyzing` alias + metadata.
+- Frontend: `src/app/admin/agents/page.js` lists Analyzing Agent (🧠) and routes
+  analyze/insight/trend/compare/forecast messages to it.
+- `admin/tests/test_sba_autopilot.py`: +1 test `test_analyzing_agent_registered_and_routable`.
+
+**Verified:**
+- Backend: autopilot module 20/20 pass; multi-touch + calendar + analyzing tests pass;
+  `import` of all new modules + touch-aware draft check clean.
+- Frontend: `next build` clean, 41/41 static pages.
+- (Full-suite background run in progress; prior 13-min hang was a network/LLM-gated
+  pre-existing test, not this change set.)
+
+**Not deployed to prod:** follow-up cadence + calendar-suggest remain OFF until owner
+sets `SBA_FOLLOWUP_ENABLED=true` (+ optional `SBA_FOLLOWUP_SUGGEST_CALENDAR=true`) in
+`.env` per #14 (high-impact mass email = owner decision).
+
+**Next:** commit all; update STATE.md governance + known-gaps; owner can flip the env
+flags to go live.
+

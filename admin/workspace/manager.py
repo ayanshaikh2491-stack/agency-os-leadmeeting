@@ -26,7 +26,7 @@ _completed_reviews: list[dict[str, Any]] = [] # CEO review verdicts
 _error_logs: list[dict[str, Any]] = []        # Error routing history
 
 # Default agent types every workspace gets
-DEFAULT_AGENTS = ["sba", "seo", "content", "website", "ads", "social", "analytics", "memory"]
+DEFAULT_AGENTS = ["sba", "seo", "content", "website", "ads", "social", "analytics", "analyzing", "memory"]
 
 
 def _build_knowledge_context(knowledge: dict) -> str:
@@ -388,6 +388,7 @@ async def route_to_agent(
         "social": ("admin.workspace.agents.social", "SocialAgent"),
         "content": ("admin.workspace.agents.content", "ContentAgent"),
         "analytics": ("admin.workspace.agents.analytics", "AnalyticsAgent"),
+        "analyzing": ("admin.workspace.agents.analyzing", "AnalyzingAgent"),
         "memory": ("admin.workspace.agents.memory", "MemoryAgent"),
     }
 

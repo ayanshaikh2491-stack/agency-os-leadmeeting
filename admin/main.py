@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from admin.api.models.schemas import HealthResponse
 from admin.api.routes import ceo as ceo_routes
 from admin.api.routes import sba as sba_routes
-from admin.api.routes import swarm as swarm_routes
 from admin.api.routes import workspace as workspace_routes
 from admin.api.routes import communication as comm_routes
 from admin.api.routes import seo as seo_routes
@@ -26,6 +25,7 @@ from admin.api.routes import analytics as analytics_routes
 from admin.api.routes import social as social_routes
 from admin.api.routes import workflows as workflows_routes
 from admin.api.routes import website as website_routes
+from admin.api.routes import analyzing as analyzing_routes
 from admin.api.routes import extra as extra_routes
 from admin.api.routes import store as store_routes
 from admin.api.routes import agent_aliases as agent_aliases_routes
@@ -131,7 +131,6 @@ app.add_middleware(
 app.include_router(ceo_routes.router)
 app.include_router(ceo_routes._old_router)  # Legacy /api/chat/agency endpoint
 app.include_router(sba_routes.router)
-app.include_router(swarm_routes.router)
 app.include_router(workspace_routes.router)
 app.include_router(comm_routes.router)
 app.include_router(seo_routes.router)
@@ -143,6 +142,7 @@ app.include_router(analytics_routes.router)
 app.include_router(social_routes.router)
 app.include_router(workflows_routes.router)
 app.include_router(website_routes.router)
+app.include_router(analyzing_routes.router)
 app.include_router(extra_routes.router)          # /api/status, /api/workspaces, agent status
 app.include_router(store_routes.router)          # /api/store/* — client storefront (Shopify-like)
 app.include_router(agent_aliases_routes.router)  # /api/agents + /api/agents/{id}/chat

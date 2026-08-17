@@ -122,14 +122,23 @@ EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(
 
 # ── Proactive follow-up (non-responder re-engagement) ─────────────
 # Re-emailing non-responders is a high-impact action, so it is OFF unless the
-# owner opts in. See settings.SBA_FOLLOWUP_ENABLED. Bounds below keep it safe:
+# owner opts in. See config (SBA_FOLLOWUP_ENABLED). Bounds below keep it safe:
 # never follow up a lead that has already replied/booked, never follow up before
-# MIN_DAYS since first contact, once only, inside business hours, under caps.
-FOLLOWUP_ENABLED = bool(os.environ.get("SBA_FOLLOWUP_ENABLED", "false").lower() in ("1", "true", "yes"))
-FOLLOWUP_MIN_DAYS = int(os.environ.get("SBA_FOLLOWUP_MIN_DAYS", "4"))
-FOLLOWUP_MAX_PER_PASS = int(os.environ.get("SBA_FOLLOWUP_MAX_PER_PASS", "10"))
-# Persisted per-lead first-contact timestamp so restarts don't re-follow before
-# MIN_DAYS, and so the once-only guarantee survives the process being restarted.
+# MIN_DAYS since first contact, only up to TOUCHES times total (each after a
+# GAP_DAYS gap), each inside business hours, under caps. Per-lead progress is
+# persisted so the cadence + once-only guarantee survive restarts.
+from admin.config import settings as _settings  # noqa: E402
+
+FOLLOWUP_ENABLED = _settings.SBA_FOLLOWUP_ENABLED
+FOLLOWUP_MIN_DAYS = _settings.SBA_FOLLOWUP_MIN_DAYS
+FOLLOWUP_MAX_PER_PASS = _settings.SBA_FOLLOWUP_MAX_PER_PASS
+FOLLOWUP_TOUCHES = _settings.SBA_FOLLOWUP_TOUCHES
+FOLLOWUP_GAP_DAYS = _settings.SBA_FOLLOWUP_GAP_DAYS
+FOLLOWUP_SUGGEST_CALENDAR = _settings.SBA_FOLLOWUP_SUGGEST_CALENDAR
+# Persisted per-lead follow-up progress. Value is a dict
+# {"touches": int, "last": float(epoch)} keyed by lead id. Tracks how many
+# follow-ups a lead has received and when the last one went out, so the
+# multi-touch cadence + once-only guarantee survive the process being restarted.
 _FOLLOWUP_STATE_FILE = os.environ.get(
     "SBA_FOLLOWUP_STATE_FILE",
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -137,10 +146,20 @@ _FOLLOWUP_STATE_FILE = os.environ.get(
 )
 
 
-def _load_followup_state() -> dict[str, float]:
+def _load_followup_state() -> dict[str, Any]:
     try:
         with open(_FOLLOWUP_STATE_FILE, "r", encoding="utf-8") as fh:
-            return json.loads(fh.read() or "{}")
+            data = json.loads(fh.read() or "{}")
+        # Normalise: ensure each entry has the expected shape.
+        out: dict[str, Any] = {}
+        for lid, v in data.items():
+            if isinstance(v, dict):
+                out[lid] = {"touches": int(v.get("touches", 0) or 0),
+                            "last": float(v.get("last", 0.0) or 0.0)}
+            else:
+                # Legacy format: a bare timestamp -> 1 touch already sent.
+                out[lid] = {"touches": 1, "last": float(v or 0.0)}
+        return out
     except FileNotFoundError:
         return {}
     except Exception as exc:  # noqa: BLE001
@@ -148,7 +167,7 @@ def _load_followup_state() -> dict[str, float]:
         return {}
 
 
-def _save_followup_state(state: dict[str, float]) -> None:
+def _save_followup_state(state: dict[str, Any]) -> None:
     try:
         tmp = _FOLLOWUP_STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -459,7 +478,7 @@ class SBAAutopilot:
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
         self._enriched_at: dict[str, float] = _load_enrich_state()
-        self._contacted_at: dict[str, float] = _load_followup_state()
+        self._followup_state: dict[str, Any] = _load_followup_state()
         self._enrichments_this_pass = 0
         self._last_notified_lead_id: str | None = None
 
@@ -739,11 +758,13 @@ class SBAAutopilot:
         ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
         if ok:
             sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted"})
-            # Record first-contact time so the (opt-in) follow-up pass knows
-            # when MIN_DAYS has elapsed and can enforce once-only per restart.
+            # Seed the follow-up cadence for this lead: record first-contact
+            # time (with 0 touches sent yet) so the (opt-in) follow-up pass can
+            # enforce MIN_DAYS + a bounded multi-touch cadence that survives
+            # restarts. If a lead is re-contacted cold, reset its progress.
             lid = str(lead.get("id") or "")
-            self._contacted_at[lid] = time.time()
-            _save_followup_state(self._contacted_at)
+            self._followup_state[lid] = {"touches": 0, "last": time.time()}
+            _save_followup_state(self._followup_state)
             reason.log_decision({
                 "event": "email_sent",
                 "name": lead.get("name") or "",
@@ -856,22 +877,26 @@ class SBAAutopilot:
     async def _process_followups(self, url: str, key: str,
                                  global_budget: dict[str, int] | None = None,
                                  cold_sent: int = 0) -> dict[str, int]:
-        """Re-touch non-responding leads with a single polite follow-up.
+        """Re-touch non-responding leads with a bounded, multi-touch cadence.
 
         Safety model (prompt #14: mass re-email is high-impact → bounded +
         opt-in):
           - NO-OP unless SBA_FOLLOWUP_ENABLED is true.
           - Only leads still in 'contacted' status (never replied/booked).
-          - Only after FOLLOWUP_MIN_DAYS since first contact (persisted, so it
-            survives restarts and the once-only guarantee is real).
+          - First touch only after FOLLOWUP_MIN_DAYS since first contact.
+          - At most FOLLOWUP_TOUCHES total per lead, each after a
+            FOLLOWUP_GAP_DAYS gap since the previous touch (multi-touch
+            cadence). Per-lead progress (touches + last time) is persisted, so
+            the cadence + once-only guarantee survive restarts.
           - At most FOLLOWUP_MAX_PER_PASS per pass, inside the lead's own
             business hours, under the SAME caps as cold sends: the per-pass
             DAILY_EMAIL_CAP (counted together with cold sends this pass) and the
-            agency-wide global_budget ceiling (shared across workspaces), both of
-            which are decremented here so multi-workspace runs can't over-send.
-          - Uses the dedicated draft_followup template (low-friction out).
-          - Each follow-up is also counted in stats["emails_sent"] so the owner
-            digest reflects real outbound volume.
+            agency-wide global_budget ceiling, both decremented here so
+            multi-workspace runs can't over-send.
+          - Each follow-up is counted in stats["emails_sent"] for the owner
+            digest. Optional FOLLOWUP_SUGGEST_CALENDAR appends a proposed
+            meeting slot (computed via meeting_slot) so the lead can just say
+            yes.
         """
         stats = {"followups_sent": 0, "followups_eligible": 0, "followups_skipped": 0}
         if not FOLLOWUP_ENABLED:
@@ -906,22 +931,38 @@ class SBAAutopilot:
             if blocked_until and time.time() < blocked_until:
                 stats["followups_skipped"] += 1
                 continue
-            # Only after MIN_DAYS since first contact; otherwise not yet eligible.
-            first = self._contacted_at.get(lid)
-            if not first or (time.time() - first) < FOLLOWUP_MIN_DAYS * 86400:
+            # Cadence gate: how many touches already sent, and when.
+            prog = self._followup_state.get(lid, {"touches": 0, "last": 0.0})
+            touches = int(prog.get("touches", 0) or 0)
+            last = float(prog.get("last", 0.0) or 0.0)
+            if touches >= FOLLOWUP_TOUCHES:
+                continue  # Cadence complete: drop from pool permanently.
+            # First touch: MIN_DAYS since first contact. Later touches: GAP_DAYS
+            # since the previous touch.
+            wait_days = FOLLOWUP_MIN_DAYS if touches == 0 else FOLLOWUP_GAP_DAYS
+            if last and (time.time() - last) < wait_days * 86400:
                 continue
             if not lead_business_hours(lead):
                 stats["followups_skipped"] += 1
                 continue
             stats["followups_eligible"] += 1
-            subject, body = await draft_followup(lead)
+            subject, body = await draft_followup(lead, touch_index=touches, total_touches=FOLLOWUP_TOUCHES)
+            if FOLLOWUP_SUGGEST_CALENDAR and touches == 0:
+                # Suggest a concrete slot on the very first follow-up so the
+                # lead can accept in one word (falls back silently on failure).
+                try:
+                    iso, slot_text = meeting_slot(lead, OWNER_TZ)
+                    if slot_text:
+                        body = body.rstrip() + f"\n\nHow about {slot_text}? Just reply 'yes' and I'll lock it in."
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("calendar suggest skipped: %s", exc)
             ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
             if ok:
-                # Mark so we never follow up twice (status stays 'contacted' so a
-                # future reply still books; we just drop the lead from the
-                # follow-up pool by clearing its first-contact timestamp).
-                self._contacted_at.pop(lid, None)
-                _save_followup_state(self._contacted_at)
+                # Advance the cadence: record this touch + time. When the lead
+                # has now received all touches, it stays in the map with
+                # touches==TOUCHES and is skipped on future passes (once-only).
+                self._followup_state[lid] = {"touches": touches + 1, "last": time.time()}
+                _save_followup_state(self._followup_state)
                 stats["followups_sent"] += 1
                 # Count toward the agency-wide + owner-visible send totals.
                 if global_budget is not None:
@@ -929,6 +970,8 @@ class SBAAutopilot:
                 reason.log_decision({
                     "event": "followup_sent",
                     "lead_id": lid,
+                    "touch": touches + 1,
+                    "total_touches": FOLLOWUP_TOUCHES,
                     "name": lead.get("name") or "",
                     "email": email,
                 }, log_path=self._journal_path)

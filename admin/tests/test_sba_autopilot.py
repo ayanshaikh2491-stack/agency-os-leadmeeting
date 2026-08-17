@@ -465,7 +465,7 @@ async def test_run_once_does_not_follow_up_when_disabled(monkeypatch):
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
     # Force the lead's first-contact time far in the past so the ONLY thing
     # blocking the follow-up is the feature flag itself.
-    ap._contacted_at = {"30": time.time() - 30 * 86400}
+    ap._followup_state = {"30": {"touches": 0, "last": time.time() - 30 * 86400}}
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
 
@@ -493,7 +493,7 @@ async def test_run_once_sends_one_followup_to_stale_contacted_lead(monkeypatch):
     monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
     # First contact 10 days ago -> eligible for follow-up.
-    ap._contacted_at = {"31": time.time() - 10 * 86400}
+    ap._followup_state = {"31": {"touches": 0, "last": time.time() - 10 * 86400}}
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
 
@@ -519,7 +519,7 @@ async def test_followup_is_once_only_across_passes(monkeypatch):
     monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
     monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
-    ap._contacted_at = {"32": time.time() - 10 * 86400}
+    ap._followup_state = {"32": {"touches": 0, "last": time.time() - 10 * 86400}}
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
 
@@ -550,7 +550,7 @@ async def test_followup_counts_in_emails_sent_and_global_budget(monkeypatch):
     monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
     monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
-    ap._contacted_at = {"34": time.time() - 10 * 86400}
+    ap._followup_state = {"34": {"touches": 0, "last": time.time() - 10 * 86400}}
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
 
@@ -563,4 +563,110 @@ async def test_followup_counts_in_emails_sent_and_global_budget(monkeypatch):
     assert stats["emails_sent"] == 1
     # Shared agency ceiling was decremented by the follow-up send:
     assert global_budget["sent"] == 10
+
+
+@pytest.mark.asyncio
+async def test_multitouch_cadence_sends_up_to_touches(monkeypatch):
+    """With TOUCHES=2 + GAP_DAYS, a non-responder gets a 2nd touch after the gap
+    (but never a 3rd). The per-lead progress persists across passes."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
+    monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 1)
+    monkeypatch.setattr(mod, "FOLLOWUP_TOUCHES", 2)
+    monkeypatch.setattr(mod, "FOLLOWUP_GAP_DAYS", 2)
+
+    # Controllable clock so we can advance "now" between passes. The seed
+    # first-contact is BEFORE the clock value, so pass 1 sees > MIN_DAYS elapsed.
+    real_now = time.time()
+    clock = [real_now]
+    monkeypatch.setattr(mod, "time", type("T", (), {"time": staticmethod(lambda: clock[0])})())
+
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "35", "name": "Nudge Co", "email": "owner@nudge.com",
+            "category": "plumber", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    ap._followup_state = {"35": {"touches": 0, "last": real_now - 30 * 86400}}
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    # Pass 1: first touch (MIN_DAYS since first contact).
+    s1 = await ap.run_once()
+    assert s1["followups_sent"] == 1
+    assert ap._followup_state["35"]["touches"] == 1
+    # Advance clock past GAP_DAYS since the touch.
+    clock[0] = ap._followup_state["35"]["last"] + 3 * 86400
+
+    # Pass 2: second touch (GAP_DAYS since last touch).
+    email.sent.clear()
+    s2 = await ap.run_once()
+    assert s2["followups_sent"] == 1
+    assert ap._followup_state["35"]["touches"] == 2
+    # Cadence complete -> 3rd touch is blocked even though enough time passed.
+    clock[0] = ap._followup_state["35"]["last"] + 3 * 86400
+    email.sent.clear()
+    s3 = await ap.run_once()
+    assert s3["followups_sent"] == 0
+    assert ap._followup_state["35"]["touches"] == 2
+
+
+@pytest.mark.asyncio
+async def test_calendar_suggest_not_on_later_touches(monkeypatch):
+    """Calendar suggestion only fires on the FIRST touch (not later ones)."""
+    import admin.agency.sba_autopilot as mod
+
+    calls = []
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
+    monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 1)
+    monkeypatch.setattr(mod, "FOLLOWUP_TOUCHES", 2)
+    monkeypatch.setattr(mod, "FOLLOWUP_GAP_DAYS", 2)
+    monkeypatch.setattr(mod, "FOLLOWUP_SUGGEST_CALENDAR", True)
+    monkeypatch.setattr(
+        mod, "meeting_slot",
+        lambda lead, owner_tz: calls.append(lead["id"]) or ("iso", "slot text"),
+    )
+
+    clock = [time.time()]
+    monkeypatch.setattr(mod, "time", type("T", (), {"time": staticmethod(lambda: clock[0])})())
+
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "37", "name": "Later Co", "email": "owner@later.com",
+            "category": "plumber", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    ap._followup_state = {"37": {"touches": 0, "last": clock[0] - 30 * 86400}}
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    await ap.run_once()  # touch 1 -> should call meeting_slot
+    clock[0] = ap._followup_state["37"]["last"] + 3 * 86400
+    email.sent.clear()
+    await ap.run_once()  # touch 2 -> should NOT call meeting_slot
+    assert calls == ["37"]
+
+
+@pytest.mark.asyncio
+async def test_analyzing_agent_registered_and_routable(monkeypatch):
+    """The Analyzing Agent is a distinct production agent: registered in the
+    workspace manager's DEFAULT_AGENTS, routes via route_to_agent, and exposes a
+    chat() contract that returns (text, phases)."""
+    import admin.workspace.manager as mgr
+    from admin.workspace.agents.analyzing import AnalyzingAgent
+
+    # Registered as a default agent + in the routing table.
+    assert "analyzing" in mgr.DEFAULT_AGENTS
+    assert mgr.route_to_agent.__module__ == "admin.workspace.manager"
+
+    agent = AnalyzingAgent(workspace_name="Test", client_name="Client")
+    assert agent._thread_id == "analyzing_Test"
+    # chat() returns the agent contract: (text, list[phases])
+    out, phases = await agent.chat("What trends do you see across my channels?")
+    assert isinstance(out, str) and isinstance(phases, list)
+    assert any(p.get("phase") == "understand" for p in phases)
 
