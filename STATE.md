@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-17 23:42 IST (18:12 UTC) — multi-touch follow-up + Analyzing Agent built; swarm dead code deleted; all committed.
+**Last updated:** 2026-08-18 01:35 IST (20:05 UTC) — always-on Agency Agent Loop + SBA→CEO handoff auto-fire + store-portal agent query endpoint built; loop-engineering Loop Ready 100/L3; committed fe3a16b.
 
 ---
 
@@ -909,3 +909,56 @@ Each workspace gets its own `SBAAutopilot` instance (`run_all_once` loops
 (`{"<ws>": {"enabled": true, "owner_email": "...", "category": "..."}}`) or call
 `set_workspace_config()`; next autopilot restart picks it up with its own
 rotation/strategy/journal/owner and its own lead pool.
+
+---
+
+## AGENCY AUTONOMY ARCHITECTURE (built 2026-08-17, committed `fe3a16b`)
+
+**Goal (owner):** "agency agents khud chalein, mai beech mein nahi aaunga" — multi-agent
+agency jahan SBA + specialist agents kaam agent hi kare, owner sirf baad mein check kare.
+
+**Root cause found (Engineering #16):** specialist agents (SEO/Website/Ads/Analytics/
+Analyzing) were L1 (manual) because `scheduler.run_due_tasks()` had NO timer — only a
+manual API tick (`/api/orch/scheduler/tick`). The orchestrator + scheduler were fully
+built but never auto-invoked.
+
+**What was built:**
+
+1. **Always-on Agency Agent Loop** — `admin/agency/agent_loop.py`
+   - `agent_loop_forever()` (60s tick) started in `main.py` lifespan; cancelled on shutdown.
+   - Runs due scheduled tasks via `scheduler.run_due_tasks()` (SEO scan -> report ->
+     workspace CEO -> agency CEO -> agency SEO monitor chain).
+   - **Auto-fires SBA->CEO handoffs**: `_auto_process_due_handoffs()` calls
+     `ceo_process_sba_handoff()` for any handoff with `workspace_id=None`, provisioning
+     the client workspace + registering all 7 specialist agents -- no human in loop.
+   - Bounded: `AGENCY_AGENT_LOOP_TICK_TIMEOUT_SECONDS=120`; per-cycle failures swallowed
+     (one bad task can't freeze the agency). Schedules seeded at boot for `ws_agency`/
+     `ws_default` + agency (`setup_default_schedules`/`setup_agency_schedules`).
+   - Config: `AGENCY_AGENT_LOOP_INTERVAL_SECONDS` / `TICK_TIMEOUT_SECONDS` in `settings.py`.
+
+2. **SBA->CEO handoff auto-fire** -- `admin/agency/sba_autopilot.py`
+   - On auto-booked meeting (`result == "booked"`), autopilot now calls `create_handoff`
+     (fire-and-forget, local import, never blocks booking). Feeds the loop above.
+
+3. **Store-portal agent query** -- `admin/api/routes/store.py` -> `POST /api/store/agent`
+   - Client (store portal) message -> keyword-routed to a SAFE read/analysis agent
+     (seo/content/website/ads/social/analytics/analyzing/memory).
+   - `_CLIENT_AGENT_ALLOWLIST` EXCLUDES sba/email/meeting agents (owner gates preserved).
+   - This is part of the existing **store portal** (e-commerce: products/services/orders/
+     dispatch), NOT a separate client-communication channel. No frontend chat UI yet.
+
+**Autonomy levels achieved:**
+- SBA Autopilot: **L2** (own 24/7 process, lead->email->meeting->follow-up).
+- Agency Agent Loop + specialists: **L2** (self-scheduled via timer).
+- Client delivery: **L2/L3** (store-portal query, no human in loop, safe allowlist).
+
+**loop-engineering:** `npx @cobusgreyling/loop doctor .` -> **Loop Ready 100 / L3**, exit 0.
+`LOOP.md` rewritten with the real agency autonomy architecture (fixed broken `../../` links).
+
+**Verified:** new `admin/tests/test_autonomy_loop.py` (4) + existing orch/sba suites green
+(46 total). App boots, route `/api/store/agent` registered, loop tick clean (smoke).
+
+**Deferred (owner review later):** heavier follow-up cadence (`SBA_FOLLOWUP_TOUCHES>1`),
+store-portal agent chat UI on frontend, L3 unattended sign-off. `.env` follow-up flags
+ON (owner opted in): `SBA_FOLLOWUP_ENABLED=true`, `SBA_FOLLOWUP_SUGGEST_CALENDAR=true`,
+`SBA_FOLLOWUP_TOUCHES=1`.
