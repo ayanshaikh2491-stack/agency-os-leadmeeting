@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-17 22:30 IST (17:00 UTC) — Project Continuity prompt active; follow-up pass built.
+**Last updated:** 2026-08-17 23:42 IST (18:12 UTC) — multi-touch follow-up + Analyzing Agent built; swarm dead code deleted; all committed.
 
 ---
 
@@ -16,10 +16,14 @@
   Agency owner. CEO is the workspace coordinator; specialized agents do NOT self-manage.
 
 **Specialized agents (all wired via `manager.route_to_agent`):**
-`SBA`, `SEO`, `Ads`, `Social`, `Website`, `Content`, `Analytics`, `Memory`.
-- `Analyzing Agent` role (doc #8: trends/comparison/structured report) is
-  CURRENTLY covered only by `analytics.py` (metrics). No standalone
-  `analyzing.py`. See Plan P2.
+`SBA`, `SEO`, `Ads`, `Social`, `Website`, `Content`, `Analytics`,
+`Analyzing`, `Memory`.
+- `Analyzing Agent` (doc #8: trends/comparison/structured decision brief) is now a
+  REAL agent — `admin/workspace/agents/analyzing.py` + `POST /api/analyzing/chat`.
+  It SYNTHESIZES across the 20 analytics tools into a decision brief (distinct from
+  the thin `/api/analytics/*` metrics reporter). Registered in `DEFAULT_AGENTS`,
+  routed via `route_to_agent`, surfaced as `analyzing-bot` on the frontend. P2 DONE
+  (2026-08-17 18:13 UTC run).
 
 **Multi-agent structured comm (doc #24):** BUILT this session —
 `admin/agency/agent_bus.py` (SQLite-backed bus: `brief`/`respond`/
@@ -58,8 +62,9 @@ HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
   requirement). `agent_bus.py` is being built (see Plan P1).
 - **DEAD CODE found:** `admin/agency/swarm.py` = no-op placeholder (logs
   "no-op"), STILL wired to `api/routes/swarm.py` (`/api/swarm/*`). Harmless but
-  misleading — the real coordinator is `manager.py`. Recommend: delete swarm.py
-  + swarm route, or document as future work.
+  misleading — the real coordinator is `manager.py`. Recommend: delete.
+  RESOLVED 2026-08-17 18:13 UTC run: both `swarm.py` files deleted + `main.py`
+  wiring removed.
 
 **SBA lead-to-meeting pipeline (WORKER 2) — PRODUCTION-READY (custom store booking):**
 - **HARD REQUIREMENT: NO Google Calendar / NO `gws` CLI.** Booking persists into
