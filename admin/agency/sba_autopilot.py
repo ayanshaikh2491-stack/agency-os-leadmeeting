@@ -853,7 +853,9 @@ class SBAAutopilot:
                 return l
         return None
 
-    async def _process_followups(self, url: str, key: str) -> dict[str, int]:
+    async def _process_followups(self, url: str, key: str,
+                                 global_budget: dict[str, int] | None = None,
+                                 cold_sent: int = 0) -> dict[str, int]:
         """Re-touch non-responding leads with a single polite follow-up.
 
         Safety model (prompt #14: mass re-email is high-impact → bounded +
@@ -862,9 +864,14 @@ class SBAAutopilot:
           - Only leads still in 'contacted' status (never replied/booked).
           - Only after FOLLOWUP_MIN_DAYS since first contact (persisted, so it
             survives restarts and the once-only guarantee is real).
-          - At most FOLLOWUP_MAX_PER_PASS per pass, and inside the lead's own
-            business hours, under the same global/SMTP caps as cold sends.
+          - At most FOLLOWUP_MAX_PER_PASS per pass, inside the lead's own
+            business hours, under the SAME caps as cold sends: the per-pass
+            DAILY_EMAIL_CAP (counted together with cold sends this pass) and the
+            agency-wide global_budget ceiling (shared across workspaces), both of
+            which are decremented here so multi-workspace runs can't over-send.
           - Uses the dedicated draft_followup template (low-friction out).
+          - Each follow-up is also counted in stats["emails_sent"] so the owner
+            digest reflects real outbound volume.
         """
         stats = {"followups_sent": 0, "followups_eligible": 0, "followups_skipped": 0}
         if not FOLLOWUP_ENABLED:
@@ -873,12 +880,14 @@ class SBAAutopilot:
             return stats
         leads = load_leads(url, key)
         ws_leads = [l for l in leads if (l.get("workspace_name") or "agency") == self.workspace_name]
-        # Honour the shared agency-wide send ceiling for this cycle too.
-        sent_anywhere = self._last_status.get("emails_sent", 0)
         for lead in reason.prioritize(ws_leads):
+            # Bounds: per-pass follow-up ceiling + shared daily cap (cold+followup).
             if stats["followups_sent"] >= FOLLOWUP_MAX_PER_PASS:
                 break
-            if sent_anywhere >= GLOBAL_CYCLE_EMAIL_CAP:
+            if cold_sent + stats["followups_sent"] >= DAILY_EMAIL_CAP:
+                break
+            # Agency-wide ceiling (shared across all workspaces this cycle).
+            if global_budget is not None and global_budget.get("sent", 0) >= GLOBAL_CYCLE_EMAIL_CAP:
                 break
             status = lead.get("status") or "new"
             # Never follow up someone who already engaged.
@@ -914,7 +923,9 @@ class SBAAutopilot:
                 self._contacted_at.pop(lid, None)
                 _save_followup_state(self._contacted_at)
                 stats["followups_sent"] += 1
-                sent_anywhere += 1
+                # Count toward the agency-wide + owner-visible send totals.
+                if global_budget is not None:
+                    global_budget["sent"] = global_budget.get("sent", 0) + 1
                 reason.log_decision({
                     "event": "followup_sent",
                     "lead_id": lid,
@@ -1157,9 +1168,14 @@ class SBAAutopilot:
                 break
         # Proactive follow-up: re-touch non-responders (owner-gated, bounded).
         # Off unless SBA_FOLLOWUP_ENABLED=true; never sends to replied/booked
-        # leads, enforces MIN_DAYS + once-only, and respects all the same caps.
-        followup_stats = await self._process_followups(url, key)
+        # leads, enforces MIN_DAYS + once-only, and shares the SAME daily/agency
+        # send ceilings with the cold-send loop above (so the combined outbound
+        # volume is bounded). Follow-up sends are folded into emails_sent so the
+        # owner digest reflects real outbound volume.
+        followup_stats = await self._process_followups(
+            url, key, global_budget=global_budget, cold_sent=stats["emails_sent"])
         stats.update(followup_stats)
+        stats["emails_sent"] += followup_stats.get("followups_sent", 0)
         reply_stats = await self._process_replies(url, key, leads)
         stats.update(reply_stats)
         stats["new_leads_found"] = await self._find_new_leads()

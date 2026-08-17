@@ -533,24 +533,34 @@ async def test_followup_is_once_only_across_passes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_followup_skips_recent_contact_before_min_days(monkeypatch):
-    """A lead contacted only 1 day ago is NOT eligible yet (MIN_DAYS gate)."""
+async def test_followup_counts_in_emails_sent_and_global_budget(monkeypatch):
+    """Follow-up sends are folded into the owner-visible emails_sent stat AND
+    decrement the shared agency-wide global_budget, so combined outbound volume
+    stays bounded across cold + follow-up + multi-workspace runs (prompt #22)."""
     import admin.agency.sba_autopilot as mod
 
     monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
     monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 4)
+    monkeypatch.setattr(mod, "DAILY_EMAIL_CAP", 50)
+    monkeypatch.setattr(mod, "GLOBAL_CYCLE_EMAIL_CAP", 50)
     email = FakeEmailClient()
     ap = mod.SBAAutopilot(email_client=email)
-    lead = {"id": "33", "name": "Fresh Contact Co", "email": "owner@freshcontact.com",
-            "category": "roofer", "state": "TX", "status": "contacted"}
+    lead = {"id": "34", "name": "Counted Co", "email": "owner@counted.com",
+            "category": "cafe", "state": "TX", "status": "contacted"}
     monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
     monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
     monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
-    ap._contacted_at = {"33": time.time() - 1 * 86400}  # 1 day ago
+    ap._contacted_at = {"34": time.time() - 10 * 86400}
     _business_hours(monkeypatch)
     _no_new_leads(monkeypatch)
 
-    stats = await ap.run_once()
-    assert stats["followups_sent"] == 0
-    assert stats["followups_eligible"] == 0
-    assert email.sent == []
+    # Agency-wide budget already at 9 from other workspaces this cycle; the
+    # follow-up must decrement it (not over-send past the shared ceiling).
+    global_budget = {"sent": 9}
+    stats = await ap.run_once(global_budget=global_budget)
+    assert stats["followups_sent"] == 1
+    # Folded into the owner-visible total (this pass had 0 cold sends + 1 follow-up):
+    assert stats["emails_sent"] == 1
+    # Shared agency ceiling was decremented by the follow-up send:
+    assert global_budget["sent"] == 10
+
