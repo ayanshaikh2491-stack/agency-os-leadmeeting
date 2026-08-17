@@ -118,3 +118,15 @@ SBA_FOLLOWUP_SUGGEST_CALENDAR: bool = os.getenv("SBA_FOLLOWUP_SUGGEST_CALENDAR",
 sba_owner_timezone: str = SBA_OWNER_TIMEZONE
 sba_autopilot_interval_minutes: int = SBA_AUTOPILOT_INTERVAL_MINUTES
 sba_daily_email_cap: int = SBA_DAILY_EMAIL_CAP
+
+# ── Always-on Agency Agent Loop ─────────────────────────────────────
+# Backend background loop that runs due scheduled tasks (SEO/Website/Ads/
+# Analytics/Analyzing) and auto-provisions client workspaces from SBA
+# handoffs. This is what makes the specialist agents self-scheduled (L2).
+# The SBA 24/7 email autopilot is a SEPARATE process and is not affected.
+AGENCY_AGENT_LOOP_INTERVAL_SECONDS: int = int(
+    os.getenv("AGENCY_AGENT_LOOP_INTERVAL_SECONDS", "60")
+)
+AGENCY_AGENT_LOOP_TICK_TIMEOUT_SECONDS: int = int(
+    os.getenv("AGENCY_AGENT_LOOP_TICK_TIMEOUT_SECONDS", "120")
+)

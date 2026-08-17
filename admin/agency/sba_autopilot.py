@@ -1132,6 +1132,25 @@ class SBAAutopilot:
                             ),
                             cc_owner=False,
                         )
+                        # Hand the booked lead to the CEO agent so it provisions
+                        # the client workspace + registers every specialist agent.
+                        # The always-on agent loop auto-processes this (L2), so the
+                        # client's SEO/Website/Ads/etc. work starts without you.
+                        # Fire-and-forget: a handoff failure must never block the
+                        # autopilot's meeting booking.
+                        try:
+                            from admin.agency.sba_store import create_handoff
+                            await create_handoff(
+                                str(lead["id"]),
+                                ceo_message=(
+                                    f"Lead {lead.get('name') or ''} booked a meeting "
+                                    f"({text}). Provision their client workspace and "
+                                    f"spin up the specialist agents."
+                                ),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("handoff creation failed for lead %s: %s",
+                                          lead.get("id"), exc)
                     else:
                         # Manual booking queued + owner alerted by meeting module;
                         # do NOT claim a meeting was booked here.

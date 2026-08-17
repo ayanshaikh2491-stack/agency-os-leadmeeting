@@ -1011,3 +1011,82 @@ async def public_book_confirm(token: str, body: dict[str, Any] | None = None,
         logger.warning("Owner confirm-notification failed for %s: %s", token, exc)
 
     return {"success": True, "data": {"meeting": updated}}
+
+
+# ── Client-facing Agent Auto-Delivery ──────────────────────────────────────
+# A client (or the store frontend) can ask a question and get the answer back
+# from the right specialist agent WITHOUT a human in the loop. The agent runs
+# itself (L2/L3 agentic delivery) and returns the result.
+#
+# Safety: only READ/ANALYSIS agents are exposed. SBA / email / meeting agents
+# are intentionally excluded — those stay owned by the autopilot + owner gates.
+_CLIENT_AGENT_ALLOWLIST = {
+    "seo", "content", "website", "ads", "social", "analytics", "analyzing", "memory",
+}
+
+
+class ClientAgentRequest(BaseModel):
+    message: str
+    agent: str | None = None  # optional; auto-routed from message if omitted
+    workspace_id: str | None = None  # optional override
+
+
+@router.post("/agent")
+async def client_agent_ask(
+    body: ClientAgentRequest,
+    workspace: str = Query(...),
+    client: str = Query(...),
+) -> dict[str, Any]:
+    """Client asks an agent a question; the agent runs itself and returns the answer.
+
+    No human in the loop, no external sends. The agent is scoped to this store's
+    workspace so it only reasons over this client's data.
+    """
+    _require_store()
+    message = (body.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    # Resolve target agent: explicit -> keyword auto-route -> analyzing default.
+    agent_type = body.agent
+    if agent_type and agent_type not in _CLIENT_AGENT_ALLOWLIST:
+        raise HTTPException(status_code=400, detail=f"agent '{agent_type}' not available to clients")
+    if not agent_type:
+        lowered = message.lower()
+        if any(k in lowered for k in ("seo", "rank", "keyword", "search")):
+            agent_type = "seo"
+        elif any(k in lowered for k in ("ad", "campaign", "roas", "meta", "google ad")):
+            agent_type = "ads"
+        elif any(k in lowered for k in ("post", "social", "instagram", "linkedin", "tiktok")):
+            agent_type = "social"
+        elif any(k in lowered for k in ("analytics", "report", "insight", "trend", "forecast")):
+            agent_type = "analyzing"
+        elif any(k in lowered for k in ("website", "site", "page", "deploy", "performance")):
+            agent_type = "website"
+        elif any(k in lowered for k in ("content", "image", "caption", "creative", "design")):
+            agent_type = "content"
+        else:
+            agent_type = "analyzing"
+
+    from admin.workspace.manager import route_to_agent
+
+    # Scope to this store's workspace when possible.
+    target_ws = body.workspace_id or workspace
+    try:
+        resp = await route_to_agent(
+            workspace_id=target_ws,
+            agent_type=agent_type,
+            message=message,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("client agent ask failed (ws=%s, agent=%s): %s", target_ws, agent_type, exc)
+        return {
+            "success": False,
+            "error": f"{agent_type} agent failed: {exc}",
+            "data": {"response": f"❌ Agent unavailable: {exc}", "agent": agent_type},
+        }
+
+    return {
+        "success": True,
+        "data": {"response": resp, "agent": agent_type, "workspace": target_ws},
+    }

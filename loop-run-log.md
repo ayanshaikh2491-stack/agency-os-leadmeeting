@@ -4,6 +4,25 @@ Append each Loop run here (per `LOOP.md` budget rule). Format: `## RUN yyyy-mm-d
 
 ---
 
+## RUN 2026-08-17 19:39 UTC — agency-autonomy-loop (autopilot build, owner deferred review)
+
+**Trigger:** User: "setup loop-engineering for agents, autopilot mode, I won't be in the loop, you + agency agents handle it, I'll check later."
+
+**Actions (verify-don't-trust — inspected code, not claimed):**
+1. `npx @cobusgreyling/loop doctor .` → **Loop Ready 100 / L3**, exit 0. Repo already installed.
+2. Root-caused agency autonomy gap (Engineering #16): `scheduler.run_due_tasks()` was fully built but only reachable via manual API tick — no timer. Every specialist agent sat at L1.
+3. Built `admin/agency/agent_loop.py` (always-on loop): runs due scheduled tasks + auto-fires SBA→CEO handoffs. Started in `main.py` lifespan; schedules seeded at boot (`ws_agency`/`ws_default` + agency). Config defaults in `settings.py`.
+4. Closed SBA→CEO handoff: autopilot now creates a `create_handoff` on auto-booked meeting → agent loop provisions the client workspace + registers all 7 specialist agents (no human in loop).
+5. Added `POST /api/store/agent` client-facing auto-delivery: message → keyword-routed to safe read/analysis agents (SBA/email/meeting excluded) → result returned.
+6. Rewrote `LOOP.md` with the real agency autonomy architecture (fixed broken `../../` links).
+7. Tests: new `test_autonomy_loop.py` (4) + existing orch/sba suites green (46 tests). App boots + loop ticks clean (smoke).
+
+**Verified:** agent-loop tick clean; handoff auto-provisions workspace; client endpoint allowlist excludes SBA; `loop doctor` 100/L3.
+
+**Next (owner review):** heavier cadence (SBA_FOLLOWUP_TOUCHES>1), client chat UI on store frontend, L3 unattended sign-off.
+
+---
+
 ## RUN 2026-08-17 15:42 UTC — governance-alignment (manual CLI session)
 
 **Trigger:** User dropped `Multi-Agent Agency — Autonomous CLI Engineering System Prompt.md`; asked to understand + plan per its rules.
