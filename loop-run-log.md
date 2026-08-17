@@ -42,3 +42,41 @@ Append each Loop run here (per `LOOP.md` budget rule). Format: `## RUN yyyy-mm-d
 **Next options for owner:** P2 (Analyzing Agent role), wire CEO delegation to bus,
 or proactive SBA booking for non-responders.
 
+---
+
+## RUN 2026-08-17 17:00 UTC — proactive follow-up pass built (Project Continuity prompt)
+
+**Prompt change:** user added `Project Continuity, Autonomous Execution & Goal
+Ownership Prompt.md` — treat as EXTENSION of the Agency/Engineering prompt, not a
+replacement. Both active. Operating model now: READ MEMORY → STATE → VERIFY →
+WORK → VERIFY → UPDATE MEMORY → CONTINUE. Proactive, owner-gated only on real
+high-impact actions.
+
+**Greatest revenue blocker found (root-cause, #16/#18):** the SBA pipeline + custom
+store booking were production-correct, but **conversion was ZERO structurally** —
+`contacted` leads were never re-touched; meetings only fired on a "yes" reply.
+No follow-up logic existed at all.
+
+**Delivered (autonomous, reversible, low-risk):**
+- `admin/config/settings.py` — `SBA_FOLLOWUP_ENABLED` (default **false**),
+  `SBA_FOLLOWUP_MIN_DAYS=4`, `SBA_FOLLOWUP_MAX_PER_PASS=10`. Opt-in only (#14).
+- `admin/tools/sba_email_draft.py` — `draft_followup` + `fallback_followup`
+  (polite, low-friction second touch).
+- `admin/agency/sba_autopilot.py` — `_process_followups`: bounded, once-only
+  (persisted `_sba_followup_state`), MIN_DAYS gate, business-hours + SMTP/global
+  caps, only `contacted` leads, never re-follows. Wired into `run_once`. Records
+  first-contact time on send.
+- `admin/tests/test_sba_autopilot.py` — 4 new tests (disabled-by-default; sends
+  one follow-up; once-only across passes; MIN_DAYS gate). Total 38 pass.
+- `.gitignore` — added `/.sba_followup_state`.
+
+**Verified:** backend 38/38 pass; frontend `next build` clean (41/41 static pages).
+**Not yet deployed to prod:** feature is OFF until owner sets `SBA_FOLLOWUP_ENABLED=true`
+in `.env` (high-impact mass email = owner decision, #14/#25).
+
+**Deferred (P2):** multi-touch cadence (2nd/3rd follow-up), calendar-suggest in the
+email, deeper Analyzing Agent role.
+
+**Next:** owner enables follow-up in prod .env, OR I proceed to P2 (multi-touch +
+Analyzing Agent) autonomously, OR delete dead `swarm.py`.
+

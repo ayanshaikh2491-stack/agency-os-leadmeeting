@@ -57,6 +57,7 @@ docs/superpowers/
 # Runtime state / generated output
 /.sba_rotation_state
 /.sba_enrichment_state
+/.sba_followup_state
 /generated_sites/
 /admin/generated_sites/
 crewai-repo/  

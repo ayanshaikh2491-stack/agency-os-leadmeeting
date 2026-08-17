@@ -35,6 +35,7 @@ from admin.agency.sba_pipeline import (  # noqa: E402
 )
 from admin.tools.sba_email_client import OWNER_EMAIL, SBAEmailClient, build_workspace_email_client  # noqa: E402
 from admin.tools.sba_email_draft import draft_email  # noqa: E402
+from admin.tools.sba_email_draft import draft_followup  # noqa: E402
 from admin.tools.sba_meeting import SBAMeetingManager  # noqa: E402
 from admin.tools.sba_time import (  # noqa: E402
     human_time,
@@ -118,6 +119,43 @@ ENRICH_TIMEOUT_SECONDS = int(os.environ.get("SBA_ENRICH_TIMEOUT_SECONDS", "45"))
 # Don't re-hammer a recipient for 24h after an SMTP failure (Gmail 550
 # daily-limit resets next day; retrying every 15 min just burns the limit).
 EMAIL_RETRY_BACKOFF_SECONDS = int(os.environ.get("SBA_EMAIL_RETRY_SECONDS", str(24 * 3600)))
+
+# ── Proactive follow-up (non-responder re-engagement) ─────────────
+# Re-emailing non-responders is a high-impact action, so it is OFF unless the
+# owner opts in. See settings.SBA_FOLLOWUP_ENABLED. Bounds below keep it safe:
+# never follow up a lead that has already replied/booked, never follow up before
+# MIN_DAYS since first contact, once only, inside business hours, under caps.
+FOLLOWUP_ENABLED = bool(os.environ.get("SBA_FOLLOWUP_ENABLED", "false").lower() in ("1", "true", "yes"))
+FOLLOWUP_MIN_DAYS = int(os.environ.get("SBA_FOLLOWUP_MIN_DAYS", "4"))
+FOLLOWUP_MAX_PER_PASS = int(os.environ.get("SBA_FOLLOWUP_MAX_PER_PASS", "10"))
+# Persisted per-lead first-contact timestamp so restarts don't re-follow before
+# MIN_DAYS, and so the once-only guarantee survives the process being restarted.
+_FOLLOWUP_STATE_FILE = os.environ.get(
+    "SBA_FOLLOWUP_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                 ".sba_followup_state"),
+)
+
+
+def _load_followup_state() -> dict[str, float]:
+    try:
+        with open(_FOLLOWUP_STATE_FILE, "r", encoding="utf-8") as fh:
+            return json.loads(fh.read() or "{}")
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("followup state load failed: %s", exc)
+        return {}
+
+
+def _save_followup_state(state: dict[str, float]) -> None:
+    try:
+        tmp = _FOLLOWUP_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(state))
+        os.replace(tmp, _FOLLOWUP_STATE_FILE)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("followup state save failed: %s", exc)
 
 
 def _load_enrich_state() -> dict[str, float]:
@@ -421,6 +459,7 @@ class SBAAutopilot:
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
         self._enriched_at: dict[str, float] = _load_enrich_state()
+        self._contacted_at: dict[str, float] = _load_followup_state()
         self._enrichments_this_pass = 0
         self._last_notified_lead_id: str | None = None
 
@@ -700,6 +739,11 @@ class SBAAutopilot:
         ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
         if ok:
             sb_patch_lead(url, key, str(lead.get("id") or ""), {"status": "contacted"})
+            # Record first-contact time so the (opt-in) follow-up pass knows
+            # when MIN_DAYS has elapsed and can enforce once-only per restart.
+            lid = str(lead.get("id") or "")
+            self._contacted_at[lid] = time.time()
+            _save_followup_state(self._contacted_at)
             reason.log_decision({
                 "event": "email_sent",
                 "name": lead.get("name") or "",
@@ -808,6 +852,79 @@ class SBAAutopilot:
             if (l.get("status") or "") == "owner_confirm":
                 return l
         return None
+
+    async def _process_followups(self, url: str, key: str) -> dict[str, int]:
+        """Re-touch non-responding leads with a single polite follow-up.
+
+        Safety model (prompt #14: mass re-email is high-impact → bounded +
+        opt-in):
+          - NO-OP unless SBA_FOLLOWUP_ENABLED is true.
+          - Only leads still in 'contacted' status (never replied/booked).
+          - Only after FOLLOWUP_MIN_DAYS since first contact (persisted, so it
+            survives restarts and the once-only guarantee is real).
+          - At most FOLLOWUP_MAX_PER_PASS per pass, and inside the lead's own
+            business hours, under the same global/SMTP caps as cold sends.
+          - Uses the dedicated draft_followup template (low-friction out).
+        """
+        stats = {"followups_sent": 0, "followups_eligible": 0, "followups_skipped": 0}
+        if not FOLLOWUP_ENABLED:
+            return stats
+        if not (self.email and self.email.enabled):
+            return stats
+        leads = load_leads(url, key)
+        ws_leads = [l for l in leads if (l.get("workspace_name") or "agency") == self.workspace_name]
+        # Honour the shared agency-wide send ceiling for this cycle too.
+        sent_anywhere = self._last_status.get("emails_sent", 0)
+        for lead in reason.prioritize(ws_leads):
+            if stats["followups_sent"] >= FOLLOWUP_MAX_PER_PASS:
+                break
+            if sent_anywhere >= GLOBAL_CYCLE_EMAIL_CAP:
+                break
+            status = lead.get("status") or "new"
+            # Never follow up someone who already engaged.
+            if status != "contacted":
+                continue
+            lid = str(lead.get("id") or "")
+            email = _s(lead.get("email"))
+            if not email or not _is_valid_lead_email(
+                email,
+                allow_consumer=(_s(lead.get("email_provenance")) in ("consumer", "own_domain", "homepage")),
+            ):
+                stats["followups_skipped"] += 1
+                continue
+            # Respect the SMTP backoff window (don't re-hammer a failing inbox).
+            blocked_until = self._email_retry_until.get(email)
+            if blocked_until and time.time() < blocked_until:
+                stats["followups_skipped"] += 1
+                continue
+            # Only after MIN_DAYS since first contact; otherwise not yet eligible.
+            first = self._contacted_at.get(lid)
+            if not first or (time.time() - first) < FOLLOWUP_MIN_DAYS * 86400:
+                continue
+            if not lead_business_hours(lead):
+                stats["followups_skipped"] += 1
+                continue
+            stats["followups_eligible"] += 1
+            subject, body = await draft_followup(lead)
+            ok = await self.email.send_email(to_email=email, subject=subject, body_text=body, cc_owner=True)
+            if ok:
+                # Mark so we never follow up twice (status stays 'contacted' so a
+                # future reply still books; we just drop the lead from the
+                # follow-up pool by clearing its first-contact timestamp).
+                self._contacted_at.pop(lid, None)
+                _save_followup_state(self._contacted_at)
+                stats["followups_sent"] += 1
+                sent_anywhere += 1
+                reason.log_decision({
+                    "event": "followup_sent",
+                    "lead_id": lid,
+                    "name": lead.get("name") or "",
+                    "email": email,
+                }, log_path=self._journal_path)
+            else:
+                self._email_retry_until[email] = time.time() + EMAIL_RETRY_BACKOFF_SECONDS
+                stats["followups_skipped"] += 1
+        return stats
 
     async def _process_replies(self, url: str, key: str, leads: list[dict]) -> dict[str, int]:
         stats = {"owner_notified": 0, "meetings_scheduled": 0, "rejected": 0, "unmatched_sender": 0}
@@ -996,7 +1113,8 @@ class SBAAutopilot:
             "emails_sent": 0, "deferred_to_business_hours": 0, "no_email": 0,
             "invalid_email": 0, "send_failed": 0, "owner_notified": 0,
             "meetings_scheduled": 0, "rejected": 0, "new_leads_found": 0,
-            "retry_backoff": 0, "unmatched_sender": 0,
+            "retry_backoff": 0, "unmatched_sender": 0, "followups_sent": 0,
+            "followups_eligible": 0, "followups_skipped": 0,
         }
         cfg = supabase_config()
         if not cfg:
@@ -1037,6 +1155,11 @@ class SBAAutopilot:
             # Gmail daily limit before this cap existed).
             if attempts >= DAILY_EMAIL_CAP:
                 break
+        # Proactive follow-up: re-touch non-responders (owner-gated, bounded).
+        # Off unless SBA_FOLLOWUP_ENABLED=true; never sends to replied/booked
+        # leads, enforces MIN_DAYS + once-only, and respects all the same caps.
+        followup_stats = await self._process_followups(url, key)
+        stats.update(followup_stats)
         reply_stats = await self._process_replies(url, key, leads)
         stats.update(reply_stats)
         stats["new_leads_found"] = await self._find_new_leads()

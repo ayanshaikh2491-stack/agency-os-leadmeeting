@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-17 22:00 IST (16:30 UTC)
+**Last updated:** 2026-08-17 22:30 IST (17:00 UTC) — Project Continuity prompt active; follow-up pass built.
 
 ---
 
@@ -79,10 +79,19 @@ HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
   list (Confirm/Cancel/Mark-Done) + Booking Settings panel; public booking-confirm
   widget triggered by `?booking=bk_xxx` fetches `/api/store/book/:token`, lets the
   lead pick a datetime + confirm. `next build` clean, 31 backend tests green.
-- **Remaining weak point (carried from Aug-12):** meetings still only trigger
-  when a lead replies "yes" to the outbound email / digest; no proactive
-  booking for unresponsive leads. Conversion at ZERO historically — now the
-  booking itself is correct, but volume depends on leads replying.
+- **Remaining weak point (carried from Aug-12):** historically meetings only
+  triggered when a lead replied "yes" to the outbound email / digest; no proactive
+  re-engagement for silent non-responders. **PARTIALLY RESOLVED (2026-08-17):** added
+  a bounded, owner-gated proactive follow-up pass (`sba_autopilot._process_followups`):
+  when `SBA_FOLLOWUP_ENABLED=true`, `contacted` leads that have NOT replied after
+  `SBA_FOLLOWUP_MIN_DAYS` (default 4) get ONE polite follow-up (`draft_followup`,
+  low-friction out), inside business hours, under the same daily/SMTP/global caps,
+  once-only (persisted `_sba_followup_state`). Default OFF (mass re-email is
+  high-impact per prompt #14, so opt-in). Tests added (4). Conversion at ZERO was
+  the structural blocker; this is the first re-engagement layer. Volume now also
+  depends on the owner enabling follow-up + lead reply quality.
+- **Still open:** only ONE follow-up (no 2nd/3rd cadence), and booking remains
+  reply-driven for the first touch. See Plan P2 for deeper cadence + calendar-suggest.
 
 **Per-agent scan (WORKER 3) — HARDENING CLAIMS HOLD:**
 - `_strip_think_blocks` present in ALL 7 agents + reasoning chains (sba, seo,
@@ -106,8 +115,11 @@ HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
 ### TOP ACTION ITEMS (post-scan)
 1. **Remove/neutralize dead `swarm.py` + `api/routes/swarm.py`** (no-op,
    misleading). Low risk. [owner: cleanup]
-2. **Lead-to-meeting volume:** proactive re-engagement / calendar-suggest for
-   non-responders to lift the ZERO conversion. [owner: strategy]
+2. **Lead-to-meeting volume:** proactive re-engagement for non-responders —
+   **FOLLOW-UP PASS NOW BUILT (2026-08-17), but DISABLED by default.** Enable via
+   `.env`: `SBA_FOLLOWUP_ENABLED=true` (+ optional `SBA_FOLLOWUP_MIN_DAYS`,
+   `SBA_FOLLOWUP_MAX_PER_PASS`). Deeper multi-touch cadence + calendar-suggest is
+   still future work (Plan P2). [owner: enable in prod .env]
 3. **Ads API client:** flesh out real Meta/Google campaign calls (currently stub).
 4. Owner TODO (unchanged): set WhatsApp number in Store Settings for WhatsApp button.
 

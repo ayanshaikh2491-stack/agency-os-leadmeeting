@@ -1,5 +1,6 @@
 # admin/tests/test_sba_autopilot.py
 import pytest
+import time
 
 from admin.agency.sba_autopilot import SBAAutopilot, _is_valid_lead_email
 
@@ -444,3 +445,112 @@ async def test_consumer_email_from_verified_page_sends(monkeypatch):
     assert stats["emails_sent"] == 0
     assert stats["invalid_email"] == 1
     assert email2.sent == []
+
+
+@pytest.mark.asyncio
+async def test_run_once_does_not_follow_up_when_disabled(monkeypatch):
+    """By default (SBA_FOLLOWUP_ENABLED unset) the autopilot never re-emails
+    non-responders, even if they've sat in 'contacted' for weeks (prompt #14:
+    mass re-email is high-impact, so opt-in only)."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", False)
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    # A stale non-responder: contacted long ago, never replied.
+    lead = {"id": "30", "name": "Silent Plumbing", "email": "owner@silentplumbing.com",
+            "category": "plumber", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    # Force the lead's first-contact time far in the past so the ONLY thing
+    # blocking the follow-up is the feature flag itself.
+    ap._contacted_at = {"30": time.time() - 30 * 86400}
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["followups_sent"] == 0
+    # The cold-send loop also skips it (status == contacted -> already_contacted).
+    assert stats["emails_sent"] == 0
+    assert email.sent == []
+
+
+@pytest.mark.asyncio
+async def test_run_once_sends_one_followup_to_stale_contacted_lead(monkeypatch):
+    """With the feature on, a non-responder contacted > MIN_DAYS ago gets ONE
+    polite follow-up (and a later reply still books a meeting)."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
+    monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 4)
+    monkeypatch.setattr(mod, "FOLLOWUP_MAX_PER_PASS", 10)
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "31", "name": "Quiet HVAC", "email": "owner@quiethvac.com",
+            "category": "hvac", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    # First contact 10 days ago -> eligible for follow-up.
+    ap._contacted_at = {"31": time.time() - 10 * 86400}
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["followups_sent"] == 1
+    assert stats["followups_eligible"] == 1
+    assert email.sent and "owner@quiethvac.com" in email.sent[0]["to"]
+    # Subject should look like a follow-up, not the first cold email.
+    assert "Following up" in email.sent[0]["subject"]
+
+
+@pytest.mark.asyncio
+async def test_followup_is_once_only_across_passes(monkeypatch):
+    """A lead is followed up at most once: the second pass sends nothing for it."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
+    monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 4)
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "32", "name": "One Shot Co", "email": "owner@oneshot.com",
+            "category": "cleaner", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    ap._contacted_at = {"32": time.time() - 10 * 86400}
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    s1 = await ap.run_once()
+    assert s1["followups_sent"] == 1
+    # Reset the fake's sent list, keep the same agent so state persists.
+    email.sent.clear()
+    s2 = await ap.run_once()
+    assert s2["followups_sent"] == 0
+    assert email.sent == []
+
+
+@pytest.mark.asyncio
+async def test_followup_skips_recent_contact_before_min_days(monkeypatch):
+    """A lead contacted only 1 day ago is NOT eligible yet (MIN_DAYS gate)."""
+    import admin.agency.sba_autopilot as mod
+
+    monkeypatch.setattr(mod, "FOLLOWUP_ENABLED", True)
+    monkeypatch.setattr(mod, "FOLLOWUP_MIN_DAYS", 4)
+    email = FakeEmailClient()
+    ap = mod.SBAAutopilot(email_client=email)
+    lead = {"id": "33", "name": "Fresh Contact Co", "email": "owner@freshcontact.com",
+            "category": "roofer", "state": "TX", "status": "contacted"}
+    monkeypatch.setattr(mod, "load_leads", lambda u, k: [lead])
+    monkeypatch.setattr(mod, "supabase_config", lambda: ("http://x", "key"))
+    monkeypatch.setattr(mod, "sb_patch_lead", lambda u, k, sid, upd: True)
+    ap._contacted_at = {"33": time.time() - 1 * 86400}  # 1 day ago
+    _business_hours(monkeypatch)
+    _no_new_leads(monkeypatch)
+
+    stats = await ap.run_once()
+    assert stats["followups_sent"] == 0
+    assert stats["followups_eligible"] == 0
+    assert email.sent == []

@@ -97,6 +97,16 @@ SBA_OWNER_TIMEZONE: str = os.getenv("SBA_OWNER_TIMEZONE", "Asia/Kolkata")
 SBA_AUTOPILOT_INTERVAL_MINUTES: int = int(os.getenv("SBA_AUTOPILOT_INTERVAL_MINUTES", "15"))
 SBA_DAILY_EMAIL_CAP: int = int(os.getenv("SBA_DAILY_EMAIL_CAP", "30"))
 
+# ── SBA Proactive Follow-up (non-responder re-engagement) ─────────
+# OFF by default. Mass re-emailing non-responders is a high-impact action
+# (prompt #14), so the autopilot NEVER sends follow-ups unless the owner
+# explicitly opts in via .env / env var. When ON, only 'contacted' leads that
+# have NOT replied after FOLLOWUP_MIN_DAYS are touched, at most once
+# (followup_sent flag), inside business hours, under the same daily/SMTP caps.
+SBA_FOLLOWUP_ENABLED: bool = os.getenv("SBA_FOLLOWUP_ENABLED", "false").lower() in ("1", "true", "yes")
+SBA_FOLLOWUP_MIN_DAYS: int = int(os.getenv("SBA_FOLLOWUP_MIN_DAYS", "4"))
+SBA_FOLLOWUP_MAX_PER_PASS: int = int(os.getenv("SBA_FOLLOWUP_MAX_PER_PASS", "10"))
+
 # Lowercase aliases (consumed by tests and some call sites).
 sba_owner_timezone: str = SBA_OWNER_TIMEZONE
 sba_autopilot_interval_minutes: int = SBA_AUTOPILOT_INTERVAL_MINUTES

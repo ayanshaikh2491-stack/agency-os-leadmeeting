@@ -30,6 +30,26 @@ def fallback_email(lead: dict) -> tuple[str, str]:
     return subject, body
 
 
+def fallback_followup(lead: dict) -> tuple[str, str]:
+    """Polite, non-pushy second touch for a non-responding first email.
+
+    We do NOT present a fake 'per my last email' thread; the lead may have missed
+    the first one, so we keep it short and give a low-friction out (no reply
+    needed). Re-emailing non-responders is opt-in and bounded (see config)."""
+    name = lead.get("name") or "there"
+    category = lead.get("category") or "local business"
+    subject = f"Following up - {name}"
+    body = (
+        f"Hi {name},\n\n"
+        f"I'll keep this short. We help {category} businesses like yours get found "
+        "by more local customers through a modern website and local SEO.\n\n"
+        "If now isn't the right time, no worries at all - just ignore this. "
+        "But if a quick 15-minute chat this week could be useful, I'm happy to make time.\n\n"
+        "Best,\nAyan\nTAGS Agency"
+    )
+    return subject, body
+
+
 async def _llm_draft(lead: dict, skill_context: str, angle: str | None = None) -> tuple[str, str]:
     """Call the configured LLM to draft a personalized email."""
     import openai
@@ -73,6 +93,47 @@ async def _llm_draft(lead: dict, skill_context: str, angle: str | None = None) -
     return subject, body
 
 
+async def _llm_followup(lead: dict, skill_context: str) -> tuple[str, str]:
+    """Call the configured LLM to draft a polite second-touch follow-up."""
+    import openai
+
+    client = openai.AsyncOpenAI(
+        api_key=settings.WORKSPACE_API_KEY or None,
+        base_url=settings.WORKSPACE_API_BASE or None,
+    )
+    name = lead.get("name") or "the business"
+    category = lead.get("category") or "local business"
+    city_state = f"{lead.get('city')}, {lead.get('state')}".strip(" ,")
+    system = (
+        "You are a sharp cold-outreach copywriter for TAGS Agency, a web design + "
+        "local SEO agency. Write ONE short, polite follow-up email to a local "
+        "business that did not reply to our first email. Keep it under 90 words, "
+        "friendly, never pushy, give a low-friction out (no reply needed), and end "
+        "with a soft CTA for a 15-minute call.\n\n"
+        f"RELEVANT SKILLS:\n{skill_context}"
+    )
+    user = (
+        f"Lead: {name} ({category}) in {city_state}. "
+        "Return JSON: {\"subject\": \"...\", \"body\": \"...\"}. Body plain text only."
+    )
+    resp = await client.chat.completions.create(
+        model=settings.WORKSPACE_AGENT_MODEL,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.5,
+    )
+    content = (resp.choices[0].message.content or "").strip()
+    import json
+    import re
+
+    m = re.search(r"\{.*\}", content, re.DOTALL)
+    if not m:
+        raise ValueError("LLM did not return JSON")
+    data = json.loads(m.group(0))
+    subject = data.get("subject") or f"Following up - {name}"
+    body = data.get("body") or fallback_followup(lead)[1]
+    return subject, body
+
+
 async def draft_email(lead: dict, angle: str | None = None) -> tuple[str, str]:
     """Draft a professional email; fall back to template on any failure."""
     try:
@@ -84,3 +145,16 @@ async def draft_email(lead: dict, angle: str | None = None) -> tuple[str, str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM email draft failed (%s); using template", exc)
         return fallback_email(lead)
+
+
+async def draft_followup(lead: dict) -> tuple[str, str]:
+    """Draft a polite non-responder follow-up; fall back to template on failure."""
+    try:
+        from admin.agency.sba_skills import build_skill_context, detect_skills
+
+        skills = detect_skills(f"follow-up email to {lead.get('name', '')}", max_skills=2)
+        ctx = build_skill_context(skills) if skills else "No extra skills matched."
+        return await _llm_followup(lead, ctx)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM follow-up draft failed (%s); using template", exc)
+        return fallback_followup(lead)
