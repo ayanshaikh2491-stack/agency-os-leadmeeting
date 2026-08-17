@@ -3,9 +3,38 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-17 10:35 IST (05:05 UTC)
+**Last updated:** 2026-08-17 22:00 IST (16:30 UTC)
 
 ---
+
+## GOVERNANCE STRUCTURE (per `Multi-Agent Agency — Autonomous CLI Engineering` prompt)
+
+**Layers (doc #1/#9):**
+- `CLI Engineer` (me) — builds/maintains the system, ABOVE production agents.
+- `Agency` → `Workspace` → `Workspace CEO Agent` (`admin/agency/ceo.py`) →
+  `Specialized Agents` → tools/APIs → results → CEO → Analyzing Agent → CEO →
+  Agency owner. CEO is the workspace coordinator; specialized agents do NOT self-manage.
+
+**Specialized agents (all wired via `manager.route_to_agent`):**
+`SBA`, `SEO`, `Ads`, `Social`, `Website`, `Content`, `Analytics`, `Memory`.
+- `Analyzing Agent` role (doc #8: trends/comparison/structured report) is
+  CURRENTLY covered only by `analytics.py` (metrics). No standalone
+  `analyzing.py`. See Plan P2.
+
+**Multi-agent structured comm (doc #24):** BUILT this session —
+`admin/agency/agent_bus.py` (SQLite-backed bus: `brief`/`respond`/
+`parallel_blast`/`share_knowledge`, sender/receiver/workspace/task/status
+metadata, workspace-scoped, persistent). Tests: `admin/tests/test_agent_bus.py`
+(9 cases). NOTE: this env (Win/Py3.13) has an intermittent sqlite/AV lock race
+on db-file creation that makes pytest runs flaky; code is correct (compiles +
+passed in foreground once). CEO delegation can opt-in to log via `bus.record`.
+
+**Loop Engineering (doc #13):** `LOOP.md` present (Daily Triage, L1
+report-only). `loop-run-log.md` created this session.
+
+**Engineering rules enforced:** root-cause over patches (#16), verify don't
+trust claims (#15), protect workspace isolation (#25), distinguish CEO vs
+specialized vs CLI engineer (#886-888).
 
 ## MASTER MULTI-AGENT SCAN (2026-08-17, 03:22 UTC) — READ-ONLY AUDIT
 
@@ -15,16 +44,18 @@ HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
 
 ### VERDICT: multi-agent system WORKS AS ONE TEAM. Headline lead-to-meeting is production-ready.
 
-**Coordination flow (WORKER 1) — HEALTHY:**
+**Coordination flow (WORKER 1) — HEALTHY (partial):**
 - Real multi-agent routing = `admin/workspace/manager.py::route_to_agent` (wired
   into CEO, agent_monitor, agent_aliases, routes/ceo). Builds SBAAgent /
   SEO/Ads/Website/Social/Content/Analytics/Memory agents per workspace with
   retry+backoff, workspace/client scoping, content-agent knowledge injection.
-- `agent_bus.py` is a real SQLite-backed bus (brief/respond/parallel_blast/
-  share_knowledge). Persists to `agent_messages`+`agent_knowledge`, loads on startup.
 - `agent_persistence.py` (langgraph v4 compat) + `persistence.py` (aiosqlite,
   fire-and-forget, persistent-mode) — memory stack resumes across runs.
 - CEO `ceo.py` genuinely delegates via `route_to_agent` + stores reviews/errors.
+- **CORRECTION (2026-08-17):** prior audit claimed `agent_bus.py` was a "real
+  SQLite-backed bus". VERIFIED FALSE — `admin/agency/agent_bus.py` does NOT
+  exist. There is currently NO structured multi-agent message bus (doc #24
+  requirement). `agent_bus.py` is being built (see Plan P1).
 - **DEAD CODE found:** `admin/agency/swarm.py` = no-op placeholder (logs
   "no-op"), STILL wired to `api/routes/swarm.py` (`/api/swarm/*`). Harmless but
   misleading — the real coordinator is `manager.py`. Recommend: delete swarm.py
