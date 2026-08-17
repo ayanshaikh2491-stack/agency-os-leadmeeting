@@ -52,8 +52,10 @@ class FakeMeetingManager:
     def __init__(self):
         self.created = []
 
-    async def create_meeting(self, lead_id, lead_name, lead_email, proposed_time, duration_minutes=30):
-        rec = {"lead_id": lead_id, "lead_name": lead_name, "time": proposed_time}
+    async def create_meeting(self, lead_id, lead_name, lead_email, proposed_time,
+                           duration_minutes=30, purpose="", lead_phone=""):
+        rec = {"lead_id": lead_id, "lead_name": lead_name, "time": proposed_time,
+               "lead_phone": lead_phone}
         self.created.append(rec)
         return rec
 

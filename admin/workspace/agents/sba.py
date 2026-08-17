@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Annotated, Any, TypedDict
 
@@ -730,12 +731,18 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                                     "error": "create_meeting missing fields",
                                     "missing": missing,
                                 })
-                            m = SBAMeetingManager(email_client=build_workspace_email_client(ws_id))
+                            m = SBAMeetingManager(
+                                email_client=build_workspace_email_client(ws_id),
+                                workspace=ws_id,
+                                client=state.get("client_name", "Client"),
+                                store_base_url=os.environ.get("STORE_BASE_URL", ""),
+                            )
                             meeting = await m.create_meeting(
                                 lead_id=args["lead_id"],
                                 lead_name=args["lead_name"],
                                 lead_email=args["lead_email"],
                                 proposed_time=args["proposed_time"],
+                                lead_phone=args.get("lead_phone", ""),
                             )
                             return json.dumps(meeting, default=str, indent=2)[:4000]
                         elif name == "translate_for_owner":

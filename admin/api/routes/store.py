@@ -9,6 +9,14 @@ Endpoints:
   DELETE /api/store/products/{pid}     — delete a product (token required)
   GET   /api/store/settings            — store settings (?workspace=&client=)
   PATCH /api/store/settings            — upsert store settings (token required)
+  GET   /api/store/booking/settings    — booking config (?workspace=&client=)
+  PATCH /api/store/booking/settings    — upsert booking config (token required)
+  GET   /api/store/meetings            — list meeting requests (?workspace=&client=&status=)
+  POST  /api/store/meetings            — create a meeting request (token required)
+  GET   /api/store/meetings/{mid}      — get a meeting request
+  PATCH /api/store/meetings/{mid}      — update status/notes (token required)
+  GET   /api/store/book/:token         — public booking page data (token from link)
+  POST  /api/store/book/:token         — public books a slot (no auth)
   POST  /api/store/sync                — rebuild + redeploy client site from store (token)
   POST  /api/store/accounts            — create a client account (agency/admin)
   POST  /api/store/client/login        — client login -> signed token
@@ -154,6 +162,31 @@ class ReviewRequest(BaseModel):
 
 
 class ReviewPatchRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    data: dict[str, Any]
+
+
+class MeetingRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    lead_id: str = ""
+    lead_name: str = ""
+    lead_email: str = ""
+    lead_phone: str = ""
+    proposed_time: str = ""
+    duration_minutes: int = 30
+    notes: str = ""
+
+
+class MeetingStatusRequest(BaseModel):
+    workspace: str = "Default"
+    client: str = "Client"
+    status: str = "confirmed"
+    notes: str = ""
+
+
+class BookingSettingsRequest(BaseModel):
     workspace: str = "Default"
     client: str = "Client"
     data: dict[str, Any]
@@ -794,3 +827,187 @@ async def delete_review(rid: str, workspace: str = Query("Default"), client: str
     if not ok:
         raise HTTPException(status_code=404, detail="Review not found")
     return {"success": True, "deleted": rid}
+
+
+# ── Booking settings (SBA meeting system — no Google Calendar) ────────────────
+
+
+@router.get("/booking/settings")
+async def get_booking_settings(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """Return the store's meeting-booking configuration (public-readable)."""
+    _require_store()
+    return store_store.get_booking_settings(workspace, client)
+
+
+@router.patch("/booking/settings")
+async def patch_booking_settings(
+    req: BookingSettingsRequest,
+    auth: dict | None = Depends(_auth_optional),
+):
+    """Update the store's meeting-booking configuration (owner login required)."""
+    _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
+    _enforce_client_scope(auth, req.workspace, req.client)
+    updated = store_store.update_booking_settings(req.workspace, req.client, req.data)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update booking settings")
+    return updated
+
+
+# ── Meetings (SBA agent booking, stored in owner's store) ─────────────────────
+
+
+@router.get("/meetings")
+async def list_meetings(
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+    status: str = Query(""),
+    token: str = Query(""),
+):
+    """List meeting requests for a store (owner token) or a single booking link."""
+    _require_store()
+    # A booking link token scopes the caller to one meeting without full auth.
+    if token:
+        m = store_store.find_meeting_by_token(workspace, client, token)
+        if not m:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        return {"success": True, "data": {"meeting": m}}
+    auth = _auth_optional()
+    _enforce_client_scope(auth, workspace, client)
+    meetings = store_store.list_meeting_requests(workspace, client, status=status or None)
+    return {"success": True, "data": {"meetings": meetings}}
+
+
+@router.post("/meetings")
+async def create_meeting(
+    req: MeetingRequest,
+    auth: dict | None = Depends(_auth_optional),
+):
+    """Create a meeting request (SBA agent books here after a lead says yes)."""
+    _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
+    _enforce_client_scope(auth, req.workspace, req.client)
+    meeting = store_store.create_meeting_request(
+        req.workspace,
+        req.client,
+        {
+            "lead_id": req.lead_id,
+            "lead_name": req.lead_name,
+            "lead_email": req.lead_email,
+            "lead_phone": req.lead_phone,
+            "title": f"Meeting with {req.lead_name or 'Lead'} — TAGS Agency",
+            "purpose": req.notes,
+            "date": "",
+            "time": "",
+            "duration_minutes": req.duration_minutes,
+            "status": "requested",
+            "notes": req.notes,
+            "source": "sba_autopilot",
+            "owner_link_base": os.environ.get("STORE_BASE_URL", ""),
+        },
+    )
+    if not meeting:
+        raise HTTPException(status_code=500, detail="Failed to create meeting request")
+    return {"success": True, "data": {"meeting": meeting}}
+
+
+@router.get("/meetings/{mid}")
+async def get_meeting(
+    mid: str,
+    workspace: str = Query("Default"),
+    client: str = Query("Client"),
+):
+    """Get a single meeting request (owner token or booking link token)."""
+    _require_store()
+    m = store_store.get_meeting_request(workspace, client, mid)
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return {"success": True, "data": {"meeting": m}}
+
+
+@router.patch("/meetings/{mid}")
+async def patch_meeting(
+    mid: str,
+    req: MeetingStatusRequest,
+    auth: dict | None = Depends(_auth_optional),
+):
+    """Update a meeting's status/notes (owner login required)."""
+    _require_store()
+    if not auth:
+        raise HTTPException(status_code=401, detail="Store owner login required")
+    _enforce_client_scope(auth, req.workspace, req.client)
+    updated = store_store.update_meeting_request(
+        req.workspace, req.client, mid, {"status": req.status, "notes": req.notes}
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Meeting not found or update failed")
+    return {"success": True, "data": {"meeting": updated}}
+
+
+# ── Public booking widget (no auth; reached from the link the SBA sends) ──────
+
+
+@router.get("/book/{token}")
+async def public_book_info(token: str, workspace: str = Query("Default"),
+                           client: str = Query("Client")):
+    """Public booking page data for a single meeting request.
+
+    Returns the meeting details + available slots so a lead can confirm a time
+    without logging in. The token is scoped to exactly one meeting row.
+    """
+    _require_store()
+    m = store_store.find_meeting_by_token(workspace, client, token)
+    if not m:
+        raise HTTPException(status_code=404, detail="Booking link expired or invalid")
+    settings = store_store.get_booking_settings(workspace, client)
+    return {
+        "success": True,
+        "data": {
+            "meeting": m,
+            "booking": settings,
+        },
+    }
+
+
+@router.post("/book/{token}")
+async def public_book_confirm(token: str, body: dict[str, Any] | None = None,
+                               workspace: str = Query("Default"),
+                               client: str = Query("Client")):
+    """Lead confirms a slot for this meeting request (no auth).
+
+    Body may include ``confirmed_time`` (ISO) and optional ``lead_phone``. Sets
+    status to ``confirmed`` and notifies the owner.
+    """
+    _require_store()
+    body = body or {}
+    m = store_store.find_meeting_by_token(workspace, client, token)
+    if not m:
+        raise HTTPException(status_code=404, detail="Booking link expired or invalid")
+    updates: dict[str, Any] = {"status": "confirmed"}
+    if body.get("confirmed_time"):
+        updates["date"] = str(body["confirmed_time"])[:10]
+        updates["time"] = str(body["confirmed_time"])[11:16]
+    if body.get("lead_phone"):
+        updates["lead_phone"] = body["lead_phone"]
+    if body.get("notes"):
+        updates["notes"] = body["notes"]
+    updated = store_store.update_meeting_request(workspace, client, m.get("id"), updates)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to confirm booking")
+
+    # Notify the owner that the lead picked a slot.
+    try:
+        from admin.tools.sba_meeting import SBAMeetingManager
+
+        mgr = SBAMeetingManager(workspace=workspace, client=client,
+                                store_base_url=os.environ.get("STORE_BASE_URL", ""))
+        await mgr._notify_owner(updated, updated.get("lead_name", ""), str(body.get("confirmed_time", "")))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Owner confirm-notification failed for %s: %s", token, exc)
+
+    return {"success": True, "data": {"meeting": updated}}

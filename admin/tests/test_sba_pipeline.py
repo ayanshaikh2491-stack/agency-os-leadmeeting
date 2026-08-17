@@ -46,9 +46,14 @@ def test_meeting_manager_surface():
     from admin.tools.sba_meeting import SBAMeetingManager
 
     mgr = SBAMeetingManager()
-    for m in ("create_meeting", "update_meeting_status", "add_meeting_summary",
-              "add_meeting_note", "get_meetings", "get_meeting"):
+    # Custom store-booking API (no Google Calendar / gws). The manager books into
+    # the owner's store and updates meeting status there.
+    for m in ("create_meeting", "set_meeting_status"):
         assert callable(getattr(mgr, m)), m
+    # Booking settings live on the store layer it delegates to.
+    from admin.store import store_store as ss
+    for m in ("get_booking_settings", "update_booking_settings"):
+        assert callable(getattr(ss, m)), m
 
 
 def test_translation_engine_surface():
@@ -139,155 +144,65 @@ def test_orchestrator_sba_functions_exist():
     assert inspect.iscoroutinefunction(orch.ceo_process_sba_handoff)
 
 
-def test_sba_meeting_uses_correct_gws_argv():
-    """Regression guard for the SBA meeting booking bug.
+def test_sba_meeting_requires_store_booking_enabled():
+    """Regression guard: the SBA agent books into the owner's store, NOT Google.
 
-    The gws CLI requires `calendar +insert` (not `insert`) with
-    `--summary/--start/--end/--attendee/--meet` flags. The old code used
-    `insert --title --duration --conference --attendees`, which the real CLI
-    rejects, so every meeting silently fell back to a FAKE meet link. This
-    test captures the argv actually passed to asyncio.create_subprocess_exec
-    and asserts the corrected command shape, so the bug can't return.
-    """
-    import asyncio
-    import subprocess
-
-    captured = []
-
-    class _FakeProc:
-        def _comm(self):
-            out = (
-                '{"htmlLink":"x","hangoutLink":"https://meet.google.com/abc-defg-hij"}'
-            ).encode()
-            return (out, b"")
-
-    async def _fake_exec(*args, **kwargs):
-        captured.append(list(args))
-        proc = _FakeProc()
-        # communicate() must be awaitable, matching asyncio subprocess API.
-        proc.communicate = lambda timeout=None: _await(proc._comm())
-        return proc
-
-    async def _await(val):
-        return val
-
-    from admin.tools import sba_meeting as mm_mod
-
-    monkeypatch_exec = _make_exec_patch(_fake_exec)
-
-    async def _run():
-        with monkeypatch_exec():
-            mgr = mm_mod.SBAMeetingManager(email_client=_FakeEmail())
-            meeting = await mgr.create_meeting(
-                lead_id="L1", lead_name="Test Lead",
-                lead_email="lead@example.com",
-                proposed_time="2026-08-20T04:30:00+00:00",
-                duration_minutes=30,
-            )
-            return meeting
-
-    meeting = asyncio.run(_run())
-
-    # A real Meet link must come back (not a fake placeholder).
-    # notes[0] = calendar event, notes[1] = meeting link.
-    notes = meeting.get("notes", [])
-    link_note = next((n for n in notes if n.get("type") == "meeting_link"), {})
-    assert "meet.google.com" in link_note.get("url", "")
-
-    # Two gws calls: placeholder Meet link + calendar event.
-    gws_calls = [c for c in captured if c[:1] == ["gws"]]
-    assert len(gws_calls) == 2, f"expected 2 gws calls, got {len(gws_calls)}"
-
-    # The placeholder (call 0) uses `now()`; the calendar event (call 1) must
-    # use the proposed time and a derived end time.
-    event_call = gws_calls[1]
-    for call in gws_calls:
-        # Must use the real subcommand and real flags.
-        assert "+insert" in call, f"must use 'calendar +insert', got {call}"
-        assert "--summary" in call, f"missing --summary in {call}"
-        assert "--start" in call, f"missing --start in {call}"
-        assert "--end" in call, f"missing --end in {call}"
-        assert "--attendee" in call, f"missing --attendee in {call}"
-        assert "--meet" in call, f"missing --meet in {call}"
-        # The broken flags must never appear again.
-        assert "--title" not in call, f"--title is invalid gws flag: {call}"
-        assert "--duration" not in call, f"--duration is invalid gws flag: {call}"
-        assert "--conference" not in call, f"--conference is invalid gws flag: {call}"
-        assert "--attendees" not in call, f"--attendees (plural) is invalid: {call}"
-
-    # Calendar event must carry start+end (derived from proposed time + duration).
-    idx = event_call.index("--start")
-    assert event_call[idx + 1] == "2026-08-20T04:30:00+00:00"
-    eidx = event_call.index("--end")
-    assert eidx + 1 < len(event_call)
-    # end = start + 30min
-    assert event_call[eidx + 1] == "2026-08-20T05:00:00+00:00"
-
-
-def test_sba_meeting_no_silent_fake_link_on_gws_failure():
-    """Guard: when gws cannot book a real meeting, we must NOT send a fake link.
-
-    The old code fabricated `meet.google.com/<date>-sba-mtg` and reported
-    success. The hardened code raises RuntimeError (and the meeting module
-    records a pending manual booking + alerts the owner) so a fake "confirmed"
-    meeting can never be reported.
+    Booking must be refused (RuntimeError) when the store has booking disabled,
+    and it must never fabricate a Google Meet link.
     """
     import asyncio
 
-    # gws returns NO meet link (simulates missing/unauthenticated CLI).
-    class _NoLinkProc:
-        def communicate(self, timeout=None):
-            async def _c():
-                return (b"", b"no meet link returned")
-            return _c()
-
-    async def _fake_exec_no_link(*args, **kwargs):
-        return _NoLinkProc()
-
     from admin.tools import sba_meeting as mm_mod
 
+    class _FakeEmail:
+        enabled = True
+
+        async def send_email(self, *args, **kwargs):
+            return True
+
     async def _run():
-        with _make_exec_patch(_fake_exec_no_link)():
-            mgr = mm_mod.SBAMeetingManager(email_client=_FakeEmailAlert())
+        # Patch get_settings so booking_enabled is False (store booking off).
+        import admin.store.store_store as ss
+
+        orig = ss.get_settings
+        ss.get_settings = lambda ws, cl: {**orig(ws, cl), "booking_enabled": False}
+        try:
+            mgr = mm_mod.SBAMeetingManager(workspace="agency", client="Agency",
+                                          store_base_url="https://shop.example.com")
             try:
                 await mgr.create_meeting(
-                    lead_id="LX", lead_name="No Link Lead",
-                    lead_email="nolead@example.com",
+                    lead_id="L1", lead_name="Test Lead",
+                    lead_email="lead@example.com",
                     proposed_time="2026-08-20T04:30:00+00:00",
                     duration_minutes=30,
                 )
                 return "no_error"
             except RuntimeError as exc:
                 return f"raised:{exc}"
+        finally:
+            ss.get_settings = orig
 
     res = asyncio.run(_run())
-    assert res.startswith("raised:"), f"expected RuntimeError on gws failure, got {res!r}"
+    assert res.startswith("raised:"), f"expected RuntimeError when booking disabled, got {res!r}"
+    assert "Google" not in res, "must not reference Google Calendar"
+
+
+def test_sba_meeting_no_google_dependency():
+    """Guard: SBAMeetingManager must not call out to the gws CLI / Google."""
+    import admin.tools.sba_meeting as mm_mod
+
+    src = open(mm_mod.__file__, encoding="utf-8").read()
+    # It must never fabricate a Google Meet link or shell out to the gws CLI.
+    assert "meet.google.com" not in src, "must never fabricate a Google Meet link"
+    assert "create_subprocess_exec" not in src, "must not spawn subprocesses (gws CLI)"
+    assert "subprocess" not in src, "must not import subprocess"
 
 
 class _FakeEmailAlert:
     enabled = True
 
     async def send_email(self, *args, **kwargs):
-        # Captured by the meeting module's pending-booking owner notification.
         return True
-
-
-def _make_exec_patch(fake_exec):
-    """Return a context manager that monkeypatches asyncio.create_subprocess_exec."""
-    from contextlib import contextmanager
-
-    @contextmanager
-    def _cm():
-        import asyncio
-
-        orig = asyncio.create_subprocess_exec
-        asyncio.create_subprocess_exec = fake_exec
-        try:
-            yield
-        finally:
-            asyncio.create_subprocess_exec = orig
-
-    return _cm
 
 
 class _FakeEmail:

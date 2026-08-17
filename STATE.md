@@ -3,7 +3,7 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-17 08:52 IST (03:22 UTC)
+**Last updated:** 2026-08-17 10:35 IST (05:05 UTC)
 
 ---
 
@@ -30,15 +30,24 @@ HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
   misleading — the real coordinator is `manager.py`. Recommend: delete swarm.py
   + swarm route, or document as future work.
 
-**SBA lead-to-meeting pipeline (WORKER 2) — PRODUCTION-READY:**
-- Fake-Meet fix VERIFIED end-to-end: `sba_meeting.py` uses `gws calendar
-  +insert` with `--summary/--start/--end/--attendee/--meet` (real link). On gws
-  failure `_generate_meet_link` returns "" → `create_meeting` raises RuntimeError
-  + `_record_pending_booking` + owner alert (NO fake link).
+**SBA lead-to-meeting pipeline (WORKER 2) — PRODUCTION-READY (custom store booking):**
+- **HARD REQUIREMENT: NO Google Calendar / NO `gws` CLI.** Booking persists into
+  the owner's own PocketBase `store_meetings` via `admin.store.store_store`
+  (`create_meeting_request` / `set_meeting_status` / `get_booking_settings` /
+  `update_booking_settings`). Owner is notified by email + WhatsApp; lead gets a
+  confirmation. Booking config (enable/working-hours/slot-minutes/timezone/
+  advance-hours) lives in **Store Settings** (`/api/store/booking/settings`).
+- `admin/tools/sba_meeting.py::SBAMeetingManager` is the booking engine (NOT gws).
+  `create_meeting` raises `RuntimeError` when `booking_enabled=False` or the store
+  write fails — NEVER fabricates a Google Meet link. `set_meeting_status` validates
+  against `MEETING_STATUSES = ["requested","confirmed","completed","cancelled"]`.
 - `sba_autopilot.py::_safe_book_meeting` wraps it: returns "booked" or
-  "pending_manual", never reports fake success. Commits 6099cff + b8d2ac1 hold.
-- Email gating, dedupe, cooldowns, `_s()` int-phone coercion present.
-- Tests cover REAL meet link + gws failure (test_sba_pipeline.py).
+  "pending_manual", never reports fake success. 9 booking routes registered
+  under `/api/store/*` (book, booking/settings, meetings, meetings/{id} PATCH).
+- Frontend: `agency-frontend/src/app/store/[slug]/page.js` Bookings tab — meeting
+  list (Confirm/Cancel/Mark-Done) + Booking Settings panel; public booking-confirm
+  widget triggered by `?booking=bk_xxx` fetches `/api/store/book/:token`, lets the
+  lead pick a datetime + confirm. `next build` clean, 31 backend tests green.
 - **Remaining weak point (carried from Aug-12):** meetings still only trigger
   when a lead replies "yes" to the outbound email / digest; no proactive
   booking for unresponsive leads. Conversion at ZERO historically — now the
@@ -797,6 +806,16 @@ and Gmail 550s once sends resume.
   to str, `_field_type` creates text not json, autopilot `_s()` helper.
   Verified: 0 non-str phones; pass 16:50 `no_email: 635, deferred: 22,
   invalid: 5, errors 0`. NRestarts=0.
+
+- 05:05 UTC — frontend `store/[slug]/page.js` build FIX: my bk-6 edit consumed
+  the `loadOrders` `useCallback` header, orphaning its try/catch (await outside
+  async fn). Restored `const loadOrders = useCallback(async () => { if (!account)
+  return ...}` before the orders fetch. `next build` clean (exit 0, 41 static
+  pages, 0 lint/type errors). `npm run lint` skipped (no eslint config → prompt
+  hangs; build already validates syntax). Backend: 31/31 tests pass
+  (test_sba_autopilot + test_sba_pipeline + test_store_booking). STATE.md
+  corrected: booking = custom PocketBase `store_meetings`, NOT gws. Temp helper
+  files cleaned.
 
 ---
 

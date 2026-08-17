@@ -24,6 +24,16 @@ SETTINGS_TABLE = "store_settings"
 ORDERS_TABLE = "store_orders"
 COUPONS_TABLE = "store_coupons"
 REVIEWS_TABLE = "store_reviews"
+MEETINGS_TABLE = "store_meetings"
+
+# Meeting / booking status lifecycle (custom SBA booking system — no Google Calendar)
+MEETING_STATUSES = ["requested", "confirmed", "completed", "cancelled"]
+MEETING_STATUS_LABELS = {
+    "requested": "Requested",
+    "confirmed": "Confirmed",
+    "completed": "Completed",
+    "cancelled": "Cancelled",
+}
 
 # Order status lifecycle (Shopify-like)
 ORDER_STATUSES = ["placed", "processing", "shipped", "delivered", "cancelled", "returned", "refunded"]
@@ -504,6 +514,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "payments": {"cod": True, "upi": True, "card": False},
     "banners": [],
     "domain": "",
+    # ── Custom meeting/booking (SBA agent books here, owner's own, no Google) ──
+    "booking_enabled": False,      # owner toggles; SBA books only when True
+    "booking_slot_minutes": 30,   # default meeting length
+    "booking_working_hours": "09:00-18:00",  # IST window owner is free
+    "booking_timezone": "Asia/Kolkata",
+    "booking_advance_hours": 1,    # min hours before a slot
+    "booking_slots": [],          # optional fixed slots ["2026-08-20T15:00", ...]
 }
 
 
@@ -534,12 +551,29 @@ def get_settings(workspace: str, client: str) -> dict[str, Any]:
                         out[k] = dict(DEFAULT_SETTINGS["payments"]) if k == "payments" else []
                 else:
                     out[k] = v
+            elif k in ("booking_enabled", "show_stock"):
+                # Booleans must stay bool, never stringified to "True"/"False".
+                out[k] = v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on")
             else:
-                out[k] = str(v) if k != "show_stock" else bool(v)
+                out[k] = str(v)
     if not isinstance(out.get("banners"), list):
         out["banners"] = []
     if not isinstance(out.get("payments"), dict):
         out["payments"] = dict(DEFAULT_SETTINGS["payments"])
+    # Booking fields (persisted as text/int, normalize to correct types)
+    out["booking_enabled"] = out.get("booking_enabled") in (True, "true", "1", 1)
+    try:
+        out["booking_slot_minutes"] = int(out.get("booking_slot_minutes") or 30)
+    except (TypeError, ValueError):
+        out["booking_slot_minutes"] = 30
+    try:
+        out["booking_advance_hours"] = int(out.get("booking_advance_hours") or 1)
+    except (TypeError, ValueError):
+        out["booking_advance_hours"] = 1
+    out.setdefault("booking_working_hours", "09:00-18:00")
+    out.setdefault("booking_timezone", "Asia/Kolkata")
+    if not isinstance(out.get("booking_slots"), list):
+        out["booking_slots"] = []
     return out
 
 
@@ -1395,3 +1429,256 @@ def review_stats(workspace: str, client: str) -> dict[str, Any]:
         "avg": round(sum(all_ratings) / len(all_ratings), 1) if all_ratings else 0.0,
         "by_product": by_product,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MEETINGS / BOOKING (custom SBA booking — owner's OWN calendar, NO Google)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+MEETING_FIELDS = {
+    "lead_id": "",
+    "lead_name": "",
+    "lead_email": "",
+    "lead_phone": "",
+    "title": "",
+    "purpose": "",
+    "date": "",
+    "time": "",            # "HH:MM" (owner local / booking_timezone)
+    "duration_minutes": 30,
+    "status": "requested",  # requested -> confirmed -> completed / cancelled
+    "owner_link": "",       # deep link owner uses to confirm/cancel
+    "booking_token": "",    # opaque id used in the owner link
+    "notes": "",
+    "calendar_event": False,  # always False now — no external Google Calendar
+    "source": "sba_autopilot",
+}
+
+import time as _time  # noqa: E402  (placed late to keep table defs above)
+
+
+def _norm_meeting(row: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a store_meetings row into stable types for consumers."""
+    def s(v: Any) -> str:
+        return "" if v is None else str(v)
+    out = dict(row)
+    out["lead_id"] = s(out.get("lead_id"))
+    out["lead_name"] = s(out.get("lead_name"))
+    out["lead_email"] = s(out.get("lead_email"))
+    out["lead_phone"] = s(out.get("lead_phone"))
+    out["title"] = s(out.get("title"))
+    out["purpose"] = s(out.get("purpose"))
+    out["date"] = s(out.get("date"))
+    out["time"] = s(out.get("time"))
+    out["owner_link"] = s(out.get("owner_link"))
+    out["booking_token"] = s(out.get("booking_token"))
+    out["notes"] = s(out.get("notes"))
+    try:
+        out["duration_minutes"] = int(out.get("duration_minutes") or 30)
+    except (TypeError, ValueError):
+        out["duration_minutes"] = 30
+    out["status"] = s(out.get("status") or "requested")
+    out["calendar_event"] = False  # custom booking: never Google
+    out["source"] = s(out.get("source") or "sba_autopilot")
+    return out
+
+
+def _clean_meeting_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only known meeting fields; defaults applied."""
+    payload: dict[str, Any] = {"client_name": data.get("client_name", "")}
+    for key, default in MEETING_FIELDS.items():
+        if key in data and data[key] is not None:
+            payload[key] = data[key]
+    return payload
+
+
+def create_meeting_request(workspace: str, client: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Create a meeting/booking request (SBA agent calls this).
+
+    Saves entirely in the owner's store (store_meetings), NOT Google Calendar.
+    Returns the created meeting row (with owner_link + booking_token) or None.
+    """
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    token = "bk_" + str(int(_time.time() * 1000))[-10:] + _new_bk_suffix()
+    base = (data.get("owner_link_base") or "").strip()
+    owner_link = f"{base.rstrip('/')}/store/{_slug_for(workspace)}?owner=1&booking={token}" if base else f"?booking={token}"
+    payload = _clean_meeting_payload({
+        "client_name": client,
+        "lead_id": data.get("lead_id", ""),
+        "lead_name": data.get("lead_name", ""),
+        "lead_email": data.get("lead_email", ""),
+        "lead_phone": data.get("lead_phone", ""),
+        "title": data.get("title", "Meeting with TAGS Agency"),
+        "purpose": data.get("purpose", ""),
+        "date": data.get("date", ""),
+        "time": data.get("time", ""),
+        "duration_minutes": data.get("duration_minutes", 30),
+        "status": "requested",
+        "owner_link": owner_link,
+        "booking_token": token,
+        "notes": data.get("notes", ""),
+        "source": data.get("source", "sba_autopilot"),
+    })
+    try:
+        rows = _api(
+            "POST", url, key,
+            "/rest/v1/" + MEETINGS_TABLE,
+            payload,
+            profile=schema_for(workspace),
+        )
+        return _norm_meeting(rows[0]) if rows else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: create_meeting_request failed: %s", e)
+        return None
+
+
+def _new_bk_suffix() -> str:
+    import random
+    import string
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+
+
+def _slug_for(workspace: str) -> str:
+    """Best-effort store slug for the owner link (matches store route)."""
+    try:
+        from admin.agency.workspace_provision import slug_for as _slug
+        return _slug(workspace)
+    except Exception:  # noqa: BLE001
+        return workspace
+
+
+def get_meeting_request(workspace: str, client: str, mid: str) -> dict[str, Any] | None:
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + MEETINGS_TABLE + "?select=*&id=eq." + mid,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: get_meeting_request failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_meeting(rows[0]) if rows else None
+
+
+def find_meeting_by_token(workspace: str, client: str, token: str) -> dict[str, Any] | None:
+    """Look up a meeting by its opaque booking_token (used by owner link)."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    try:
+        rows = _api(
+            "GET", url, key,
+            "/rest/v1/" + MEETINGS_TABLE + "?select=*&booking_token=eq." + token,
+            profile=schema_for(workspace),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: find_meeting_by_token failed: %s", e)
+        return None
+    rows = [r for r in rows if r.get("client_name") == client]
+    return _norm_meeting(rows[0]) if rows else None
+
+
+def list_meeting_requests(workspace: str, client: str, status: str = "") -> list[dict[str, Any]]:
+    cfg = get_config()
+    if not cfg:
+        return []
+    url, key = cfg
+    q = "/rest/v1/" + MEETINGS_TABLE + "?select=*&" + _client_q(client) + "&order=created_at.desc"
+    if status:
+        q += "&status=eq." + status
+    try:
+        rows = _api("GET", url, key, q, profile=schema_for(workspace))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: list_meeting_requests failed: %s", e)
+        return []
+    return [_norm_meeting(r) for r in rows]
+
+
+def update_meeting_request(workspace: str, client: str, mid: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Update a meeting (owner confirms/cancels, or autopilot edits time)."""
+    cfg = get_config()
+    if not cfg:
+        return None
+    url, key = cfg
+    payload = {k: v for k, v in data.items() if k in MEETING_FIELDS and v is not None}
+    if not payload:
+        return get_meeting_request(workspace, client, mid)
+    try:
+        rows = _api(
+            "PATCH", url, key,
+            "/rest/v1/" + MEETINGS_TABLE + "?id=eq." + mid,
+            payload,
+            profile=schema_for(workspace),
+        )
+        rows = [r for r in rows if r.get("client_name") == client]
+        if rows:
+            return _norm_meeting(rows[0])
+        return get_meeting_request(workspace, client, mid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("store: update_meeting_request failed: %s", e)
+        return None
+
+
+def set_meeting_status(workspace: str, client: str, mid: str, status: str,
+                       notes: str = "") -> dict[str, Any] | None:
+    if status not in MEETING_STATUSES:
+        return {"error": f"Invalid status '{status}'. Valid: {', '.join(MEETING_STATUSES)}"}
+    data: dict[str, Any] = {"status": status}
+    if notes:
+        data["notes"] = notes
+    return update_meeting_request(workspace, client, mid, data)
+
+
+def meeting_link_for(meeting: dict[str, Any]) -> str:
+    """Public-facing confirmation link (owner clicks to confirm/cancel)."""
+    return str(meeting.get("owner_link") or "")
+
+
+# ── Booking settings (read/write the booking_* fields on the settings row) ─────
+
+
+def get_booking_settings(workspace: str, client: str) -> dict[str, Any]:
+    """Return the booking configuration for a store (defaults when unset)."""
+    settings = get_settings(workspace, client)
+    raw_enabled = settings.get("booking_enabled", False)
+    if isinstance(raw_enabled, str):
+        raw_enabled = raw_enabled.strip().lower() in ("1", "true", "yes", "on")
+    return {
+        "booking_enabled": bool(raw_enabled),
+        "booking_slot_minutes": int(settings.get("booking_slot_minutes") or 30),
+        "booking_working_hours": settings.get("booking_working_hours") or "09:00-18:00",
+        "booking_timezone": settings.get("booking_timezone") or "Asia/Kolkata",
+        "booking_advance_hours": int(settings.get("booking_advance_hours") or 1),
+        "booking_slots": settings.get("booking_slots") or [],
+    }
+
+
+def update_booking_settings(workspace: str, client: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """Upsert the booking_* fields on the store settings row."""
+    allowed = {
+        "booking_enabled", "booking_slot_minutes", "booking_working_hours",
+        "booking_timezone", "booking_advance_hours", "booking_slots",
+    }
+    payload = {k: v for k, v in (data or {}).items() if k in allowed}
+    if not payload:
+        return get_settings(workspace, client)
+    if "booking_enabled" in payload:
+        payload["booking_enabled"] = bool(payload["booking_enabled"])
+    for int_key in ("booking_slot_minutes", "booking_advance_hours"):
+        if int_key in payload:
+            try:
+                payload[int_key] = int(payload[int_key])
+            except (TypeError, ValueError):
+                payload.pop(int_key, None)
+    updated = upsert_settings(workspace, client, payload)
+    if updated is None:
+        return None
+    return get_booking_settings(workspace, client)

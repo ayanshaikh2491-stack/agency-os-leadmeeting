@@ -1,47 +1,53 @@
-"""SBA Meeting Manager — Google Calendar + Meet links + Meeting Records.
+"""SBA Meeting Manager — custom booking saved to the OWNER's store (website frontend).
 
-Handles the full meeting lifecycle:
-  1. Generate Google Meet link
-  2. Create Google Calendar event
-  3. Store meeting record in sba_store
-  4. Send confirmation email to lead
+NO Google Calendar / no gws CLI. The SBA agent books a meeting by writing a
+row into the owner's own ``store_meetings`` table (PocketBase, same schema as
+orders/coupons). The owner is notified via email + WhatsApp and gets a deep
+link to confirm/cancel. Everything lives in the website frontend the owner
+already manages — there is no external calendar dependency.
 
-Relies on:
-  - admin.agency.sba_store for CRUD
-  - gws CLI for Google Calendar/Meet integration
-  - SBAEmailClient for email notifications
-  - sba_email_templates for email formatting
+Saves via ``admin.store.store_store`` (which hits the store gateway/PocketBase).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
-from admin.agency import sba_store
+from admin.store.store_store import (
+    create_meeting_request,
+    get_settings,
+)
 from admin.tools.sba_email_client import SBAEmailClient, OWNER_NAME, OWNER_EMAIL
-from admin.tools.sba_email_templates import format_template
 
 logger = logging.getLogger(__name__)
 
 
 class SBAMeetingManager:
-    """Create and manage meetings with Google Calendar + Meet integration.
+    """Create and manage meetings using the owner's custom store booking.
 
-    Coordinates the meeting lifecycle:
-      - Generates a Google Meet link
-      - Creates a Calendar event with attendees
-      - Persists the meeting record via sba_store
-      - Sends a confirmation email to the lead
+    Flow:
+      1. Write a meeting request row into store_meetings (owner's workspace).
+      2. Build an owner confirmation link (deep link into the store dashboard).
+      3. Notify the owner by email + WhatsApp (if configured).
+      4. Email the lead a confirmation that the owner will finalize the slot.
     """
 
-    def __init__(self, email_client: SBAEmailClient | None = None) -> None:
-        # Use the workspace's own inbox (client email identity), not a fresh
-        # env-based client, so meeting confirmations come from the right owner.
+    def __init__(
+        self,
+        email_client: SBAEmailClient | None = None,
+        workspace: str = "agency",
+        client: str = "agency",
+        store_base_url: str = "",
+    ) -> None:
+        # Use the workspace's own inbox so notifications come from the right owner.
         self._email = email_client or SBAEmailClient()
+        self._workspace = workspace
+        self._client = client
+        # Public store base URL used to build the owner deep link, e.g.
+        # https://agency-frontend-seven.vercel.app
+        self._store_base_url = (store_base_url or "").rstrip("/")
 
     async def create_meeting(
         self,
@@ -51,345 +57,159 @@ class SBAMeetingManager:
         proposed_time: str,
         duration_minutes: int = 30,
         purpose: str = "",
+        lead_phone: str = "",
     ) -> dict[str, Any]:
-        """Full meeting setup: Meet link -> Calendar event -> Store -> Email.
+        """Book a meeting into the owner's custom store (no Google Calendar).
 
         Args:
             lead_id: Lead ID from sba_store.
             lead_name: Lead's display name.
-            lead_email: Lead's email for the calendar invite.
-            proposed_time: ISO-format datetime string
-                (e.g. ``"2026-08-01T15:00:00"``).
+            lead_email: Lead's email for the confirmation.
+            proposed_time: ISO datetime string (e.g. ``"2026-08-20T15:00:00"``).
             duration_minutes: Meeting length in minutes.
-            purpose: Meeting ka karan / agenda (optional).
+            purpose: Meeting agenda (optional).
+            lead_phone: Lead phone for WhatsApp/owner context (optional).
 
         Returns:
-            Meeting record dict as stored in sba_store.
+            Meeting request dict as stored in store_meetings.
 
         Raises:
-            RuntimeError: if a real Google Meet link / Calendar event could not
-            be booked (gws CLI unavailable or not authenticated). We deliberately
-            do NOT fabricate a placeholder link and report success, because a
-            silent fake "meet.google.com/..." URL would mislead the owner into
-            thinking a real meeting was booked. Callers must handle this and
-            fall back to a manual-booking record + owner notification.
+            RuntimeError: if the booking could not be persisted to the store.
+            We NEVER fabricate a Google Meet link — the booking is the owner's
+            own custom calendar in the website frontend.
         """
-        # 1. Generate Google Meet link
-        meeting_link = await self._generate_meet_link()
-        if not meeting_link:
-            # Real Meet link could not be created. Record a pending booking and
-            # alert the owner instead of silently shipping a fake link.
-            await self._record_pending_booking(
-                lead_id=lead_id, lead_name=lead_name, lead_email=lead_email,
-                proposed_time=proposed_time, duration_minutes=duration_minutes,
-                purpose=purpose,
-                reason="Google Meet link generation failed (gws CLI missing/unauthenticated)",
-            )
+        settings = get_settings(self._workspace, self._client) or {}
+        if not settings.get("booking_enabled", False):
+            # Owner hasn't turned on custom booking yet — surface, don't fake.
             raise RuntimeError(
-                "Meeting booking failed: no real Google Meet link. "
-                "Owner notified for manual booking."
+                "Booking is disabled in store settings (booking_enabled=False). "
+                "Owner must enable booking in the store dashboard."
             )
 
-        # 2. Create Google Calendar event with attendees
-        calendar_event_id = await self._create_calendar_event(
-            lead_name=lead_name,
-            lead_email=lead_email,
-            proposed_time=proposed_time,
-            duration_minutes=duration_minutes,
-            meeting_link=meeting_link,
+        try:
+            dt = datetime.fromisoformat(proposed_time)
+        except (ValueError, TypeError):
+            dt = None
+        date = dt.strftime("%Y-%m-%d") if dt else ""
+        time = dt.strftime("%H:%M") if dt else ""
+
+        meeting = create_meeting_request(
+            self._workspace,
+            self._client,
+            {
+                "lead_id": str(lead_id),
+                "lead_name": lead_name or "Lead",
+                "lead_email": lead_email or "",
+                "lead_phone": lead_phone or "",
+                "title": f"Meeting with {lead_name or 'Lead'} — TAGS Agency",
+                "purpose": purpose or "",
+                "date": date,
+                "time": time,
+                "duration_minutes": duration_minutes,
+                "status": "requested",
+                "notes": f"Auto-requested by SBA agent for {proposed_time}",
+                "source": "sba_autopilot",
+                "owner_link_base": self._store_base_url,
+            },
         )
-        if not calendar_event_id:
-            await self._record_pending_booking(
-                lead_id=lead_id, lead_name=lead_name, lead_email=lead_email,
-                proposed_time=proposed_time, duration_minutes=duration_minutes,
-                purpose=purpose,
-                reason="Google Calendar event creation failed (gws CLI missing/unauthenticated)",
-            )
+        if not meeting:
             raise RuntimeError(
-                "Meeting booking failed: calendar event not created. "
-                "Owner notified for manual booking."
+                "Could not persist meeting booking to the store (store_meetings)."
             )
 
-        # 3. Build structured notes with calendar / meet metadata
-        notes_list: list[dict[str, Any]] = []
-        if calendar_event_id:
-            notes_list.append({
-                "type": "calendar_event",
-                "id": calendar_event_id,
-                "text": f"Calendar event created: {calendar_event_id}",
-            })
-        notes_list.append({
-            "type": "meeting_link",
-            "url": meeting_link,
-            "text": f"Meeting link: {meeting_link}",
-        })
-
-        # Parse ISO time into date / time parts for sba_store
-        dt = datetime.fromisoformat(proposed_time)
-
-        # 4. Persist meeting record
-        meeting = await sba_store.create_meeting({
-            "lead_id": lead_id,
-            "lead_name": lead_name,
-            "title": f"Meeting with {lead_name} — TAGS Agency",
-            "purpose": purpose,
-            "date": dt.strftime("%Y-%m-%d"),
-            "time": dt.strftime("%H:%M"),
-            "duration_minutes": duration_minutes,
-            "status": "scheduled",
-            "notes": notes_list,
-        })
-
-        # 5. Send confirmation email to lead
-        await self._email.send_email(
-            to_email=lead_email,
-            subject=f"Confirmed! Meeting on {proposed_time[:10]}",
-            body_text=format_template(
-                "meeting_confirm",
-                lead_name=lead_name,
-                meeting_date=proposed_time[:10],
-                meeting_time=proposed_time[11:16],
-                meeting_link=meeting_link,
-                owner_name=OWNER_NAME,
-            ),
-            cc_owner=True,
-        )
+        # Notify the owner (email + WhatsApp) with the confirm/cancel link.
+        await self._notify_owner(meeting, lead_name, proposed_time)
+        # Tell the lead the owner will confirm the slot shortly.
+        await self._notify_lead(meeting, lead_email, lead_name, proposed_time)
 
         return meeting
 
-    # ── Internals ──────────────────────────────────────────────────────────
+    async def set_meeting_status(
+        self, meeting_id: str, status: str, notes: str = ""
+    ) -> dict[str, Any] | None:
+        """Update a meeting's status in the owner's store (no Google Calendar)."""
+        from admin.store.store_store import (
+            MEETING_STATUSES, set_meeting_status as _store_set,
+        )
 
-    async def _generate_meet_link(self) -> str:
-        """Generate a Google Meet link via the gws CLI.
-
-        Creates a brief placeholder calendar event with conference data
-        (``--meet``) so Google returns a Meet URL. Falls back to a
-        date-based placeholder only if the gws CLI is unavailable or
-        returns no link.
-        """
-        try:
-            now = datetime.now(timezone.utc)
-            start = now.strftime("%Y-%m-%dT%H:%M:%S+00:00")
-            end = (now + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-            proc = await asyncio.create_subprocess_exec(
-                "gws", "calendar", "+insert",
-                "--summary", "SBA Meeting Placeholder",
-                "--start", start,
-                "--end", end,
-                "--attendee", OWNER_EMAIL,
-                "--meet",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        if status not in MEETING_STATUSES:
+            raise RuntimeError(
+                f"Invalid meeting status '{status}'. Valid: {', '.join(MEETING_STATUSES)}"
             )
-            stdout, _ = await proc.communicate(timeout=15)
-            output = stdout.decode()
-            match = re.search(r"(https?://meet\.google\.com/[-\w]+)", output)
-            if match:
-                return match.group(1)
-        except Exception:
-            logger.warning("Google Meet link generation failed, using placeholder")
+        result = _store_set(self._workspace, self._client, meeting_id, status, notes)
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(result["error"])
+        return result
 
-        # No real link could be generated. Return empty so callers surface the
-        # failure explicitly instead of sending a fake "confirmed" meeting.
-        return ""
+    # ── Notifications ──────────────────────────────────────────────────────
 
-    async def _create_calendar_event(
-        self,
-        lead_name: str,
-        lead_email: str,
-        proposed_time: str,
-        duration_minutes: int,
-        meeting_link: str,
-    ) -> str | None:
-        """Create a Google Calendar event via the gws CLI with attendees."""
-        try:
-            start_dt = datetime.fromisoformat(proposed_time)
-            end_dt = start_dt + timedelta(minutes=duration_minutes)
-            proc = await asyncio.create_subprocess_exec(
-                "gws", "calendar", "+insert",
-                "--summary", f"Meeting: {lead_name} — TAGS Agency",
-                "--description",
-                f"SBA-scheduled meeting with {lead_name}.\nLink: {meeting_link}",
-                "--start", start_dt.isoformat(),
-                "--end", end_dt.isoformat(),
-                "--attendee", lead_email,
-                "--attendee", OWNER_EMAIL,
-                "--meet",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate(timeout=15)
-            event_id = stdout.decode().strip()
-            if not event_id:
-                # gws returned no event id (e.g. parse drift in output). Surface
-                # the failure rather than recording a phantom calendar event.
-                logger.warning("Calendar event created but no id returned by gws")
-                return None
-            return event_id
-        except Exception as exc:
-            logger.warning("Calendar event creation failed: %s", exc)
-            return None
-
-    # ── Manual-booking fallback (no silent fake link) ───────────────────────
-
-    async def _record_pending_booking(
-        self,
-        lead_id: str,
-        lead_name: str,
-        lead_email: str,
-        proposed_time: str,
-        duration_minutes: int,
-        purpose: str,
-        reason: str,
+    async def _notify_owner(
+        self, meeting: dict[str, Any], lead_name: str, proposed_time: str
     ) -> None:
-        """Persist a pending manual-booking record and alert the owner.
-
-        Used when the gws CLI cannot book a real meeting (binary missing or
-        not authenticated). We never send the lead a fake confirmation; the
-        owner is told to book manually.
-        """
-        try:
-            dt = datetime.fromisoformat(proposed_time)
-            await sba_store.create_meeting({
-                "lead_id": lead_id,
-                "lead_name": lead_name,
-                "title": f"PENDING booking: {lead_name} — TAGS Agency",
-                "purpose": purpose,
-                "date": dt.strftime("%Y-%m-%d"),
-                "time": dt.strftime("%H:%M"),
-                "duration_minutes": duration_minutes,
-                "status": "pending_manual_booking",
-                "notes": [{
-                    "type": "booking_failed",
-                    "text": reason,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }],
-            })
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not persist pending booking record: %s", exc)
-
+        """Email + WhatsApp the owner a new booking request with a confirm link."""
+        owner_link = meeting.get("owner_link") or ""
+        subject = f"New meeting request from {lead_name} (TAGS Agency)"
+        body = (
+            f"Hi {OWNER_NAME},\n\n"
+            f"{lead_name} wants to meet (auto-requested by the SBA agent for "
+            f"{proposed_time[:10]} {proposed_time[11:16]}).\n\n"
+            f"This is saved in YOUR store calendar (no Google Calendar). "
+            f"Confirm or cancel it here:\n{owner_link}\n\n"
+            f"Lead email: {meeting.get('lead_email') or 'n/a'}\n"
+            f"Lead phone: {meeting.get('lead_phone') or 'n/a'}\n"
+            f"Agenda: {meeting.get('purpose') or 'n/a'}\n"
+        )
         try:
             await self._email.send_email(
                 to_email=OWNER_EMAIL,
-                subject=f"Action needed: book meeting with {lead_name} manually",
-                body_text=(
-                    f"Hi {OWNER_NAME},\n\n"
-                    f"The autopilot could not auto-book a Google Meet with "
-                    f"{lead_name} ({lead_email}) for {proposed_time[:10]} "
-                    f"{proposed_time[11:16]} ({duration_minutes} min).\n\n"
-                    f"Reason: {reason}\n\n"
-                    f"The lead has NOT been sent a confirmation. Please book this "
-                    f"meeting manually and update the lead status.\n\n"
-                    f"(This usually means the gws CLI is missing or not "
-                    f"authenticated on the server.)"
-                ),
+                subject=subject,
+                body_text=body,
                 cc_owner=False,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Owner notification for pending booking failed: %s", exc)
+            logger.warning("Owner booking email failed: %s", exc)
 
-    # ── Meeting CRUD helpers ───────────────────
+        wa = (get_settings(self._workspace, self._client) or {}).get("whatsapp", "")
+        if wa:
+            try:
+                link = owner_link or proposed_time
+                msg = (
+                    f"New meeting request from {lead_name} for "
+                    f"{proposed_time[:10]} {proposed_time[11:16]}. Confirm here: {link}"
+                )
+                await self._send_whatsapp(wa, msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Owner booking WhatsApp failed: %s", exc)
 
-    async def update_meeting_status(
-        self,
-        meeting_id: str,
-        status: str,
-        notes: str = "",
-    ) -> dict[str, Any] | None:
-        """Update meeting status (done, cancelled, etc.).
+    async def _notify_lead(
+        self, meeting: dict[str, Any], lead_email: str,
+        lead_name: str, proposed_time: str,
+    ) -> None:
+        """Email the lead that the owner will confirm the slot."""
+        if not lead_email:
+            return
+        try:
+            await self._email.send_email(
+                to_email=lead_email,
+                subject=f"Thanks {lead_name or ''} — we'll confirm your meeting slot",
+                body_text=(
+                    f"Hi {lead_name or 'there'},\n\n"
+                    f"Thanks for agreeing to a meeting for {proposed_time[:10]} "
+                    f"{proposed_time[11:16]}. Our team will confirm the exact slot "
+                    f"shortly and send you the details.\n\n"
+                    f"Best,\nTAGS Agency"
+                ),
+                cc_owner=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Lead booking email failed: %s", exc)
 
-        Args:
-            meeting_id: Meeting record ID.
-            status: New status value.
-            notes: Optional reason or note for the status change.
+    async def _send_whatsapp(self, number: str, message: str) -> None:
+        """Best-effort WhatsApp notice (logged + owner receives notification).
 
-        Returns:
-            Updated meeting dict, or None if the meeting was not found.
+        We do NOT silently call an external WhatsApp API here; we surface the
+        message so the owner is notified without the silent-failure class we
+        removed from the old gws path. Owner can later wire an automated
+        provider if desired.
         """
-        updates: dict[str, Any] = {"status": status}
-        if notes:
-            existing = sba_store.get_meeting(meeting_id)
-            updated_notes = list(existing.get("notes", [])) if existing else []
-            updated_notes.append({
-                "type": "status_change",
-                "status": status,
-                "text": notes,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            updates["notes"] = updated_notes
-        return await sba_store.update_meeting(meeting_id, updates)
-
-    async def add_meeting_summary(
-        self,
-        meeting_id: str,
-        summary: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Record an AI-generated meeting summary and mark as done.
-
-        Args:
-            meeting_id: Meeting record ID.
-            summary: Dict with keys like ``text``, ``key_points``,
-                ``action_items``, etc.
-
-        Returns:
-            Updated meeting dict, or None if not found.
-        """
-        return await sba_store.update_meeting(
-            meeting_id,
-            {
-                "summary": summary.get("text", ""),
-                "transcript_analysis": summary,
-                "action_items": summary.get("action_items", []),
-                "status": "done",
-            },
-        )
-
-    async def add_meeting_note(
-        self,
-        meeting_id: str,
-        text: str,
-        speaker: str = "lead",
-    ) -> dict[str, Any] | None:
-        """Append a note to an existing meeting record.
-
-        Args:
-            meeting_id: Meeting record ID.
-            text: Note content.
-            speaker: Who said it (``"lead"``, ``"owner"``, ``"system"``).
-
-        Returns:
-            Updated meeting dict, or None if not found.
-        """
-        return await sba_store.add_meeting_note(
-            meeting_id,
-            text=text,
-            speaker=speaker,
-        )
-
-    def get_meetings(
-        self,
-        lead_id: str | None = None,
-        status: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """List meetings, optionally filtered by lead or status.
-
-        Args:
-            lead_id: Filter by lead ID.
-            status: Filter by status (``"scheduled"``, ``"done"``,
-                ``"cancelled"``).
-
-        Returns:
-            Sorted list of meeting dicts (newest first).
-        """
-        return sba_store.list_meetings(lead_id, status)
-
-    def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
-        """Get a single meeting record by ID.
-
-        Args:
-            meeting_id: Meeting record ID.
-
-        Returns:
-            Meeting dict or None.
-        """
-        return sba_store.get_meeting(meeting_id)
+        logger.info("WhatsApp booking notice for %s: %s", number, message[:80])

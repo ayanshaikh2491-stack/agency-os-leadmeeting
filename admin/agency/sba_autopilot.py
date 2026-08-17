@@ -49,21 +49,22 @@ logger = logging.getLogger("sba.autopilot")
 
 
 async def _safe_book_meeting(self, lead: dict, iso: str) -> str:
-    """Book a meeting, degrading gracefully if the gws CLI can't.
+    """Book a meeting into the owner's custom store calendar.
 
-    Returns ``"booked"`` on success, ``"pending_manual"`` if the real meeting
-    could not be created (the meeting module records a pending booking and
-    alerts the owner). Never lets a fake link be reported as a success.
+    Returns ``"booked"`` on success, ``"pending_manual"`` if booking is
+    disabled or the store write failed (the meeting module raises and the
+    owner is notified). Never reports a fake Google Meet success.
     """
     try:
         await self.meetings.create_meeting(
-            lead_id=str(lead["id"]), lead_name=lead.get("name") or "Lead",
-            lead_email=lead.get("email") or "", proposed_time=iso,
+            lead_id=str(lead["id"]),
+            lead_name=lead.get("name") or "Lead",
+            lead_email=lead.get("email") or "",
+            proposed_time=iso,
+            lead_phone=lead.get("phone") or "",
         )
         return "booked"
     except RuntimeError as exc:
-        # Meeting module already persisted a pending_manual_booking record and
-        # notified the owner. Mark the lead so we don't claim a meeting happened.
         logger.warning("Meeting auto-book failed (manual booking queued): %s", exc)
         return "pending_manual"
 
@@ -408,7 +409,14 @@ class SBAAutopilot:
             self._owner_email = owner_email or ""
             self._email_cfg = {}
         self._build_email_client()
-        self.meetings = meeting_manager or SBAMeetingManager(email_client=self.email)
+        # Custom booking lives in the owner's store (no Google Calendar).
+        _client = (self._email_cfg or {}).get("client", self.workspace_name)
+        self.meetings = meeting_manager or SBAMeetingManager(
+            email_client=self.email,
+            workspace=self.workspace_name,
+            client=_client,
+            store_base_url=os.environ.get("STORE_BASE_URL", ""),
+        )
         self._last_status: dict[str, Any] = {"started": now_in(OWNER_TZ).isoformat()}
         self._target_idx = self._load_rotation_idx()
         self._email_retry_until: dict[str, float] = {}
