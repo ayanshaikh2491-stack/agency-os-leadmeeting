@@ -3,7 +3,73 @@
 > Purpose: one-page state so we never have to rescan the repo. Updated whenever
 > the autopilot/agent status changes. Branch: `feat/sba-lead-to-meeting-pipeline`.
 
-**Last updated:** 2026-08-12 12:31 IST (07:01 UTC)
+**Last updated:** 2026-08-17 08:52 IST (03:22 UTC)
+
+---
+
+## MASTER MULTI-AGENT SCAN (2026-08-17, 03:22 UTC) — READ-ONLY AUDIT
+
+4 parallel read-only workers + coordinator verification. Scope: coordination
+flow, SBA lead-to-meeting pipeline, per-agent code, frontend wiring.
+HEAD = b8d2ac1. Full test suite green (448 per Aug-16 state).
+
+### VERDICT: multi-agent system WORKS AS ONE TEAM. Headline lead-to-meeting is production-ready.
+
+**Coordination flow (WORKER 1) — HEALTHY:**
+- Real multi-agent routing = `admin/workspace/manager.py::route_to_agent` (wired
+  into CEO, agent_monitor, agent_aliases, routes/ceo). Builds SBAAgent /
+  SEO/Ads/Website/Social/Content/Analytics/Memory agents per workspace with
+  retry+backoff, workspace/client scoping, content-agent knowledge injection.
+- `agent_bus.py` is a real SQLite-backed bus (brief/respond/parallel_blast/
+  share_knowledge). Persists to `agent_messages`+`agent_knowledge`, loads on startup.
+- `agent_persistence.py` (langgraph v4 compat) + `persistence.py` (aiosqlite,
+  fire-and-forget, persistent-mode) — memory stack resumes across runs.
+- CEO `ceo.py` genuinely delegates via `route_to_agent` + stores reviews/errors.
+- **DEAD CODE found:** `admin/agency/swarm.py` = no-op placeholder (logs
+  "no-op"), STILL wired to `api/routes/swarm.py` (`/api/swarm/*`). Harmless but
+  misleading — the real coordinator is `manager.py`. Recommend: delete swarm.py
+  + swarm route, or document as future work.
+
+**SBA lead-to-meeting pipeline (WORKER 2) — PRODUCTION-READY:**
+- Fake-Meet fix VERIFIED end-to-end: `sba_meeting.py` uses `gws calendar
+  +insert` with `--summary/--start/--end/--attendee/--meet` (real link). On gws
+  failure `_generate_meet_link` returns "" → `create_meeting` raises RuntimeError
+  + `_record_pending_booking` + owner alert (NO fake link).
+- `sba_autopilot.py::_safe_book_meeting` wraps it: returns "booked" or
+  "pending_manual", never reports fake success. Commits 6099cff + b8d2ac1 hold.
+- Email gating, dedupe, cooldowns, `_s()` int-phone coercion present.
+- Tests cover REAL meet link + gws failure (test_sba_pipeline.py).
+- **Remaining weak point (carried from Aug-12):** meetings still only trigger
+  when a lead replies "yes" to the outbound email / digest; no proactive
+  booking for unresponsive leads. Conversion at ZERO historically — now the
+  booking itself is correct, but volume depends on leads replying.
+
+**Per-agent scan (WORKER 3) — HARDENING CLAIMS HOLD:**
+- `_strip_think_blocks` present in ALL 7 agents + reasoning chains (sba, seo,
+  ads, social, content, analytics, memory, + sba_reasoning/website/seo/social).
+  Aug-16 "all agents hardened" claim CONFIRMED.
+- Social double-tool-execution fix verified: `social_run_tools` is the sole
+  execution node (`run_tools` edge → `call_llm`), tools run once.
+- `_get_llm_client` (hy3-free/CPU-friendly) + retry/timeout pattern rolled out.
+- **Thin but functional (not broken):** `ads_api_client.py` MetaAdsClient /
+  GoogleAdsClient still mostly stub (token load/save real; actual API calls
+  limited). `sba_reason.py` thin. These are feature-gaps, not crashes.
+
+**Frontend (WORKER 4) — WIRES TO REAL ROUTES:**
+- `agency-frontend/src/app/api/*/route.js` proxy correctly to
+  `BACKEND_API_URL:8000` (or 18.213.66.136:8000 default). Store page hits
+  `/api/store/*`, admin agents hit `/api/agents/<slug>/chat`, CEO `/api/ceo/chat`,
+  SBA `/api/sba/*`. All map to real backend routes.
+- Known 404s are harmless: `/api/sba/agents`, `/api/sba/platforms` (SBA page
+  doesn't call them).
+
+### TOP ACTION ITEMS (post-scan)
+1. **Remove/neutralize dead `swarm.py` + `api/routes/swarm.py`** (no-op,
+   misleading). Low risk. [owner: cleanup]
+2. **Lead-to-meeting volume:** proactive re-engagement / calendar-suggest for
+   non-responders to lift the ZERO conversion. [owner: strategy]
+3. **Ads API client:** flesh out real Meta/Google campaign calls (currently stub).
+4. Owner TODO (unchanged): set WhatsApp number in Store Settings for WhatsApp button.
 
 ---
 
