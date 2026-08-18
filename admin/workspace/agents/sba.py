@@ -249,6 +249,7 @@ class SBAAgentState(TypedDict):
     tool_round: int
     final_output: str
     error: str | None
+    runtime: Any  # Per-agent real-tool runtime (E2B + Composio + policy)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -578,7 +579,7 @@ async def sba_call_llm(state: SBAAgentState) -> dict[str, Any]:
         response = await _llm_call_with_retry(
             client_api,
             messages=messages,
-            tools=SBA_ALL_TOOLS,
+            tools=SBA_ALL_TOOLS + list(SBA_RUNTIME_TOOLS),
             model=model,
         )
     except Exception as exc:
@@ -692,6 +693,61 @@ async def sba_run_tools(state: SBAAgentState) -> dict[str, Any]:
                 "tool_call_id": tc.get("id", ""),
                 "content": result_text,
             })
+        # Real-tool runtime actions (E2B sandbox exec + Composio integrations).
+        RUNTIME_TOOL_NAMES = {"run_sandbox_code", "run_integration_tool"}
+        if tool_name in RUNTIME_TOOL_NAMES:
+            try:
+                from admin.runtime.spend_policy import RiskLevel
+
+                # Runtime is threaded into the graph state by SBAAgent.chat()
+                # (key "runtime"); fall back to a fresh per-workspace runtime if
+                # absent. Both paths are always safe (local fallback + gated).
+                rt = state.get("runtime")
+                if rt is None:
+                    from admin.runtime import get_agent_runtime
+                    rt = get_agent_runtime("sba", workspace_id)
+
+                if tool_name == "run_sandbox_code":
+                    dec = rt.policy.evaluate("run_sandbox_code", RiskLevel.LOW)
+                    if not dec.allow:
+                        result_text = json.dumps({"status": "denied", "reason": dec.reason})
+                    else:
+                        lang = (tool_args.get("lang") or "python").lower()
+                        code = tool_args.get("code", "")
+                        if lang == "bash":
+                            res = rt.sandbox.exec(code)
+                        else:
+                            res = rt.sandbox.python(code)
+                        result_text = json.dumps(
+                            {
+                                "backend": res.backend,
+                                "sandbox_id": res.sandbox_id,
+                                "exit_code": res.exit_code,
+                                "stdout": res.stdout[:3000],
+                                "stderr": res.stderr[:1500],
+                            },
+                            default=str,
+                        )
+                elif tool_name == "run_integration_tool":
+                    dec = rt.policy.evaluate(
+                        f"integration:{tool_args.get('tool_slug', '')}", RiskLevel.MEDIUM
+                    )
+                    if not dec.allow:
+                        result_text = json.dumps({"status": "denied", "reason": dec.reason})
+                    else:
+                        result = rt.integrations.execute(
+                            tool_slug=tool_args.get("tool_slug", ""),
+                            arguments=tool_args.get("arguments", {}) or {},
+                        )
+                        result_text = json.dumps(result, default=str)[:4000]
+            except Exception as exc:
+                result_text = f"Error executing {tool_name}: {exc}"
+            tool_results.append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": result_text,
+            })
+            continue
         else:
             # Check if it's an email/meeting/translate tool (async)
             SBA_NEW_TOOLS = {
@@ -874,7 +930,41 @@ async def sba_finalize(state: SBAAgentState) -> dict[str, Any]:
 # ── Build Graph ──────────────────────────────────────────────────────────────
 
 
-def build_sba_workspace_graph(checkpointer=None) -> StateGraph:
+SBA_RUNTIME_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_sandbox_code",
+            "description": "Run Python or shell code in this agent's isolated per-workspace sandbox to compute, scrape, transform data, or test logic. Use for any real computation beyond text generation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Python code to execute in the sandbox"},
+                    "lang": {"type": "string", "description": "Language: 'python' (default) or 'bash'"},
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_integration_tool",
+            "description": "Call a real external integration (Composio) such as Gmail, Google Calendar, Slack, Google Sheets, Notion, HubSpot. Pass the Composio tool slug and its JSON arguments. Returns the tool result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_slug": {"type": "string", "description": "Composio tool slug, e.g. GMAIL_SEND_EMAIL"},
+                    "arguments": {"type": "object", "description": "JSON arguments for the tool"},
+                },
+                "required": ["tool_slug", "arguments"],
+            },
+        },
+    },
+]
+
+
+def build_sba_workspace_graph(checkpointer=None, runtime: Any | None = None) -> StateGraph:
     """Build the compiled LangGraph state graph for SBA.
 
     Graph structure:
@@ -915,12 +1005,23 @@ class SBAAgent:
         workspace_name: str = "Default",
         client_name: str = "Client",
         workspace_id: str | None = None,
+        runtime: Any | None = None,
     ):
         self.workspace_name = workspace_name
         self.client_name = client_name
         # Stable id for ALL tool calls — never let a blank value cross clients.
         self.workspace_id = (workspace_id or workspace_name or "agency").strip() or "agency"
-        self.graph = build_sba_workspace_graph(get_checkpointer(self.workspace_name, "sba"))
+        # Real-tool runtime (E2B sandbox + Composio integrations + spend-policy).
+        # Always safe: get_agent_runtime falls back to local sandbox + unavailable
+        # integrations when keys are absent, so the agent runs "without error".
+        if runtime is None:
+            from admin.runtime import get_agent_runtime
+            runtime = get_agent_runtime("sba", self.workspace_id)
+        self.runtime = runtime
+        self.graph = build_sba_workspace_graph(
+            get_checkpointer(self.workspace_name, "sba"),
+            runtime=self.runtime,
+        )
         self._thread_id = f"sba_ws_{workspace_name}"
 
         # Register Chrome for this workspace
@@ -944,6 +1045,7 @@ class SBAAgent:
             "tool_round": 0,
             "final_output": "",
             "error": None,
+            "runtime": self.runtime,  # real-tool runtime for run_tools dispatch
         }
 
         try:

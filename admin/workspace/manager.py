@@ -368,6 +368,8 @@ async def route_to_agent(
 
     Used by CEO for delegation. Returns the agent's response text.
     """
+    from admin.runtime import get_agent_runtime
+
     ws = get_workspace(workspace_id)
     if not ws:
         return f"Workspace '{workspace_id}' not found."
@@ -377,7 +379,16 @@ async def route_to_agent(
     # SBA has its own LangGraph agent class with Chrome + lead gen tools
     if agent_type == "sba":
         from admin.workspace.agents.sba import SBAAgent
-        agent = SBAAgent(workspace_name=ws.name, client_name=ws.client_name, workspace_id=workspace_id)
+        # Inject the per-agent real-tool runtime (E2B sandbox + Composio +
+        # spend-policy) so the flagship SBA graph self-executes with real tools.
+        from admin.runtime import get_agent_runtime
+        runtime = get_agent_runtime("sba", workspace_id)
+        agent = SBAAgent(
+            workspace_name=ws.name,
+            client_name=ws.client_name,
+            workspace_id=workspace_id,
+            runtime=runtime,
+        )
         return await _call_with_retry(agent, message)
 
     # Domain-specific workspace agents (LangGraph-powered)
@@ -406,6 +417,10 @@ async def route_to_agent(
             }
             if hasattr(ws, 'client_context') and ws.client_context:
                 agent_kwargs["client_context"] = ws.client_context
+
+            # Inject the per-agent real-tool runtime (E2B + Composio + policy)
+            # so every workspace agent self-executes with real tools.
+            agent_kwargs["runtime"] = get_agent_runtime(agent_type, workspace_id)
 
             # For Content Agent, inject workspace_id for queue/memory
             if agent_type == "content":

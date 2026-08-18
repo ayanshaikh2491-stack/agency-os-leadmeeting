@@ -80,6 +80,18 @@ CEO_THINKING_PHASES = [
     "execute",       # Generate the final output / delegations
 ]
 
+# ── Real-tool runtime (E2B sandbox + Composio integrations) ────────────
+# Per-agent, per-workspace isolation layer. All OFFLINE-SAFE: without these
+# keys the system falls back to a local sandbox and reports integrations as
+# unavailable instead of crashing. Drop the keys in to go fully live.
+E2B_API_KEY: str = os.getenv("E2B_API_KEY", "")
+E2B_TEMPLATE_ID: str = os.getenv("E2B_TEMPLATE_ID", "")
+COMPOSIO_API_KEY: str = os.getenv("COMPOSIO_API_KEY", "")
+# Owner-tunable spend-policy envelope (borrowed from automaton design):
+# cap external writes per hour and optionally allow HIGH-risk actions.
+AGENT_MAX_EXTERNAL_PER_HOUR: int = int(os.getenv("AGENT_MAX_EXTERNAL_PER_HOUR", "25"))
+AGENT_ALLOW_HIGH_RISK: bool = os.getenv("AGENT_ALLOW_HIGH_RISK", "false").lower() in ("1", "true", "yes")
+
 # ── SBA Email (Gmail App Password) ──────────────────────────────────────────
 # Owner's email credentials for SBA to send/receive lead emails.
 # Uses App Password (NOT regular password):
