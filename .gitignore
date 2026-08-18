@@ -63,3 +63,4 @@ docs/superpowers/
 crewai-repo/  
 deploy/pocketbase/ 
 deploy/gw.log
+.worktrees/  

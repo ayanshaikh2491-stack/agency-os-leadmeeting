@@ -104,6 +104,14 @@ async def chat_with_ceo(body: ChatRequest):
     )
 
 
+@router.get("/floor")
+async def floor_activity(workspace_id: str | None = None):
+    """Live floor state — what each agent is doing right now (CEO Control Room)."""
+    from admin.workspace.manager import get_floor_activity
+
+    return {"status": "ok", "floor": get_floor_activity(workspace_id)}
+
+
 @router.post("/handoff/receive")
 async def receive_handoff(body: HandoffRequest):
     """Receive SBA handoff (Q17) — structured brief + full data dump."""

@@ -25,8 +25,32 @@ _pending_reviews: list[dict[str, Any]] = []   # Outputs awaiting CEO review
 _completed_reviews: list[dict[str, Any]] = [] # CEO review verdicts
 _error_logs: list[dict[str, Any]] = []        # Error routing history
 
+# Live agent activity on the floor (drives the CEO Control Room UI).
+# Keyed by (workspace_id, agent_type) → {status, task, updated_at}
+_agent_activity: dict[tuple[str, str], dict[str, Any]] = {}
+
 # Default agent types every workspace gets
 DEFAULT_AGENTS = ["sba", "seo", "content", "website", "ads", "social", "analytics", "analyzing", "memory"]
+
+
+def update_agent_activity(workspace_id: str, agent_type: str, status: str, task: str = "") -> None:
+    """Mark an agent's live status on the floor (working/thinking/idle + what it's doing)."""
+    _agent_activity[(workspace_id, agent_type)] = {
+        "workspace_id": workspace_id,
+        "agent_type": agent_type,
+        "status": status,            # idle | working | thinking
+        "task": task,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def get_floor_activity(workspace_id: str | None = None) -> list[dict[str, Any]]:
+    """Return live floor activity for a workspace (or all workspaces if None)."""
+    out: list[dict[str, Any]] = []
+    for (ws, atype), rec in _agent_activity.items():
+        if workspace_id is None or ws == workspace_id:
+            out.append(rec)
+    return out
 
 
 def _build_knowledge_context(knowledge: dict) -> str:
@@ -383,13 +407,17 @@ async def route_to_agent(
         # spend-policy) so the flagship SBA graph self-executes with real tools.
         from admin.runtime import get_agent_runtime
         runtime = get_agent_runtime("sba", workspace_id)
+        update_agent_activity(workspace_id, "sba", "working", f"Task from CEO/owner: {message[:80]}")
         agent = SBAAgent(
             workspace_name=ws.name,
             client_name=ws.client_name,
             workspace_id=workspace_id,
             runtime=runtime,
         )
-        return await _call_with_retry(agent, message)
+        try:
+            return await _call_with_retry(agent, message)
+        finally:
+            update_agent_activity(workspace_id, "sba", "idle")
 
     # Domain-specific workspace agents (LangGraph-powered)
     _domain_agents = {
@@ -477,8 +505,12 @@ async def route_to_agent(
                 except Exception as e:
                     logger.warning("Failed to load agency/workspace knowledge: %s", e)
 
+            update_agent_activity(workspace_id, agent_type, "working", f"Task from CEO/owner: {message[:80]}")
             agent = agent_class(**agent_kwargs)
-            return await _call_with_retry(agent, message)
+            try:
+                return await _call_with_retry(agent, message)
+            finally:
+                update_agent_activity(workspace_id, agent_type, "idle")
         except TypeError:
             # Fallback: agents that don't accept client_context yet
             try:
