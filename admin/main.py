@@ -85,6 +85,15 @@ async def lifespan(app: FastAPI):
             "schedule seeding failed (agent loop continues): %s", exc
         )
 
+    # CEO controller: register builtin workers + ensure mandate table exists.
+    try:
+        from admin.agency import ceo_controller as ceo_ctrl
+        from admin.agency import mandates as mandates_mod
+        await mandates_mod.init_mandates_table()
+        ceo_ctrl.ceo_controller.register()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").warning("ceo controller init failed: %s", exc)
+
     # Organic scheduler: dispatch due scheduled posts every 60s.
     scheduler_task = asyncio.create_task(_organic_scheduler_loop())
 
