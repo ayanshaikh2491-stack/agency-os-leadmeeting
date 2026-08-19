@@ -15,10 +15,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from admin.agency.ceo import AgencyCEO
@@ -91,11 +92,16 @@ async def chat_with_ceo_legacy(body: ChatRequest):
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_ceo(body: ChatRequest):
     """Chat with the Agency CEO (co-founder strategic partner)."""
+    from admin.workspace.manager import update_agent_activity, append_agent_activity_log
+    update_agent_activity("ceo", "ceo", "working", body.message[:80])
+    append_agent_activity_log("ceo", "ceo", "msg", f"Boss: {body.message[:160]}")
     response, conv_id, phases = await _ceo.chat(
         message=body.message,
         user_role="the agency owner",
         conversation_id=body.conversation_id,
     )
+    update_agent_activity("ceo", "ceo", "idle")
+    append_agent_activity_log("ceo", "ceo", "msg", f"CEO: {(response or '')[:160]}")
     return ChatResponse(
         response=response,
         conversation_id=conv_id,
@@ -110,6 +116,19 @@ async def floor_activity(workspace_id: str | None = None):
     from admin.workspace.manager import get_floor_activity
 
     return {"status": "ok", "floor": get_floor_activity(workspace_id)}
+
+
+@router.get("/agent-log")
+async def agent_activity_log(workspace_id: str, agent_type: str, limit: int = 80):
+    """Live transcript for ONE agent on the floor (munder-difflin terminal equiv)."""
+    from admin.workspace.manager import get_agent_activity_log
+
+    return {
+        "status": "ok",
+        "workspace_id": workspace_id,
+        "agent_type": agent_type,
+        "log": get_agent_activity_log(workspace_id, agent_type, limit),
+    }
 
 
 @router.post("/handoff/receive")
@@ -243,3 +262,37 @@ async def ceo_agency_overview():
     from admin.ceo_data import get_agency_overview
     overview = get_agency_overview()
     return {"status": "ok", "overview": overview}
+
+
+# ── CEO control loop endpoints (Task 7) ───────────────────────────────────────
+
+class DelegateRequest(BaseModel):
+    worker: str
+    task: str
+    scope: dict = {"kind": "agency", "workspace_id": "agency"}
+    standing: bool = False
+
+
+@router.get("/state")
+async def ceo_state():
+    from admin.agency.ceo_controller import ceo_controller as ctrl
+    return await ctrl.get_state()
+
+
+@router.post("/delegate")
+async def ceo_delegate(body: DelegateRequest):
+    from admin.agency.ceo_controller import ceo_controller as ctrl
+    return await ctrl.delegate(body.worker, body.task, body.scope, standing=body.standing)
+
+
+@router.websocket("/ws/office")
+async def ws_office(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            from admin.agency.ceo_controller import ceo_controller as ctrl
+            state = await ctrl.get_state()
+            await ws.send_json(state)
+            await asyncio.sleep(3)
+    except WebSocketDisconnect:
+        return
