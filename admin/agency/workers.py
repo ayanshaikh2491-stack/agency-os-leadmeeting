@@ -43,3 +43,26 @@ async def run_worker(worker: str, task: str, ctx: dict) -> dict:
 
 def list_workers() -> list[dict]:
     return [{"type": m["type"], "label": m["label"], "kind": m["kind"]} for m in WORKERS.values()]
+
+
+async def _run_sba(task: str, ctx: dict) -> dict:
+    from admin.agency.sba_autopilot import SBAAutopilot
+    ap = SBAAutopilot()
+    stats = await ap.run_once()
+    return {"stats": stats}
+
+
+async def _run_passthrough(task: str, ctx: dict) -> dict:
+    # Specialist agents are invoked by the CEO via the existing /api routes.
+    # Keep defensive until live-exec wiring lands in a later task.
+    return {"note": f"{ctx.get('scope', {}).get('workspace_id', 'agency')}: {task[:120]}"}
+
+
+def register_builtins() -> None:
+    register_worker("sba", "SBA — Lead→Email→Meeting", "sales", _run_sba)
+    register_worker("seo", "SEO", "growth", _run_passthrough)
+    register_worker("website", "Website", "build", _run_passthrough)
+    register_worker("ads", "Ads", "growth", _run_passthrough)
+    register_worker("content", "Content", "creative", _run_passthrough)
+    register_worker("social", "Social", "creative", _run_passthrough)
+    register_worker("analytics", "Analytics", "insight", _run_passthrough)

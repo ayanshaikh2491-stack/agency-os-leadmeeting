@@ -19,3 +19,10 @@ def test_run_worker_records_activity():
         assert any("do thing" in e["text"] for e in log)
 
     asyncio.run(run())
+
+
+def test_register_builtins_populates_registry():
+    from admin.agency import workers as w
+    w.register_builtins()
+    types = {m["type"] for m in w.list_workers()}
+    assert {"sba","seo","website","ads","content","social","analytics"} <= types
