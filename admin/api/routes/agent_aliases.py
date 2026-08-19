@@ -114,6 +114,16 @@ async def api_agent_chat(agent_id: str, body: dict[str, Any]) -> dict[str, Any]:
     if agent_id not in AGENT_SLUG_MAP:
         raise HTTPException(404, f"Unknown agent: {agent_id}")
 
+    # CEO-gated: the boss may ONLY talk to the CEO, never a worker directly.
+    # All real work flows through POST /api/ceo/chat -> CEO delegation.
+    raise HTTPException(
+        426,
+        detail=(
+            "Direct worker chat is disabled. The boss talks only to the CEO. "
+            f"Use POST /api/ceo/chat and let the CEO delegate to {agent_id}."
+        ),
+    )
+
     client_name = (body.get("client_name") or "").strip()
     workspace_id = body.get("workspace_id")
     agent_type = AGENT_SLUG_MAP[agent_id]
