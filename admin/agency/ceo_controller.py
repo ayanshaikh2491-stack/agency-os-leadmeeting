@@ -5,6 +5,7 @@ from typing import Any
 
 from admin.agency import workers as workers_mod
 from admin.agency import mandates as mandates_mod
+from admin.agency import memory as mem_mod
 from admin.agency.ceo import AgencyCEO
 from admin.workspace.manager import get_floor_activity
 
@@ -53,6 +54,16 @@ class CEOController:
             "mandates": mandates,
             "floor": get_floor_activity(None),
         }
+
+    async def digest(self) -> str:
+        lines = ["CEO Digest:"]
+        for md in await mandates_mod.list_mandates():
+            mem = await mem_mod.get_memory(md["worker"])
+            last = mem["stream"][0]["text"] if mem["stream"] else "(no activity)"
+            lines.append(f"- {md['worker']}: {md['status']} | last: {last[:80]}")
+        if len(lines) == 1:
+            lines.append("- no active mandates")
+        return "\n".join(lines)
 
 
 ceo_controller = CEOController()

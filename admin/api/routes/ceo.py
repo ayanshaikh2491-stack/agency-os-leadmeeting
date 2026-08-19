@@ -296,3 +296,9 @@ async def ws_office(ws: WebSocket):
             await asyncio.sleep(3)
     except WebSocketDisconnect:
         return
+
+
+@router.get("/digest")
+async def ceo_digest():
+    from admin.agency.ceo_controller import ceo_controller as ctrl
+    return {"digest": await ctrl.digest()}
