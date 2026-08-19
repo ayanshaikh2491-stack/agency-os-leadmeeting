@@ -1204,3 +1204,74 @@ If everything green, report completion with the acceptance checklist mapped to s
 - **Type consistency:** `run_worker(worker, task, ctx)` used identically in Tasks 2,3,4,6. `get_state()` returns `{ceo, workers, mandates, floor}` in Tasks 4,7,11. `mandates.set_mandate/get_mandate/list_mandates/clear_mandate` consistent across Tasks 1,4,6,9. `memory.get_memory/record_event/set_plan/add_reflection` consistent Tasks 5,9.
 - **One gap closed:** SBA `run_once` is referenced (exists in `sba_autopilot.py`); `register_builtins` calls it in Task 3.
 - **One risk noted:** `agent_aliases.py` exact decorator/framework differs; Task 8 instructs mirroring the existing pattern (only behavior matters: reject direct worker chat → point to `/api/ceo/chat`).
+
+---
+
+## VERIFIED ANCHORS — re-baseline (read before implementing any task)
+
+The plan was drafted against an assumed layout. During verification the following
+REAL symbols/paths were confirmed in the current `feat/sba-lead-to-meeting-pipeline`
+checkout. Subagents MUST use these exact anchors (do not invent call sites):
+
+### Backend topology (verified 2026-08-19)
+- Entry point: `admin/main.py` (FastAPI app). `@asynccontextmanager lifespan()`
+  runs startup. It already starts `agent_loop_forever()` as a background task
+  (line ~96) and `init_persistence()` + `init_db()` + workspace/sba load.
+  → **Task 4 startup wiring goes into `admin/main.py` `lifespan()`** (path correct,
+  mirror the existing `try/except` import pattern used for `agent_loop`).
+- CEO graph: `admin/agency/ceo.py` → `class AgencyCEO` with `async def chat(...)`
+  (signature: `message=`, `user_role=`, `conversation_id=`). Tools dispatch via
+  `_execute_ceo_tool` → `_tool_delegate(args)` / `_tool_parallel_blast(args)` /
+  `_tool_receive_handoff(args)`. Delegation actually runs workers through
+  `admin.workspace.manager.route_to_agent(workspace_id, agent_type, message)`.
+- CEO API routes: `admin/api/routes/ceo.py` — `router = APIRouter(prefix="/api/ceo")`.
+  `chat_with_ceo` handler calls `_ceo.chat(message=body.message,
+  user_role="the agency owner", conversation_id=body.conversation_id)`.
+  Floor endpoints already exist: `GET /floor`, `GET /agent-log`.
+  → **Task 7 adds `/state`, `/delegate`, `WebSocket /ws/office` to THIS router.**
+- Direct worker chat (the gate target): `admin/api/routes/agent_aliases.py` —
+  `router = APIRouter(prefix="/api/agents")`. Handler is
+  `@router.post("/{agent_id}/chat")` → `async def api_agent_chat(agent_id, body)`.
+  It calls `route_to_agent(...)` directly. → **Task 8 wraps THIS handler.**
+- Autonomy engine: `admin/agency/agent_loop.py` → `agent_loop_forever()` calls
+  `agent_loop_tick()` → `_tick_once()` → `_run_due_tasks_safe()` (imports
+  `scheduler.run_due_tasks`) + `_auto_process_due_handoffs()` (calls
+  `orchestrator.ceo_process_sba_handoff`). `run_due_tasks` (in
+  `admin/agency/scheduler.py`) dispatches SEO/Website/Ads/Analytics/Analyzing via
+  `orchestrator.run_seo_agent_for_workspace`, `sba_pipeline_scan`, etc.
+  → **Task 6 must KEEP `_run_due_tasks_safe`/handoff logic but make the
+  SEO/Website/Ads/Analytics runs conditional on an active CEO mandate** (do NOT
+  delete the scheduler bridge — those agents still need to run). The tick becomes:
+  process due handoffs + run only mandated workers. Keep `run_due_tasks` import if
+  used; otherwise remove safely.
+- SBA autopilot: `admin/agency/sba_autopilot.py` → `class SBAAutopilot` with
+  `async def run_once(self, global_budget=None)` (returns stats) and its OWN
+  `run_forever()` (separate process, NOT started by `main.py`). `SBAWorkspaceRunner`
+  (`__init__` ~1324) spins one autopilot per workspace. → **Task 3 call
+  `SBAAutopilot(workspace_name=...).run_once()`**; Task 6 may gate it via mandate
+  but SBA keeps a standing mandate so it stays visibly working.
+- Persistence: `admin/persistence.py` — `get_workspace_db()` (async), `row_to_dict`,
+  `init_persistence()` (runs `CREATE_TABLES_SQL` on the shared connection),
+  `set_persistent_mode`. New tables (mandates, agent_memory, agent_plan,
+  agent_reflection) should be added via a new `init_*_table()` that calls
+  `get_workspace_db()` + `db.execute(table_ddl)` + `db.commit()` (same as plan).
+- Activity/floor: `admin/workspace/manager.py` — `update_agent_activity` (sync,
+  in-memory), `get_floor_activity`, `append_agent_activity_log` (sync),
+  `route_to_agent` (async, the real worker dispatch hub).
+
+### Frontend topology (verified 2026-08-19)
+- Root: `agency-frontend/` (NOT `agency-frontend/agency-frontend/` for app code —
+  the nested dir is a stray copy; edit the top-level `agency-frontend/src/...`).
+  App Router under `agency-frontend/src/app/`. Existing admin pages:
+  `src/app/admin/ceo/page.js`, `src/app/admin/agents/sba/page.js`, etc.
+- Design system to remove: search for `github.com/paperclipai` and `paperclip.css`
+  references; confirm EXACT paths with `agentgrep`/`ls` before deleting. Plan's
+  assumed `src/app/paperclip.css` must be located first (it may be elsewhere).
+- Boss↔CEO chat already exists at `src/app/admin/ceo/page.js` and
+  `src/app/chat/page.jsx` + `src/components/ChatInterface.jsx`. The new office
+  floor (Task 11) should reuse the existing `/api/ceo/chat` call pattern.
+- PixiJS is a NEW dep; add to `agency-frontend/package.json` and `npm install`.
+
+### Subagent rule
+When a plan step references a symbol/path you cannot find, STOP and report it —
+do not guess. Every anchor above was `agentgrep`-verified on this branch.
