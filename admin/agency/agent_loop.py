@@ -56,17 +56,6 @@ AGENT_LOOP_TICK_TIMEOUT_SECONDS: int = int(
 )
 
 
-async def _run_due_tasks_safe() -> dict[str, Any]:
-    """Run all due scheduled tasks, swallowing per-task failures."""
-    from admin.agency.scheduler import run_due_tasks
-
-    try:
-        return run_due_tasks()
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("agent-loop: run_due_tasks failed: %s", exc)
-        return {"ran": 0, "error": str(exc)}
-
-
 async def _auto_process_due_handoffs() -> dict[str, Any]:
     """Auto-fire SBA -> CEO handoffs for booked leads missing a workspace.
 
@@ -99,25 +88,29 @@ async def _auto_process_due_handoffs() -> dict[str, Any]:
 
 
 async def _tick_once() -> dict[str, Any]:
-    """One autonomy cycle: run due tasks + provision any booked leads."""
-    due = await _run_due_tasks_safe()
+    """CEO-mandate-driven tick: never self-schedules. Runs only active mandates."""
+    from admin.agency import mandates as mandates_mod
+    from admin.agency import workers as workers_mod
     handoffs = await _auto_process_due_handoffs()
-    return {
-        "due_tasks": due,
-        "handoffs": handoffs,
-        "at": time.time(),
-    }
+    ran: list[str] = []
+    for md in await mandates_mod.list_mandates():
+        if md.get("status") != "running":
+            continue
+        worker = md["worker"]
+        scope = md.get("scope") or {"kind": "agency", "workspace_id": "agency"}
+        try:
+            await workers_mod.run_worker(worker, md.get("standing_task", ""), {"scope": scope})
+            ran.append(worker)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("agent-loop: worker %s failed: %s", worker, exc)
+    return {"mandates_ran": ran, "handoffs": handoffs, "at": time.time()}
 
 
 async def agent_loop_tick() -> dict[str, Any]:
-    """Public: run one bounded agency autonomy tick (with timeout guard)."""
     try:
         return await asyncio.wait_for(_tick_once(), timeout=AGENT_LOOP_TICK_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        logger.warning(
-            "agent-loop: tick exceeded %ss — resetting for next cycle",
-            AGENT_LOOP_TICK_TIMEOUT_SECONDS,
-        )
+        logger.warning("agent-loop: tick exceeded %ss", AGENT_LOOP_TICK_TIMEOUT_SECONDS)
         return {"error": "tick_timeout"}
     except Exception as exc:  # noqa: BLE001
         logger.exception("agent-loop: tick crashed: %s", exc)
