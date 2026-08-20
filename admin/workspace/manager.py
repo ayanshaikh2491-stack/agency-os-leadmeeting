@@ -29,6 +29,41 @@ _error_logs: list[dict[str, Any]] = []        # Error routing history
 # Keyed by (workspace_id, agent_type) → {status, task, updated_at}
 _agent_activity: dict[tuple[str, str], dict[str, Any]] = {}
 
+# Append-only transcript of agent activity (drives the Munder-Difflin
+# terminal-style log in the CEO Control Room). Single-agent era: only the
+# CEO "agent" writes here, but the schema is generic.
+_agent_activity_log: list[dict[str, Any]] = []
+
+MAX_ACTIVITY_LOG = 2000
+
+
+def append_agent_activity_log(workspace_id: str, agent_type: str, kind: str, text: str) -> None:
+    """Append a line to the agent activity transcript.
+
+    In the single-agent (CEO Michael) design this is the audit trail the
+    Control Room renders. Safe to call from any route; never raises.
+    """
+    _agent_activity_log.append({
+        "workspace_id": workspace_id,
+        "agent_type": agent_type,
+        "kind": kind,
+        "text": text,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    if len(_agent_activity_log) > MAX_ACTIVITY_LOG:
+        del _agent_activity_log[: len(_agent_activity_log) - MAX_ACTIVITY_LOG]
+
+
+def get_agent_activity_log(workspace_id: str, agent_type: str, limit: int = 80) -> list[dict[str, Any]]:
+    """Return the transcript for one agent (newest first), bounded by limit."""
+    out: list[dict[str, Any]] = []
+    for rec in reversed(_agent_activity_log):
+        if rec["workspace_id"] == workspace_id and rec["agent_type"] == agent_type:
+            out.append(rec)
+            if len(out) >= limit:
+                break
+    return out
+
 # Default agent types every workspace gets
 DEFAULT_AGENTS = ["sba", "seo", "content", "website", "ads", "social", "analytics", "analyzing", "memory"]
 

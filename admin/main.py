@@ -69,23 +69,11 @@ async def lifespan(app: FastAPI):
         description="Default workspace, bound to Supabase schema ws_default.",
     )
 
-    # Seed schedules so the always-on agent loop has work to run on its timer.
-    # (Schedules are in-memory and re-seeded each boot — intentional, keeps the
-    # agency L2 self-scheduled without a DB migration.) Best-effort.
-    try:
-        from admin.agency.scheduler import (
-            setup_agency_schedules,
-            setup_default_schedules,
-        )
-        setup_default_schedules("ws_agency")
-        setup_default_schedules("ws_default")
-        setup_agency_schedules()
-    except Exception as exc:  # noqa: BLE001
-        logging.getLogger("admin.main").warning(
-            "schedule seeding failed (agent loop continues): %s", exc
-        )
-
-    # CEO controller: register builtin workers + ensure mandate table exists.
+    # CEO controller: register the single CEO agent (Michael) + ensure the
+    # mandate table exists. Single-agent design: CEO Michael is the ONLY live
+    # agent. No auto worker loop, no agent_monitor, no organic scheduler — the
+    # CEO handles boss chat, client email, and delegating work itself
+    # (CEO-gated). Backend stays simple, stable, and cheap to run.
     try:
         from admin.agency import ceo_controller as ceo_ctrl
         from admin.agency import mandates as mandates_mod
@@ -94,61 +82,9 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("admin.main").warning("ceo controller init failed: %s", exc)
 
-    # Organic scheduler: dispatch due scheduled posts every 60s.
-    scheduler_task = asyncio.create_task(_organic_scheduler_loop())
-
-    # Always-on agency agent loop: run due scheduled tasks (SEO/Website/Ads/
-    # Analytics/Analyzing) and auto-provision client workspaces from SBA
-    # handoffs. This is what makes the specialist agents L2 (self-scheduled)
-    # instead of waiting for a manual tick. Best-effort: never block startup.
-    try:
-        from admin.agency.agent_loop import agent_loop_forever
-        agent_loop_task = asyncio.create_task(agent_loop_forever())
-    except Exception as exc:  # noqa: BLE001
-        logging.getLogger("admin.main").exception(
-            "agent loop failed to start (backend continues): %s", exc
-        )
-        agent_loop_task = None
-
-    # Agency-wide agent health monitor (24/7 construction probe). This is a
-    # best-effort health signal only — if it fails to import or start, the
-    # backend must still come up (seen: a missing agent_monitor module took
-    # the whole API down and systemd tight-looped it). Never let it block
-    # startup.
-    try:
-        from admin.agency.agent_monitor import start_monitor, stop_monitor
-        await start_monitor()
-    except Exception as exc:  # noqa: BLE001
-        logging.getLogger("admin.main").exception("agent monitor failed to start (backend continues): %s", exc)
-        start_monitor = stop_monitor = None  # type: ignore[assignment]
-
     yield
-    if agent_loop_task is not None:
-        agent_loop_task.cancel()
-    if stop_monitor is not None:
-        try:
-            await stop_monitor()
-        except Exception:  # noqa: BLE001
-            pass
-    try:
-        await scheduler_task
-    except asyncio.CancelledError:
-        pass
     await close_persistence()
     await close_db()
-
-
-async def _organic_scheduler_loop() -> None:
-    """Background loop that dispatches due organic posts every 60s."""
-    while True:
-        try:
-            from admin.tools.organic.scheduler import dispatch_due
-            stats = await asyncio.to_thread(dispatch_due)
-            if stats.get("due"):
-                logging.getLogger("organic.scheduler").info("dispatched: %s", stats)
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger("organic.scheduler").exception("scheduler pass failed: %s", exc)
-        await asyncio.sleep(60)
 
 
 app = FastAPI(

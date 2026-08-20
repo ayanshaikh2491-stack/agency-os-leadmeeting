@@ -24,7 +24,6 @@ Thumbs.db
 admin/_gen_business.py
 admin/_live_p100_test.py
 admin/_p100_v2_test.py
-admin/tools/together_gpu.py
 agent_gpu_job_*.json
 
 # Docs
