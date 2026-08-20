@@ -111,11 +111,11 @@ async def api_agent_chat(agent_id: str, body: dict[str, Any]) -> dict[str, Any]:
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "Message is required")
-    if agent_id not in AGENT_SLUG_MAP:
-        raise HTTPException(404, f"Unknown agent: {agent_id}")
 
     # CEO-gated: the boss may ONLY talk to the CEO, never a worker directly.
     # All real work flows through POST /api/ceo/chat -> CEO delegation.
+    # This guard runs BEFORE slug validation so any boss→worker chat attempt
+    # (including unknown slugs like "sba") is rejected with a clear pointer.
     raise HTTPException(
         426,
         detail=(
@@ -123,6 +123,9 @@ async def api_agent_chat(agent_id: str, body: dict[str, Any]) -> dict[str, Any]:
             f"Use POST /api/ceo/chat and let the CEO delegate to {agent_id}."
         ),
     )
+
+    if agent_id not in AGENT_SLUG_MAP:
+        raise HTTPException(404, f"Unknown agent: {agent_id}")
 
     client_name = (body.get("client_name") or "").strip()
     workspace_id = body.get("workspace_id")
