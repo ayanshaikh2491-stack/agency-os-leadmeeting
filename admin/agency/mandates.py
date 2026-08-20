@@ -26,6 +26,21 @@ async def init_mandates_table() -> None:
     await db.commit()
 
 
+# Guard so the table is created on first use even if init_mandates_table()
+# has not been called explicitly (e.g. tests or ad-hoc call paths).
+_ensured: bool = False
+
+
+async def _ensure_table() -> None:
+    global _ensured
+    if _ensured:
+        return
+    db = await get_workspace_db()
+    await db.execute(CREATE_MANDATES_TABLE_SQL)
+    await db.commit()
+    _ensured = True
+
+
 async def set_mandate(
     worker: str,
     status: str,
@@ -35,6 +50,7 @@ async def set_mandate(
 ) -> dict[str, Any]:
     updated_at = datetime.now(timezone.utc).isoformat()
     scope_text = json.dumps(scope)
+    await _ensure_table()
     db = await get_workspace_db()
     await db.execute(
         """
@@ -54,6 +70,7 @@ async def set_mandate(
 
 
 async def get_mandate(worker: str) -> dict[str, Any] | None:
+    await _ensure_table()
     db = await get_workspace_db()
     async with db.execute(
         "SELECT * FROM mandates WHERE worker = ?", (worker,)
@@ -65,6 +82,7 @@ async def get_mandate(worker: str) -> dict[str, Any] | None:
 
 
 async def list_mandates() -> list[dict[str, Any]]:
+    await _ensure_table()
     db = await get_workspace_db()
     async with db.execute("SELECT * FROM mandates ORDER BY worker") as cursor:
         rows = await cursor.fetchall()
@@ -72,6 +90,7 @@ async def list_mandates() -> list[dict[str, Any]]:
 
 
 async def clear_mandate(worker: str) -> bool:
+    await _ensure_table()
     db = await get_workspace_db()
     result = await db.execute("DELETE FROM mandates WHERE worker = ?", (worker,))
     await db.commit()
