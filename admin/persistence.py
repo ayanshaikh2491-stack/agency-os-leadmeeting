@@ -121,6 +121,19 @@ CREATE TABLE IF NOT EXISTS ceo_activity_log (
     metadata TEXT NOT NULL DEFAULT '{}',
     timestamp TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS email_outbox (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT '',
+    from_agent TEXT NOT NULL DEFAULT 'ceo',
+    to_email TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+);
 """
 
 

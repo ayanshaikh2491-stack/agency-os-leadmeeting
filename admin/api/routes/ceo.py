@@ -302,3 +302,34 @@ async def ws_office(ws: WebSocket):
 async def ceo_digest():
     from admin.agency.ceo_controller import ceo_controller as ctrl
     return {"digest": await ctrl.digest()}
+
+
+# ── CEO Email Outbox (queued client emails) ─────────────────────────────────
+
+
+class EmailSendRequest(BaseModel):
+    to_email: str
+    subject: str = ""
+    body: str = ""
+    workspace_id: str = ""
+
+
+@router.get("/email/outbox")
+async def email_outbox(workspace_id: str | None = None, status: str | None = None, limit: int = 100):
+    """List queued/emitted client emails (CEO control room visibility)."""
+    from admin.tools.email_queue import list_outbox
+    return {"status": "ok", "outbox": await list_outbox(workspace_id, status, limit)}
+
+
+@router.post("/email/send")
+async def email_send(body: EmailSendRequest):
+    """Queue a client email via the CEO outbox (not sent live yet)."""
+    from admin.tools.email_queue import queue_email
+    msg_id = await queue_email(
+        to_email=body.to_email,
+        subject=body.subject,
+        body=body.body,
+        from_agent="ceo",
+        workspace_id=body.workspace_id,
+    )
+    return {"status": "ok", "queued": True, "id": msg_id}

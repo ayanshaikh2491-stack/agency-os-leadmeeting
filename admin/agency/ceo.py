@@ -763,6 +763,12 @@ async def _execute_ceo_tool(name: str, args: dict) -> str:
     elif name == "generate_report":
         return await _tool_generate_report(args)
 
+    elif name == "run_sales":
+        return await _tool_run_sales(args)
+
+    elif name == "email_client":
+        return await _tool_email_client(args)
+
     elif name == "get_cross_workspace_knowledge":
         return await _tool_cross_workspace_knowledge(args)
 
@@ -903,6 +909,86 @@ def _tool_workspace_report(ws_id: str) -> str:
             lines.append(f"  [{a.get('agent_type', '?')}] {a.get('action', '?')} — {a.get('details', '')[:80]}")
 
     return "\n".join(lines)
+
+
+async def _tool_run_sales(args: dict) -> str:
+    """CEO sales move: run the SBA worker for a workspace (lead find + email).
+
+    SBA is a CEO tool, not a background service. The boss asks the CEO to run
+    sales; the CEO instantiates the SBA worker for that workspace with a
+    QUEUED email client (emails go to the outbox, not live SMTP yet) and runs
+    one pass. Everything is wrapped so a failure never takes the CEO down —
+    the boss gets a clear status instead.
+    """
+    ws_id = args.get("workspace_id", "") or args.get("client", "")
+    task = args.get("task", "Find leads and reach out to potential clients")
+
+    try:
+        from admin.workspace.manager import get_workspace
+    except ImportError:
+        return "Workspace manager not available."
+
+    ws = get_workspace(ws_id) if ws_id else None
+    workspace_name = ws.name if ws else (ws_id or "agency")
+
+    try:
+        from admin.tools.email_queue import QueuedEmailClient
+        from admin.agency.sba_autopilot import SBAAutopilot
+
+        ap = SBAAutopilot(
+            email_client=QueuedEmailClient(),
+            workspace_name=workspace_name,
+        )
+        stats = await ap.run_once()
+        leads = stats.get("new_leads", 0) if isinstance(stats, dict) else 0
+        emails = stats.get("emails_sent", 0) if isinstance(stats, dict) else 0
+        return (
+            f"Sales pass complete for '{workspace_name}':\n"
+            f"  New leads found: {leads}\n"
+            f"  Emails queued: {emails}\n"
+            f"  (Emails are queued, not yet sent live. Review /api/ceo/email/outbox.)"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("CEO run_sales failed for %s", workspace_name)
+        return (
+            f"Bhai, SBA sales pass fail ho gaya '{workspace_name}' ke liye: {exc}. "
+            "Leads jo mil gaye the wo save ho gaye hain, lekin email queue nahi "
+            "hua. Baad mein retry karo ya mujhe bolo."
+        )
+
+
+async def _tool_email_client(args: dict) -> str:
+    """Queue a client email via the outbox (CEO's email tool).
+
+    Args: to_email, subject, body, workspace_id (optional).
+    Returns a boss-readable confirmation. Failures are reported, never silent.
+    """
+    to_email = (args.get("to_email") or "").strip()
+    subject = args.get("subject", "")
+    body = args.get("body", "")
+    ws_id = args.get("workspace_id", "")
+
+    if not to_email:
+        return "Email nahi bheja — to_email missing hai."
+
+    try:
+        from admin.tools.email_queue import queue_email
+        msg_id = await queue_email(
+            to_email=to_email,
+            subject=subject,
+            body=body,
+            from_agent="ceo",
+            workspace_id=ws_id,
+        )
+        return (
+            f"Email queued to {to_email} (id {msg_id}).\n"
+            f"Subject: {subject}\n"
+            "Boss can review it at /api/ceo/email/outbox (not sent live yet)."
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("CEO email_client failed")
+        return f"Bhai, email queue fail ho gaya {to_email} ke liye: {exc}"
+
 
 
 async def _tool_delegate(args: dict) -> str:
