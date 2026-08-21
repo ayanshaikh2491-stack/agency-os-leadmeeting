@@ -1083,7 +1083,11 @@ async def _tool_delegate(args: dict) -> str:
             f"Response: {response[:500]}"
         )
     except Exception as exc:
-        return f"Delegation failed: {exc}"
+        # Boss-readable Hindi status (consistent with workers._hindi_status).
+        return (
+            f"Bhai, {agent_type.upper()} employee kaam fail ho gaya: {exc}. "
+            "CEO ko bhej diya hai — wo fix route karega."
+        )
 
 
 async def _tool_parallel_blast(args: dict) -> str:
