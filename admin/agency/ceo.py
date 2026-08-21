@@ -1019,12 +1019,37 @@ async def _tool_delegate(args: dict) -> str:
         f"{priority_tag}[CEO DELEGATION] {task}"
     )
 
+    # Part C — audit trail: brief the employee on the agent_bus.
+    message_id = None
+    try:
+        from admin.agency.agent_bus import get_bus
+
+        message_id = get_bus().brief(
+            "ceo", agent_type, ws_id, task,
+            objective=f"CEO delegation to {agent_type}",
+            context=context, required_action="execute + respond", status="active",
+        )
+    except Exception:
+        logger.warning("agent_bus brief failed for delegate %s", agent_type)
+
     try:
         response = await route_to_agent(
             workspace_id=ws_id,
             agent_type=agent_type,
             message=full_message,
         )
+
+        # Record the employee's report on the bus (audit trail).
+        if message_id:
+            try:
+                from admin.agency.agent_bus import get_bus
+
+                get_bus().respond(
+                    message_id, result=str(response)[:4000],
+                    status="done", errors="",
+                )
+            except Exception:
+                pass
 
         # Store the output for review (Q20)
         try:
@@ -1083,6 +1108,20 @@ async def _tool_parallel_blast(args: dict) -> str:
     from admin.workspace.manager import route_to_agent
 
     results = []
+    bus_ids: dict[str, str] = {}
+    try:
+        from admin.agency.agent_bus import get_bus as _get_bus
+        _bus = _get_bus()
+        for _a in agents_to_brief:
+            if _a in ws.agents:
+                bus_ids[_a] = _bus.brief(
+                    "ceo", _a, ws_id, client_brief,
+                    objective=f"Parallel blast: {campaign_name}",
+                    context=client_brief, required_action="execute + respond", status="active",
+                )
+    except Exception:
+        logger.warning("agent_bus brief failed for parallel blast %s", ws_id)
+
     for agent_type in agents_to_brief:
         if agent_type not in ws.agents:
             results.append(f"  SKIP {agent_type}: not in workspace")
@@ -1109,6 +1148,15 @@ async def _tool_parallel_blast(args: dict) -> str:
             )
             results.append(f"  OK {agent_type}: {response[:200]}")
 
+            # Part C — audit trail: employee reports back on the bus.
+            _mid = bus_ids.get(agent_type)
+            if _mid:
+                try:
+                    from admin.agency.agent_bus import get_bus as _get_bus2
+                    _get_bus2().respond(_mid, result=str(response)[:4000], status="done", errors="")
+                except Exception:
+                    pass
+
             # Store output for review
             try:
                 from admin.workspace.manager import store_agent_output
@@ -1123,6 +1171,13 @@ async def _tool_parallel_blast(args: dict) -> str:
 
         except Exception as exc:
             results.append(f"  FAIL {agent_type}: {exc}")
+            _mid = bus_ids.get(agent_type)
+            if _mid:
+                try:
+                    from admin.agency.agent_bus import get_bus as _get_bus3
+                    _get_bus3().respond(_mid, result="", status="failed", errors=str(exc)[:2000])
+                except Exception:
+                    pass
 
     return (
         f"Parallel blast completed for {ws.name} — Campaign: {campaign_name}\n"

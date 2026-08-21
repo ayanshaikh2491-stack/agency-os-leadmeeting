@@ -1,6 +1,8 @@
 """CEO Controller — single brain. Owns the CEO graph, mandates, delegation."""
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
 from admin.agency import workers as workers_mod
@@ -43,16 +45,46 @@ class CEOController:
     async def delegate(self, worker: str, task: str, scope: dict[str, Any], standing: bool = False) -> dict[str, Any]:
         if standing:
             await mandates_mod.set_mandate(worker, "running", task, scope)
-        return await workers_mod.run_worker(worker, task, {"scope": scope})
+
+        # Part C — audit trail: brief the employee on the agent_bus first.
+        ws = scope.get("workspace_id", "agency") if isinstance(scope, dict) else "agency"
+        message_id: str | None = None
+        try:
+            from admin.agency.agent_bus import get_bus
+
+            message_id = get_bus().brief(
+                "ceo", worker, ws, task, objective=f"CEO delegation to {worker}",
+                context=json.dumps(scope, default=str),
+                required_action="execute + respond", status="active",
+            )
+        except Exception:
+            logger.warning("agent_bus brief failed for CEO delegate %s", worker)
+
+        return await workers_mod.run_worker(
+            worker, task, {"scope": scope}, message_id=message_id
+        )
 
     async def get_state(self) -> dict[str, Any]:
         mandates = await mandates_mod.list_mandates()
         workers = workers_mod.list_workers()
+
+        # Part C — audit trail: surface recent inter-agent messages.
+        bus_recent: list[dict[str, Any]] = []
+        try:
+            from admin.agency.agent_bus import get_bus
+
+            bus_recent = [
+                m.to_dict() for m in get_bus().recent("agency", limit=20)
+            ]
+        except Exception:
+            logger.warning("agent_bus recent failed for CEO get_state")
+
         return {
             "ceo": {"status": "idle"},
             "workers": workers,
             "mandates": mandates,
             "floor": get_floor_activity(None),
+            "bus_recent": bus_recent,
         }
 
     async def digest(self) -> str:

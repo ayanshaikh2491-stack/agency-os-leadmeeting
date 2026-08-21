@@ -110,7 +110,9 @@ class AgentBus:
 
     def __init__(self, db_path: str = _BUS_DB) -> None:
         self._db_path = db_path
-        self._lock = threading.Lock()
+        # RLock: respond() acquires the lock and then calls thread(), which also
+        # acquires it. A plain Lock would deadlock on re-entry from the same thread.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # Avoid Windows/lock races when multiple connections touch the db:
