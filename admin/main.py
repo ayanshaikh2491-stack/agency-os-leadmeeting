@@ -29,6 +29,7 @@ from admin.api.routes import analyzing as analyzing_routes
 from admin.api.routes import extra as extra_routes
 from admin.api.routes import store as store_routes
 from admin.api.routes import agent_aliases as agent_aliases_routes
+from admin.api.routes import agents_crud as agents_crud_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db as load_sba_from_db
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
         from admin.agency import ceo_controller as ceo_ctrl
         from admin.agency import mandates as mandates_mod
         await mandates_mod.init_mandates_table()
-        ceo_ctrl.ceo_controller.register()
+        await ceo_ctrl.ceo_controller.register()
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("admin.main").warning("ceo controller init failed: %s", exc)
 
@@ -123,6 +124,7 @@ app.include_router(extra_routes.router)          # /api/status, /api/workspaces,
 app.include_router(store_routes.router)          # /api/store/* — client storefront (Shopify-like)
 app.include_router(agent_aliases_routes.router)  # /api/agents + /api/agents/{id}/chat
 app.include_router(agent_aliases_routes._seo_router)  # /api/agents/seo-engine/*
+app.include_router(agents_crud_routes.router)        # /api/agents/custom/*
 
 
 # ── Health ─────────────────────────────────────────────────────────────────

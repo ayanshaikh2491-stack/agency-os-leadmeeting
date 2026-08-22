@@ -1007,6 +1007,37 @@ async def _tool_delegate(args: dict) -> str:
     ws = get_workspace(ws_id)
     if not ws:
         return f"Workspace '{ws_id}' not found."
+
+    # ── Dynamic / user-added agents (Munder-style) ──────────────────────────
+    # If the requested agent is a custom agent from the registry, route it
+    # through the workers layer (which already knows how to run it) instead of
+    # the workspace's fixed agent list. This lets the CEO delegate to any
+    # user-created agent on the fly.
+    try:
+        from admin.agency import agent_registry as reg
+
+        custom = await reg.get_agent(agent_type)
+    except Exception:  # noqa: BLE001
+        custom = None
+
+    if custom is not None:
+        from admin.agency.workers import run_worker
+
+        result = await run_worker(
+            agent_type, task,
+            {"scope": {"kind": "workspace", "workspace_id": ws_id}},
+        )
+        ok = result.get("ok", False)
+        resp = (result.get("result") or {}).get("answer") or result.get("error") or str(result)
+        status = "done" if ok else "failed"
+        return (
+            f"Delegated to {custom['name']} (custom) in {ws.name}:\n"
+            f"Task: {task}\n"
+            f"Priority: {priority}\n"
+            f"Status: {status}\n"
+            f"Response: {str(resp)[:500]}"
+        )
+
     if agent_type not in ws.agents:
         return f"Agent '{agent_type}' not in workspace '{ws_id}'. Available: {ws.agents}"
 

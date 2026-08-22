@@ -18,8 +18,8 @@ class CEOController:
     def __init__(self) -> None:
         self.ceo = _ceo
 
-    def register(self) -> None:
-        workers_mod.register_builtins()
+    async def register(self) -> None:
+        await workers_mod.register_builtins()
 
     async def chat(self, message: str, conversation_id: str | None = None) -> dict[str, Any]:
         from admin.workspace.manager import update_agent_activity, append_agent_activity_log

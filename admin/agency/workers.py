@@ -26,6 +26,7 @@ import asyncio
 import importlib
 import json
 import logging
+import os
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -60,6 +61,9 @@ _DEFAULT_TOOL: dict[str, tuple[str, dict[str, Any]]] = {
 
 
 def _hindi_status(agent: str, exc: Exception) -> str:
+    msg = str(exc).strip()
+    if msg.lower().startswith("bhai"):
+        return f"{msg} CEO ko bhej diya hai — wo fix route karega."
     return (
         f"Bhai, {agent.upper()} employee kaam fail ho gaya: {exc}. "
         "CEO ko bhej diya hai — wo fix route karega."
@@ -151,6 +155,94 @@ async def _run_sba(task: str, ctx: dict) -> dict:
     ap = SBAAutopilot()
     stats = await ap.run_once()
     return {"agent": "sba", "tool": "sba_autopilot.run_once", "result": {"stats": stats}}
+
+
+async def _run_custom_agent(task: str, ctx: dict, agent_type: str | None = None) -> dict:
+    """Generic runner for user-added (dynamic) agents from the registry.
+
+    The agent thinks (reasoning) then answers using its own system_prompt +
+    model + api-key ref. Falls back to the workspace default model if the
+    agent has none configured. Never crashes the loop on a missing key — it
+    reports a clear Hindi status instead.
+    """
+    if not agent_type:
+        raise ValueError("agent_type required for _run_custom_agent")
+    from admin.agency import agent_registry as reg
+
+    agent = await reg.get_agent(agent_type)
+    if agent is None:
+        raise ValueError(f"custom agent '{agent_type}' not found in registry")
+
+    prompt = agent.get("system_prompt") or f"You are {agent['name']}, a {agent['role']} agent."
+    model = agent.get("model") or _workspace_agent_model()
+    api_key = _resolve_api_key(agent.get("api_key_ref") or "")
+    if not api_key:
+        raise RuntimeError(
+            f"Bhai, '{agent['name']}' agent ka API key set nahi hai. "
+            "Key add karo ya free-demo model lagao — tab tak ye agent kaam nahi karega."
+        )
+
+    import openai
+
+    client = openai.AsyncOpenAI(
+        api_key=api_key,
+        base_url=_resolve_api_base(agent.get("api_key_ref") or ""),
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": task},
+            ],
+            temperature=0.7,
+        )
+        answer = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("custom agent %s LLM call failed: %s", agent_type, exc)
+        raise RuntimeError(
+            f"Bhai, '{agent['name']}' agent ka LLM call fail ho gaya: {exc}. "
+            "Model/api-key/base-url check karo."
+        )
+    return {"agent": agent_type, "tool": "custom_agent.chat", "result": {"answer": answer}}
+
+
+def _workspace_agent_model() -> str:
+    try:
+        from admin.config import settings
+
+        return settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
+    except Exception:  # noqa: BLE001
+        return "llama-3.3-70b-versatile"
+
+
+def _resolve_api_key(ref: str) -> str:
+    """Resolve an api_key_ref name to its env value, or use the ref directly.
+
+    If the ref is a known env var name it is read from the environment; an
+    explicit key string is returned as-is. Empty -> '' (caller reports error).
+    """
+    if not ref:
+        # Default workspace key (works with Groq/OpenAI/OpenRouter via .env).
+        try:
+            from admin.config import settings
+
+            return settings.WORKSPACE_API_KEY or os.getenv("AGENCY_CEO_API_KEY", "")
+        except Exception:  # noqa: BLE001
+            return os.getenv("AGENCY_CEO_API_KEY", "")
+    return os.getenv(ref, ref)
+
+
+def _resolve_api_base(ref: str) -> str:
+    if not ref:
+        try:
+            from admin.config import settings
+
+            return settings.WORKSPACE_API_BASE or ""
+        except Exception:  # noqa: BLE001
+            return ""
+    base = os.getenv(ref + "_BASE", "")
+    return base
 
 
 def register_worker(worker_type: str, label: str, kind: str, fn: WorkerFn) -> None:
@@ -268,7 +360,7 @@ def list_workers() -> list[dict]:
     return [{"type": m["type"], "label": m["label"], "kind": m["kind"]} for m in WORKERS.values()]
 
 
-def register_builtins() -> None:
+async def register_builtins() -> None:
     """Register every employee as a real, wired worker (Part A)."""
 
     def _make_real(agent_type: str):
@@ -283,3 +375,20 @@ def register_builtins() -> None:
     register_worker("ads", "Ads — Strategy, Copy, Optimization", "growth", _make_real("ads"))
     register_worker("social", "Social — Posts, Calendar, Listening", "creative", _make_real("social"))
     register_worker("analytics", "Analytics — Reports, ROI, Forecasts", "insight", _make_real("analytics"))
+
+    # ── Dynamic / user-added agents (Munder-style) ───────────────────────────
+    # Load every custom agent from the persistent registry and register it as a
+    # worker too, so the CEO can delegate to user-created agents on the fly.
+    try:
+        from admin.agency import agent_registry as reg
+
+        for ca in await reg.list_agents():
+            ca_id = ca["id"]
+            register_worker(
+                ca_id,
+                f"{ca['name']} — {ca['role']} (custom)",
+                "custom",
+                lambda task, ctx, _id=ca_id: _run_custom_agent(task, ctx, agent_type=_id),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("custom agent registration failed: %s", exc)
