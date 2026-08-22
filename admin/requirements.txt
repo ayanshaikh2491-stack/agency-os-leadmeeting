@@ -8,5 +8,7 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
+aiosqlite>=0.20.0
+python-multipart>=0.0.9
 
 playwright>=1.40.0

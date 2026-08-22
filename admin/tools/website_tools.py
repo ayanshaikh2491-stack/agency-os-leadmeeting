@@ -23,6 +23,7 @@ Action (5):
 """
 from __future__ import annotations
 
+import inspect
 import os
 import re
 import ssl
@@ -3774,7 +3775,14 @@ def execute_website_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     fn = dispatch.get(name)
     if fn:
         try:
-            return fn(args)
+            try:
+                sig = inspect.signature(fn)
+                params = set(sig.parameters)
+                filtered = {k: v for k, v in args.items()
+                            if k in params or (len(params) == 1 and "a" in params)}
+            except (ValueError, TypeError):
+                filtered = args
+            return fn(filtered)
         except Exception as e:
             logger.exception("Website tool failed: %s", name)
             return {"error": str(e), "status": "failed"}

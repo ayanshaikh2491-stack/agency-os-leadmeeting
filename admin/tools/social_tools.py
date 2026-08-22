@@ -4,6 +4,7 @@ Platform Intelligence, Trending, Competitor Tracking, Content Calendar, etc.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from typing import Any
@@ -795,7 +796,14 @@ def execute_social_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if func is None:
         return {"error": f"Unknown tool: {name}"}
     try:
-        return func(**args)
+        # The worker bridge injects delegation metadata (workspace_id, __brief)
+        # that not every tool accepts. Only forward kwargs the tool declares.
+        try:
+            sig = inspect.signature(func)
+            filtered = {k: v for k, v in args.items() if k in sig.parameters}
+        except (ValueError, TypeError):
+            filtered = args
+        return func(**filtered)
     except Exception as e:
         logger.exception("execute_social_tool failed: %s", name)
         return {"error": str(e)}
