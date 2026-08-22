@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import asyncio
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypedDict
 
@@ -196,6 +197,45 @@ CEO_TOOLS = [
                     },
                 },
                 "required": ["workspace_id", "client_brief"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_multiagent",
+            "description": (
+                "Fan out a brief to MULTIPLE agents at once (built-in + any user-added "
+                "custom agents) and collect every answer. Use for multi-agent analysis, "
+                "brainstorms, or when the boss wants several perspectives in one shot. "
+                "Agents run concurrently; each thinks (reasoning) then answers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "brief": {
+                        "type": "string",
+                        "description": "The shared brief/task given to every agent",
+                    },
+                    "agent_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Specific agent ids to run. Empty = run ALL available agents "
+                            "(the 7 built-ins + every user-added custom agent)."
+                        ),
+                    },
+                    "task_per_agent": {
+                        "type": "object",
+                        "description": "Optional per-agent task override: agent_id -> task string",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "scope": {
+                        "type": "object",
+                        "description": "Delegation scope (kind/workspace_id). Default agency-wide.",
+                    },
+                },
+                "required": ["brief"],
             },
         },
     },
@@ -751,6 +791,9 @@ async def _execute_ceo_tool(name: str, args: dict) -> str:
     elif name == "delegate_parallel_blast":
         return await _tool_parallel_blast(args)
 
+    elif name == "run_multiagent":
+        return await _tool_run_multiagent(args)
+
     elif name == "receive_sba_handoff":
         return await _tool_receive_handoff(args)
 
@@ -1220,6 +1263,96 @@ async def _tool_parallel_blast(args: dict) -> str:
         f"Agents briefed: {len(agents_to_brief)}\n\n"
         f"Results:\n" + "\n".join(results)
     )
+
+
+# Built-in (fixed) employee roster. Custom/user-added agents are merged in at
+# runtime from the agent registry so the CEO can fan out to ANY agent.
+_BUILTIN_AGENT_IDS = ["sba", "seo", "website", "content", "ads", "social", "analytics"]
+
+
+async def _all_agent_ids() -> list[str]:
+    """Built-in 7 + every user-added custom agent from the registry."""
+    ids = list(_BUILTIN_AGENT_IDS)
+    try:
+        from admin.agency import agent_registry as reg
+        for ca in await reg.list_agents():
+            cid = ca.get("id")
+            if cid and cid not in ids:
+                ids.append(cid)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not load custom agents for multi-agent fan-out")
+    return ids
+
+
+async def run_multiagent(
+    brief: str,
+    agent_ids: list[str] | None = None,
+    task_per_agent: dict[str, str] | None = None,
+    scope: dict | None = None,
+) -> dict:
+    """Multi-agent fan-out: run many agents concurrently, collect all answers.
+
+    This is the core "multi-agent" primitive — the CEO (or any caller) can throw
+    a brief at N agents at once. Each agent thinks (reasoning) then answers via
+    its own runner (built-in employees OR user-added custom agents). Failures are
+    isolated per-agent and reported with a Hindi status, never aborting the run.
+
+    Returns a structured report: {"ran", "failed", "results": [...]}.
+    """
+    scope = scope or {"kind": "agency", "workspace_id": "agency"}
+    task_map = task_per_agent or {}
+    chosen = agent_ids if agent_ids else await _all_agent_ids()
+    chosen = [a for a in chosen if a]
+
+    if not chosen:
+        return {"ran": 0, "failed": 0, "results": [], "note": "No agents available."}
+
+    from admin.agency.workers import run_worker
+
+    async def _run_one(aid: str) -> dict:
+        task = (task_map.get(aid) or brief).strip() or brief
+        try:
+            res = await run_worker(aid, task, {"scope": scope})
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "agent_id": aid,
+                "ok": False,
+                "error": str(exc),
+                "hindi_status": f"Bhai, {aid} agent kaam fail ho gaya: {exc}",
+            }
+        result = res.get("result") or {}
+        answer = result.get("answer") or result.get("response") or res.get("error") or ""
+        reasoning = result.get("reasoning", "")
+        return {
+            "agent_id": aid,
+            "ok": bool(res.get("ok", False)),
+            "answer": answer,
+            "reasoning": reasoning,
+            "hindi_status": res.get("hindi_status", ""),
+        }
+
+    results = await asyncio.gather(*(_run_one(a) for a in chosen))
+    failed = sum(1 for r in results if not r.get("ok"))
+    return {"ran": len(results), "failed": failed, "results": results}
+
+
+async def _tool_run_multiagent(args: dict) -> str:
+    """CEO tool wrapper for run_multiagent (used by the LangGraph CEO)."""
+    report = await run_multiagent(
+        brief=args.get("brief", ""),
+        agent_ids=args.get("agent_ids") or None,
+        task_per_agent=args.get("task_per_agent") or None,
+        scope=args.get("scope") or None,
+    )
+    if report.get("ran") == 0:
+        return "Multi-agent run: koi agents nahi chale. Pehle agents add karo ya list check karo."
+
+    lines = [f"=== MULTI-AGENT RUN ({report['ran']} agents, {report['failed']} failed) ===\n"]
+    for r in report["results"]:
+        status = "OK" if r.get("ok") else "FAIL"
+        ans = (r.get("answer") or r.get("hindi_status") or "")[:400]
+        lines.append(f"[{status}] {r['agent_id']}: {ans}")
+    return "\n".join(lines)
 
 
 async def _tool_receive_handoff(args: dict) -> str:
@@ -1839,6 +1972,21 @@ class AgencyCEO:
             "campaign_name": campaign_name,
             "deadline": deadline,
         })
+
+    async def run_multiagent(
+        self,
+        brief: str,
+        agent_ids: list[str] | None = None,
+        task_per_agent: dict[str, str] | None = None,
+        scope: dict | None = None,
+    ) -> dict:
+        """Fan a brief out to multiple agents (built-in + custom) at once."""
+        return await run_multiagent(
+            brief=brief,
+            agent_ids=agent_ids,
+            task_per_agent=task_per_agent,
+            scope=scope,
+        )
 
     async def review_output(
         self, workspace_id: str, agent_type: str,

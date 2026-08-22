@@ -188,11 +188,45 @@ async def _run_custom_agent(task: str, ctx: dict, agent_type: str | None = None)
         api_key=api_key,
         base_url=_resolve_api_base(agent.get("api_key_ref") or ""),
     )
+
+    # Step 1: internal, hidden reasoning pass. The model reasons about the
+    # task using the agent's identity/role before we ask for the answer.
+    reason_system = (
+        f"You are {agent['name']}, a {agent.get('role', 'custom')} agent. "
+        "Think carefully about the user task before acting. In your reply, "
+        "output a concise `REASON:` block explaining what the task needs and "
+        "why, followed by a `PLAN:` block listing the concrete steps you will "
+        "take to produce the best answer. Do not give the final answer here."
+    )
+    try:
+        reason_resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": reason_system},
+                {"role": "user", "content": task},
+            ],
+            temperature=0.5,
+        )
+        reasoning = (reason_resp.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("custom agent %s reasoning call failed: %s", agent_type, exc)
+        raise RuntimeError(
+            f"Bhai, '{agent['name']}' agent ka LLM call fail ho gaya: {exc}. "
+            "Model/api-key/base-url check karo."
+        )
+
+    # Step 2: final answer pass. Combines the agent system_prompt with the
+    # model's own REASON/PLAN so its answer stays grounded in its reasoning.
+    answer_system = (
+        f"{prompt}\n\nUse the reasoning below (from your own prior thinking) as "
+        "context and produce ONLY the final user-facing answer for the task. "
+        "Do not repeat the reasoning.\n\n--- REASONING ---\n" + reasoning
+    )
     try:
         resp = await client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": answer_system},
                 {"role": "user", "content": task},
             ],
             temperature=0.7,
@@ -204,7 +238,11 @@ async def _run_custom_agent(task: str, ctx: dict, agent_type: str | None = None)
             f"Bhai, '{agent['name']}' agent ka LLM call fail ho gaya: {exc}. "
             "Model/api-key/base-url check karo."
         )
-    return {"agent": agent_type, "tool": "custom_agent.chat", "result": {"answer": answer}}
+    return {
+        "agent": agent_type,
+        "tool": "custom_agent.chat",
+        "result": {"answer": answer, "reasoning": reasoning},
+    }
 
 
 def _workspace_agent_model() -> str:
