@@ -1,0 +1,23 @@
+# Repo files that should never enter the image.
+agency-frontend
+data
+*.db
+*.db-journal
+.git
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.venv
+venv
+node_modules
+deploy/_*
+deploy/*.log
+ec2_*.log
+*.pem
+*.txt
+_commit_msg*.txt
+_verify*.py
+_test_*.db
+.env
