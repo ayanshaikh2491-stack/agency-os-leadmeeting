@@ -878,7 +878,7 @@ def _tool_list_workspaces() -> str:
     return "\n".join(lines)
 
 
-def _tool_workspace_report(ws_id: str) -> str:
+def _tool_workspace_report(ws_id: str, notify_owner: bool = False) -> str:
     """Get detailed workspace report with health score, agent status, and alerts."""
     try:
         from admin.ceo_data import get_workspace_health
@@ -1728,7 +1728,27 @@ async def _tool_generate_report(args: dict) -> str:
         except Exception:
             pass
 
-    return "\\n".join(report_lines)
+    result = "\\n".join(report_lines)
+
+    # Best-effort owner notification from the CEO's AgentMail inbox. Does not
+    # change the returned report; failures are logged, never raised.
+    if notify_owner:
+        try:
+            from admin.tools import agentmail_notify
+            ws_name = ""
+            try:
+                ws_name = health.get("workspace", {}).get("name", ws_id)
+            except Exception:
+                ws_name = ws_id
+            agentmail_notify.notify_owner(
+                "ceo",
+                f"CEO report: {ws_name}",
+                result,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CEO report AgentMail notify failed (non-fatal): %s", exc)
+
+    return result
 
 
 async def _tool_cross_workspace_knowledge(args: dict) -> str:

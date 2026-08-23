@@ -37,6 +37,7 @@ from admin.tools.sba_email_client import OWNER_EMAIL, SBAEmailClient, build_work
 from admin.tools.sba_email_draft import draft_email  # noqa: E402
 from admin.tools.sba_email_draft import draft_followup  # noqa: E402
 from admin.tools.sba_meeting import SBAMeetingManager  # noqa: E402
+from admin.tools import agentmail_notify  # noqa: E402
 from admin.tools.sba_time import (  # noqa: E402
     human_time,
     lead_business_hours,
@@ -641,6 +642,20 @@ class SBAAutopilot:
                     existing_by_key[(_s(row.get("name")).lower(), _s(row.get("phone")))] = row
             logger.info("autopilot: found %d new leads, refreshed %d websites from %d scraped (%s in %s)",
                         added, refreshed, len(leads), category, city)
+            # Owner notification via the agent's own AgentMail inbox (best-effort;
+            # never blocks the lead pipeline). Cold-lead outreach still uses the
+            # reputed SMTP sender separately.
+            if added:
+                try:
+                    agentmail_notify.notify_owner(
+                        "sba",
+                        f"SBA: {added} new lead(s) found ({category}, {city})",
+                        f"Found {added} new lead(s) in {category}, {city}.\n"
+                        f"Refreshed {refreshed} websites. Autopilot continues to "
+                        f"enrich + email them on the reputed sender.",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("owner AgentMail notify failed (non-fatal): %s", exc)
             return added
         except Exception as exc:  # noqa: BLE001
             logger.warning("lead finding pass failed: %s", exc)
