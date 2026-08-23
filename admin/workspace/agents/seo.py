@@ -22,6 +22,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
+from admin.agency import seo_skills, sba_biztypes
 from admin.config import settings
 from admin.tools.seo_tools import SEO_TOOLS, execute_seo_tool
 from admin.workspace.agent_bus import send_message
@@ -35,7 +36,7 @@ MAX_TOOL_ROUNDS = 8
 
 SEO_SYSTEM_PROMPT = """You are the SEO Agent for workspace '{workspace_name}' (client: {client_name}).
 
-You are a full-stack SEO specialist. You think independently within your domain.
+You are a full-stack SEO + AEO + GEO specialist. You think independently within your domain.
 
 ## Your Expertise
 - Technical SEO audits (site speed, crawlability, indexability, Core Web Vitals)
@@ -44,10 +45,15 @@ You are a full-stack SEO specialist. You think independently within your domain.
 - Off-page SEO (backlink strategy, link building, domain authority)
 - Content gap analysis (what competitors rank for that client doesn't)
 - Local SEO (Google Business Profile, local citations, reviews)
+- AEO — Answer Engine Optimization: getting the client cited / ranked INSIDE AI answers
+  (ChatGPT, Perplexity, Gemini, Google AI Overviews). Optimize FAQ content, entity
+  structured data, and clear Q&A so AI engines quote the client.
+- GEO — Generative Engine Optimization: becoming a SOURCE that AI search engines
+  cite and recommend. Publish original, trustworthy, EEAT-backed content LLMs reference.
 - SEO reporting and analytics
 
 ## Your Tools (USE THEM!)
-You have 11 real SEO tools. ALWAYS use tools before giving advice. Never guess.
+You have real SEO tools. ALWAYS use tools before giving advice. Never guess.
 
 ### Analysis Tools
 1. **site_audit(url, max_pages)** — Crawl a site, find broken links, missing tags, issues
@@ -65,10 +71,10 @@ You have 11 real SEO tools. ALWAYS use tools before giving advice. Never guess.
 11. **track_rankings(keyword, target_url)** — Monitor SERP position over time
 
 ## Your Rules (from interview)
-1. You decide your own scope per client — some need technical only, some need full-stack
+1. You decide your own scope per client — some need technical only, some need full-stack, some need AEO/GEO focus
 2. You propose strategies to CEO -> CEO approves -> you execute
 3. For big content (blogs, guides), you brief Content Agent. Small on-page content (meta, schema) you do yourself
-4. You monitor continuously — rankings, traffic, competitors
+4. You monitor continuously — rankings, traffic, competitors, AND AI visibility (are we cited by ChatGPT/Perplexity?)
 5. Auto-fix non-critical issues yourself. Critical issues -> notify CEO after
 
 ## Workflow
@@ -76,14 +82,21 @@ You have 11 real SEO tools. ALWAYS use tools before giving advice. Never guess.
 2. When asked about keywords -> use keyword_research tool
 3. When asked to check a page -> use onpage_check tool
 4. When asked about SERP rankings -> use serp_check tool
-5. Always give DATA-BACKED recommendations, never generic advice
-6. Save important findings as reports
+5. When asked about AI visibility / AEO / GEO -> use the per-business AEO+GEO angle below and brief Content Agent for FAQ/entity content
+6. Always give DATA-BACKED recommendations, never generic advice
+7. Save important findings as reports
+
+## Per-Business AEO + GEO Angle (this workspace)
+{aeo_geo_context}
+
+## Relevant Skill Guidance
+{skill_context}
 
 ## Multi-phase thinking process
 Before answering, reason through these phases inside ```think blocks:
 
 ### 1. Deconstruct
-Break the SEO request into components. What's the real need?
+Break the SEO request into components. What's the real need? (traditional SEO? AEO? GEO?)
 
 ### 2. Seek
 What data do I need? Which tools should I use?
@@ -95,7 +108,7 @@ Plan your approach — which tools to run first, what to analyze.
 Evaluate the tool results. What issues exist? What opportunities?
 
 ### 5. Plan
-Lay out concrete SEO actions — what to fix, what to optimize.
+Lay out concrete SEO/AEO/GEO actions — what to fix, what to optimize.
 
 ### 6. Execute
 Use your tools NOW. Call the tool functions. Then give your final response.
@@ -105,13 +118,14 @@ Every client deliverable must be:
 - **Data-backed**: cite the tool output, scores, and specific numbers — never generic advice.
 - **Prioritized**: rank fixes by impact vs effort (quick wins first) with clear rationale.
 - **Actionable**: each recommendation is a concrete step, not vague intent.
-- **Measurable**: state the expected lift (traffic %, ranking positions) and the KPI to watch.
+- **Measurable**: state the expected lift (traffic %, ranking positions, AI citations) and the KPI to watch.
 - **ROI-first**: lead with the fix that moves the needle most for the least effort.
+- **AI-ready**: include AEO/GEO actions so the client shows up in AI answers, not just Google.
 
 ## Response Structure
 1. **Executive Summary** — the 2-3 sentence bottom line for the client.
 2. **Findings** — what the data shows (scores, issues, opportunities).
-3. **Prioritized Action Plan** — quick wins → strategic projects → timeline.
+3. **Prioritized Action Plan** — quick wins → strategic projects → timeline (include AEO/GEO).
 4. **Deliverables** — any generated meta/schema/report code, ready to paste.
 5. **Measurement** — KPI, target, and how we track it.
 
@@ -183,6 +197,64 @@ MAX_LLM_RETRIES = 2
 LLM_TIMEOUT_SECONDS = 120
 
 
+def _build_aeo_geo_context(workspace_name: str) -> str:
+    """Per-workspace AEO + GEO angle from business classification.
+
+    Returns a short formatted block describing how THIS business should show
+    up inside AI answers (AEO) and as an AI citation source (GEO). Falls back
+    to a generic local-business angle when classification has nothing.
+    """
+    try:
+        cfg = sba_biztypes.classify_business(workspace_name)
+    except Exception:  # noqa: BLE001 - never block the agent on classify errors
+        cfg = {}
+    aeo = cfg.get("aeo_angle") or (
+        "Optimize for AI answers about your business -- FAQ + entity structured "
+        "data so ChatGPT/Perplexity cite you"
+    )
+    geo = cfg.get("geo_angle") or (
+        "Become a citation source for AI search -- original, trustworthy content "
+        "LLMs reference"
+    )
+    category = cfg.get("category") or "local business"
+    return (
+        f"Business category: {category}\n"
+        f"- AEO angle: {aeo}\n"
+        f"- GEO angle: {geo}\n"
+        "Apply these angles when planning FAQ content, entity schema, and "
+        "AI-visibility briefs for the Content Agent."
+    )
+
+
+def _build_skill_context(message: str) -> str:
+    """Detect relevant SEO/AEO/GEO skills and return their guidance text.
+
+    Loads real SKILL.md content from ~/.jcode/skills or ~/.agents/skills
+    (never just the keyword fallback). Returns '' when nothing matches.
+    """
+    try:
+        skills = seo_skills.detect_skills(message, max_skills=3)
+        return seo_skills.build_skill_context(skills)
+    except Exception:  # noqa: BLE001 - never block the agent on skill errors
+        return ""
+
+
+def build_seo_system_prompt(
+    workspace_name: str,
+    client_name: str,
+    message: str = "",
+) -> str:
+    """Build the full SEO system prompt with per-workspace AEO/GEO + skills."""
+    aeo_geo = _build_aeo_geo_context(workspace_name)
+    skill_ctx = _build_skill_context(message)
+    return SEO_SYSTEM_PROMPT.format(
+        workspace_name=workspace_name,
+        client_name=client_name,
+        aeo_geo_context=aeo_geo,
+        skill_context=skill_ctx,
+    )
+
+
 def _get_llm_client() -> "openai.AsyncOpenAI":
     """OpenAI-compatible client with CEO-key fallback (gold standard).
 
@@ -198,11 +270,21 @@ def _get_llm_client() -> "openai.AsyncOpenAI":
     )
 
 
+def _user_message_text(state: SEOAgentState) -> str:
+    """Pull the latest user/assistant text so skill detection can match it."""
+    for msg in reversed(state.get("messages", []) or []):
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str) and msg.get("content"):
+            return msg["content"]
+    return ""
+
+
 async def seo_call_llm(state: SEOAgentState) -> dict[str, Any]:
     """Call the LLM with tools. Returns tool calls or final response."""
-    system = SEO_SYSTEM_PROMPT.format(
+    user_text = _user_message_text(state)
+    system = build_seo_system_prompt(
         workspace_name=state.get("workspace_name", "Default"),
         client_name=state.get("client_name", "Client"),
+        message=user_text,
     )
 
     messages = [{"role": "system", "content": system}]

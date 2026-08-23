@@ -32,6 +32,7 @@ CONFIG_FILE = os.environ.get(
 # Keys callers may persist per workspace.
 PERSISTED_KEYS = (
     "enabled", "owner_email", "industry", "category", "rotation", "angle",
+    "aeo_angle", "geo_angle",
     # Per-workspace email identity: each client uses ITS OWN inbox, never the
     # agency's. smtp_email defaults to owner_email when not set explicitly.
     "smtp_email", "smtp_password", "smtp_host", "smtp_port",
@@ -105,6 +106,89 @@ TAILORED_ANGLES: dict[str, str] = {
     ),
 }
 
+# Per-category AEO (Answer Engine Optimization) angle: how the business should
+# show up inside AI answers (ChatGPT / Perplexity / Gemini / AI Overviews).
+TAILORED_AEO_ANGLES: dict[str, str] = {
+    "real estate": (
+        "Be the answer when AI is asked 'who is the best realtor in {city}' or "
+        "'how do I sell my house fast in {city}' -- optimize for AI Overviews and "
+        "ChatGPT recommendations with entity-rich bios and FAQ content"
+    ),
+    "plumbing": (
+        "Rank inside AI answers for 'emergency plumber near me' and 'best plumber "
+        "in {city}' -- structure service pages as clear Q&A AI can cite"
+    ),
+    "hvac": (
+        "Show up when AI answers 'who repairs AC in {city}' or 'best HVAC company "
+        "near me' -- FAQ + service-area schema AI can quote"
+    ),
+    "roofing": (
+        "Be cited by AI for 'roof replacement cost in {city}' and 'best roofers "
+        "near me' -- quote-style content and local proof"
+    ),
+    "dentist": (
+        "Appear in AI answers for 'best dentist for implants near me' and 'top "
+        "dentist in {city}' -- treatment FAQs and verified reviews AI trusts"
+    ),
+    "electrician": (
+        "Rank in AI Overviews for 'emergency electrician in {city}' -- clear "
+        "service Q&A and licensing credentials AI can verify"
+    ),
+    "law": (
+        "Be the cited source when AI answers 'best lawyer for divorce in {city}' "
+        "-- authority content and case-result FAQs"
+    ),
+}
+
+# Per-category GEO (Generative Engine Optimization) angle: being the source AI
+# search engines cite / recommend.
+TAILORED_GEO_ANGLES: dict[str, str] = {
+    "real estate": (
+        "Become a primary citation for AI real-estate guides in {city} -- publish "
+        "original market data and neighborhood insights LLMs reference"
+    ),
+    "plumbing": (
+        "Get cited by generative engines as the trusted {city} plumbing authority "
+        "-- original how-to guides and structured data AI pulls from"
+    ),
+    "hvac": (
+        "Be the source Perplexity/Gemini quote for {city} HVAC help -- "
+        "diagnostic guides and entity-verified business profile"
+    ),
+    "roofing": (
+        "Earn AI citations for roofing advice in {city} -- cost-breakdown content "
+        "and verifiable local presence"
+    ),
+    "dentist": (
+        "Be referenced by AI for dental care in {city} -- treatment explainers and "
+        "EEAT signals (credentials, reviews, citations)"
+    ),
+    "electrician": (
+        "Get quoted by AI search for {city} electrical help -- safety guides and "
+        "licensed-professional proof"
+    ),
+    "law": (
+        "Be the authority AI cites for {city} legal questions -- practice-area "
+        "explainers and verifiable case expertise"
+    ),
+}
+
+
+def _aeo_angle_for(category: str, city: str = "your city") -> str:
+    return TAILORED_AEO_ANGLES.get(
+        category,
+        f"Optimize for AI answers about {category} in {city} -- FAQ + entity "
+        "structured data so ChatGPT/Perplexity cite you",
+    ).format(city=city)
+
+
+def _geo_angle_for(category: str, city: str = "your city") -> str:
+    return TAILORED_GEO_ANGLES.get(
+        category,
+        f"Become a citation source for AI search on {category} in {city} -- "
+        "original, trustworthy content LLMs reference",
+    ).format(city=city)
+
 
 # ── Classification ───────────────────────────────────────────────────────────
 
@@ -126,7 +210,8 @@ def classify_business(
 ) -> dict[str, Any]:
     """Decide whether a workspace's client business needs SBA lead generation.
 
-    Returns ``{"needs_sba": bool, "category": str, "rotation": [...], "angle": str}``.
+    Returns ``{"needs_sba": bool, "category": str, "rotation": [...], "angle": str,
+    "aeo_angle": str, "geo_angle": str}``.
     The agency workspace is always enabled (it *is* the lead-gen business).
     Businesses that sell direct (D2C / ecommerce / software / etc.) are never
     SBA candidates. Local-services keywords enable it. Unknown stays disabled
@@ -138,6 +223,14 @@ def classify_business(
             "category": "local business",
             "rotation": [list(t) for t in DEFAULT_ROTATION],
             "angle": AGENCY_ANGLE,
+            "aeo_angle": (
+                "Be the answer when AI is asked 'best marketing agency near me' or "
+                "'how do I get more local customers' -- agency FAQs + case studies AI cites"
+            ),
+            "geo_angle": (
+                "Become a citation source for AI 'how to get more customers' guides -- "
+                "original local-marketing playbooks LLMs reference"
+            ),
         }
 
     haystack = " ".join([industry, description, category, workspace_name])
@@ -147,11 +240,20 @@ def classify_business(
             "category": _matches(haystack, DIRECT_SALE_KEYWORDS) or "",
             "rotation": [],
             "angle": "",
+            "aeo_angle": "",
+            "geo_angle": "",
         }
 
     matched = _matches(haystack, LOCAL_SERVICES_KEYWORDS)
     if not matched:
-        return {"needs_sba": False, "category": "", "rotation": [], "angle": ""}
+        return {
+            "needs_sba": False,
+            "category": "",
+            "rotation": [],
+            "angle": "",
+            "aeo_angle": "",
+            "geo_angle": "",
+        }
 
     rotation = TAILORED_ROTATIONS.get(
         matched,
@@ -160,11 +262,14 @@ def classify_business(
     angle = TAILORED_ANGLES.get(
         matched, f"Help {matched} businesses get more local customers"
     )
+    city = rotation[0][1] if rotation else "your city"
     return {
         "needs_sba": True,
         "category": matched,
         "rotation": [list(t) for t in rotation],
         "angle": angle,
+        "aeo_angle": _aeo_angle_for(matched, city),
+        "geo_angle": _geo_angle_for(matched, city),
     }
 
 
@@ -214,6 +319,8 @@ def get_workspace_config(workspace_name: str) -> dict[str, Any]:
     category = persisted.get("category", base["category"])
     rotation = persisted.get("rotation", base["rotation"])
     angle = persisted.get("angle", base["angle"])
+    aeo_angle = persisted.get("aeo_angle", base.get("aeo_angle", ""))
+    geo_angle = persisted.get("geo_angle", base.get("geo_angle", ""))
 
     return {
         "name": name,
@@ -224,6 +331,8 @@ def get_workspace_config(workspace_name: str) -> dict[str, Any]:
         "category": str(category),
         "rotation": rotation,
         "angle": str(angle),
+        "aeo_angle": str(aeo_angle),
+        "geo_angle": str(geo_angle),
         # Per-workspace SMTP/IMAP identity (client's own app password).
         "smtp_email": str(persisted.get("smtp_email", "")),
         "smtp_password": str(persisted.get("smtp_password", "")),
