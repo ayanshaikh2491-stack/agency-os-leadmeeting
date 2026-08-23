@@ -65,6 +65,16 @@ async def _safe_book_meeting(self, lead: dict, iso: str) -> str:
             proposed_time=iso,
             lead_phone=lead.get("phone") or "",
         )
+        # Owner notification via the agent's own AgentMail inbox (best-effort).
+        try:
+            agentmail_notify.notify_owner(
+                "sba",
+                f"Meeting booked with {lead.get('name') or 'lead'}",
+                f"A meeting was booked for {lead.get('name') or 'lead'} "
+                f"at {iso}.\nLead email: {lead.get('email') or 'n/a'}.",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("owner AgentMail notify (meeting) failed (non-fatal): %s", exc)
         return "booked"
     except RuntimeError as exc:
         logger.warning("Meeting auto-book failed (manual booking queued): %s", exc)
