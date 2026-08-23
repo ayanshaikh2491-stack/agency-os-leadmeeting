@@ -285,22 +285,9 @@ def research_hashtags(
     platform: str = "instagram",
     count: int = 20,
 ) -> dict[str, Any]:
-    """Hashtag research karo based on topic and platform."""
-    # Note: In production, this would call real hashtag APIs
-    # For now, return structured format for LLM to fill
-    return {
-        "topic": topic,
-        "platform": platform,
-        "requested_count": count,
-        "categories": {
-            "high_reach": "Hashtags with 1M+ posts (for visibility)",
-            "medium_reach": "Hashtags with 100k-1M posts (for balance)",
-            "niche": "Hashtags with 10k-100k posts (for targeting)",
-            "branded": "Brand-specific hashtags",
-            "trending": "Currently trending hashtags in this niche",
-        },
-        "note": "LLM will fill specific hashtags based on topic research",
-    }
+    """Hashtag research karo (real context via Agent-Reach)."""
+    from admin.tools.social_reach import reach_hashtags
+    return reach_hashtags(topic=topic, platform=platform, count=count)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -311,22 +298,21 @@ def analyze_competitor(
     competitor_handles: list[str],
     platform: str = "instagram",
 ) -> dict[str, Any]:
-    """Competitor content analysis structure."""
-    return {
-        "competitors": competitor_handles,
-        "platform": platform,
-        "analysis_framework": {
-            "content_types": "What types of posts do they create?",
-            "posting_frequency": "How often do they post?",
-            "engagement_rate": "What's their average engagement?",
-            "top_posts": "What performed best for them?",
-            "visual_style": "What's their visual identity?",
-            "caption_style": "How do they write captions?",
-            "hashtag_strategy": "What hashtags do they use?",
-            "weaknesses": "Where are they falling short?",
-        },
-        "note": "LLM will analyze and provide insights",
+    """Competitor content analysis (real data via Agent-Reach when possible)."""
+    from admin.tools.social_reach import reach_competitor
+    competitor = competitor_handles[0] if competitor_handles else ""
+    real = reach_competitor(competitor=competitor, platform=platform)
+    real["analysis_framework"] = {
+        "content_types": "What types of posts do they create?",
+        "posting_frequency": "How often do they post?",
+        "engagement_rate": "What's their average engagement?",
+        "top_posts": "What performed best for them?",
+        "visual_style": "What's their visual identity?",
+        "caption_style": "How do they write captions?",
+        "hashtag_strategy": "What hashtags do they use?",
+        "weaknesses": "Where are they falling short?",
     }
+    return real
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -516,13 +502,9 @@ def competitor_analysis(competitors: list[str] | None = None, platform: str = "i
 
 
 def trend_research(topic: str = "", platform: str = "instagram") -> dict[str, Any]:
-    """Trending topics research karo."""
-    return {
-        "topic": topic,
-        "platform": platform,
-        "trending_formats": ["Reels", "Carousel", "Stories", "Live"],
-        "note": "LLM will research current trends",
-    }
+    """Trending topics research karo (real data via Agent-Reach)."""
+    from admin.tools.social_reach import reach_trending
+    return reach_trending(topic=topic, platform=platform)
 
 
 def engagement_strategy(platform: str = "instagram") -> dict[str, Any]:
@@ -550,12 +532,9 @@ def content_gap_analysis(competitors: list[str] | None = None, platform: str = "
 
 
 def audience_analysis(platform: str = "instagram", industry: str = "") -> dict[str, Any]:
-    """Target audience analysis karo."""
-    return {
-        "platform": platform,
-        "industry": industry,
-        "analysis_dimensions": ["demographics", "psychographics", "behavior", "preferences"],
-    }
+    """Target audience analysis (real platform intel + web signal)."""
+    from admin.tools.social_reach import reach_audience
+    return reach_audience(platform=platform, industry=industry)
 
 
 def growth_tactics(platform: str = "instagram", goal: str = "followers") -> dict[str, Any]:
