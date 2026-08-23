@@ -19,6 +19,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
+from admin.agency import agent_aeo_geo
 from admin.config import settings
 from admin.tools.ads_tools import ADS_TOOLS, execute_ads_tool
 from admin.workspace.agent_bus import send_message
@@ -75,6 +76,15 @@ You are a performance marketing specialist focused on paid advertising.
 5. You think about both prospecting AND retargeting simultaneously
 6. You measure success by ROAS/ROI targets per client
 7. CEO can override your strategy anytime
+
+## AI Visibility — AEO + GEO (paid + AI search)
+{aeo_geo_context}
+When you write ad copy or brief creatives, also make the brand AI-answer-ready:
+- Write ad copy + creative briefs that reinforce the SAME business name, city, and USP
+  the SEO/Website agents use (entity consistency across paid + organic + AI answers)
+- For Google Ads, consider how the brand appears in AI Overviews / Performance Max
+- For Meta, keep the brand entity recognizable so AI search cites the right business
+NOTE: keyword research stays with SEO Agent, but your copy must stay entity-consistent.
 
 ## Your 20 Tools
 ### Strategy
@@ -173,6 +183,7 @@ async def ads_call_llm(state: AdsAgentState) -> dict:
         workspace_name=state.get("workspace_name", "Unknown"),
         client_name=state.get("client_name", "Unknown"),
         workspace_context=state.get("workspace_context", "No data yet."),
+        aeo_geo_context=agent_aeo_geo.build_aeo_geo_section(state.get("workspace_name", "Default")),
     )
     messages = [{"role": "system", "content": system_prompt}]
     for msg in state.get("messages", []):
