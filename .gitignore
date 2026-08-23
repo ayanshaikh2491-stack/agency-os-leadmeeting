@@ -32,6 +32,7 @@ docs/superpowers/
 .env  
 *.pem
 *.key
+config/agent_emails.json
 
 # Scratch / one-off debug scripts (repo root) — never commit these
 /_*.py
