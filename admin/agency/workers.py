@@ -150,11 +150,40 @@ async def _run_real_agent(task: str, ctx: dict, agent_type: str | None = None) -
 
 
 async def _run_sba(task: str, ctx: dict) -> dict:
+    """SBA employee worker.
+
+    Default (CEO fan-out / coordination): a FAST heartbeat — return the agent's
+    last known status WITHOUT running the heavy lead->email->meeting pipeline
+    (that pass hits Supabase + SMTP and can take minutes, which used to block the
+    whole CEO fan-out for ~5 min). The orchestrator stays snappy.
+
+    To run the REAL pipeline, the brief must explicitly ask for it, e.g.
+    "run the SBA pipeline", "send the leads", "tool: sba_run_once". The full
+    pipeline still runs on its own scheduled cadence (run_forever); it just no
+    longer lives inside the synchronous CEO fan-out.
+    """
     from admin.agency.sba_autopilot import SBAAutopilot
 
+    low = (task or "").lower().strip()
+    wants_pipeline = (
+        low.startswith("tool:")
+        or ("run" in low and ("pipeline" in low or "once" in low or "send" in low))
+    )
+    if wants_pipeline:
+        ap = SBAAutopilot()
+        stats = await ap.run_once()
+        return {"agent": "sba", "tool": "sba_autopilot.run_once", "result": {"stats": stats}}
+
     ap = SBAAutopilot()
-    stats = await ap.run_once()
-    return {"agent": "sba", "tool": "sba_autopilot.run_once", "result": {"stats": stats}}
+    status = ap.status()
+    return {
+        "agent": "sba",
+        "tool": "sba_autopilot.status",
+        "result": {
+            "status": status,
+            "note": "Lightweight heartbeat (no sends). Say 'run SBA pipeline' to execute the full lead->email->meeting pass.",
+        },
+    }
 
 
 async def _run_custom_agent(task: str, ctx: dict, agent_type: str | None = None) -> dict:
