@@ -22,7 +22,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
-from admin.agency import seo_skills, sba_biztypes
+from admin.agency import agent_aeo_geo, seo_skills
 from admin.config import settings
 from admin.tools.seo_tools import SEO_TOOLS, execute_seo_tool
 from admin.workspace.agent_bus import send_message
@@ -198,45 +198,13 @@ LLM_TIMEOUT_SECONDS = 120
 
 
 def _build_aeo_geo_context(workspace_name: str) -> str:
-    """Per-workspace AEO + GEO angle from business classification.
-
-    Returns a short formatted block describing how THIS business should show
-    up inside AI answers (AEO) and as an AI citation source (GEO). Falls back
-    to a generic local-business angle when classification has nothing.
-    """
-    try:
-        cfg = sba_biztypes.classify_business(workspace_name)
-    except Exception:  # noqa: BLE001 - never block the agent on classify errors
-        cfg = {}
-    aeo = cfg.get("aeo_angle") or (
-        "Optimize for AI answers about your business -- FAQ + entity structured "
-        "data so ChatGPT/Perplexity cite you"
-    )
-    geo = cfg.get("geo_angle") or (
-        "Become a citation source for AI search -- original, trustworthy content "
-        "LLMs reference"
-    )
-    category = cfg.get("category") or "local business"
-    return (
-        f"Business category: {category}\n"
-        f"- AEO angle: {aeo}\n"
-        f"- GEO angle: {geo}\n"
-        "Apply these angles when planning FAQ content, entity schema, and "
-        "AI-visibility briefs for the Content Agent."
-    )
+    """Per-workspace AEO + GEO angle (delegates to shared module)."""
+    return agent_aeo_geo.build_aeo_geo_section(workspace_name)
 
 
 def _build_skill_context(message: str) -> str:
-    """Detect relevant SEO/AEO/GEO skills and return their guidance text.
-
-    Loads real SKILL.md content from ~/.jcode/skills or ~/.agents/skills
-    (never just the keyword fallback). Returns '' when nothing matches.
-    """
-    try:
-        skills = seo_skills.detect_skills(message, max_skills=3)
-        return seo_skills.build_skill_context(skills)
-    except Exception:  # noqa: BLE001 - never block the agent on skill errors
-        return ""
+    """Detect relevant SEO/AEO/GEO skills and return their guidance text."""
+    return agent_aeo_geo.build_aeo_geo_skill_context(message, max_skills=3)
 
 
 def build_seo_system_prompt(

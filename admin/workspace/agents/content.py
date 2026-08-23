@@ -27,6 +27,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
+from admin.agency import agent_aeo_geo
 from admin.config import settings
 from admin.tools.together_gpu import generate_image, generate_video, get_platform_size
 from admin.tools.visual_tools import discover_brand_identity
@@ -354,6 +355,23 @@ def _llm_call(
     return f"Error: {last_error or 'unknown'}"
 
 
+def _with_aeo_geo(system_prompt: str, workspace_name: str) -> str:
+    """Append the per-workspace AEO/GEO angle to a content-agent system prompt.
+
+    Keeps content (visuals, captions, briefs) aligned with the client's
+    AI-visibility strategy so the brand shows up in AI answers, not just Google.
+    """
+    section = agent_aeo_geo.build_aeo_geo_section(workspace_name)
+    return (
+        f"{system_prompt}\n\n"
+        "## AI Visibility — AEO + GEO (this client)\n"
+        f"{section}\n"
+        "Apply these angles when you plan visuals/captions/briefs: write FAQ-style "
+        "and question-format copy, keep business name + city + USP consistent across "
+        "every asset, and produce original trustworthy content AI can cite (GEO)."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # NODE 1: PARSE BRIEF
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -393,7 +411,7 @@ def parse_brief(state: ContentState) -> dict[str, Any]:
         "- Return ONLY the JSON object, no explanation"
     )
 
-    raw_response = _llm_call(system_prompt, user_text)
+    raw_response = _llm_call(_with_aeo_geo(system_prompt, state.get("workspace_name", "Default")), user_text)
 
     # Parse LLM response (tolerant of code fences, think blocks, and surrounding prose)
     parsed_brief: dict[str, Any] = {}

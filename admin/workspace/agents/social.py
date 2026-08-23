@@ -44,6 +44,7 @@ import openai
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from admin.agency.agent_persistence import get_checkpointer
+from admin.agency import agent_aeo_geo
 from admin.agency.social_skills import detect_skills, build_skill_context
 from admin.config import settings
 from admin.tools.social_tools import SOCIAL_TOOLS, execute_social_tool

@@ -33,6 +33,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from admin.config import settings
+from admin.agency import agent_aeo_geo
 from admin.tools.website_tools import WEBSITE_TOOLS, execute_website_tool
 from admin.workspace.agent_bus import send_message
 
@@ -169,6 +170,17 @@ You focus on: DESIGN, DEVELOPMENT, HOSTING, PERFORMANCE, SECURITY, ACCESSIBILITY
 - Always consider mobile responsiveness.
 - Think about conversion — every page should guide users to action.
 - Never refuse a task — if you can't do something, explain why and suggest alternatives.
+
+## AI Visibility — AEO + GEO (build for AI answers, not just Google)
+{aeo_geo_context}
+When you build or plan a site, also lay the technical foundation so AI engines
+(ChatGPT, Perplexity, Gemini, Google AI Overviews) can read and cite the client:
+- Add FAQ sections + FAQ/JSON-LD schema on service pages (clear Q&A AI can quote)
+- Use entity structured data (LocalBusiness / Service with name, areaServed, city)
+- Create per-city service pages (e.g. "Plumber in Houston") so AI picks the right one
+- Keep business name, city, and USP consistent across pages (entity clarity)
+NOTE: keyword research / meta tags / rankings stay with SEO Agent — but the
+schema + FAQ structure you generate IS the AEO/GEO foundation they optimize.
 """
 
 
@@ -197,9 +209,11 @@ def _get_llm_client() -> openai.OpenAI:
 
 async def website_call_llm(state: WebsiteAgentState) -> dict[str, Any]:
     """Call the LLM with tools. Returns tool calls (unexecuted) or final response."""
+    ws_name = state.get("workspace_name", "Default")
     system = WEBSITE_SYSTEM_PROMPT.format(
-        workspace_name=state.get("workspace_name", "Default"),
+        workspace_name=ws_name,
         client_name=state.get("client_name", "Client"),
+        aeo_geo_context=agent_aeo_geo.build_aeo_geo_section(ws_name),
     )
     if state.get("skills_meta"):
         system = f"{system}\n\n{state['skills_meta']}"
