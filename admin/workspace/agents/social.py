@@ -181,6 +181,15 @@ async def social_call_llm(state: SocialAgentState) -> dict[str, Any]:
             messages[-1]["content"] += (
                 "\n\n## Relevant Skills (use these frameworks)\n" + skill_ctx
             )
+        # Light AEO/GEO nudge: keep brand entity consistent so AI recognizes it
+        aeo_geo = agent_aeo_geo.build_aeo_geo_section(
+            state.get("workspace_name", "Default")
+        )
+        messages[-1]["content"] += (
+            "\n\n## AI Visibility (light)\n" + aeo_geo +
+            "\nApply: keep business name + city + USP consistent in captions/hashtags "
+            "so AI search engines recognize the brand entity (supports GEO)."
+        )
 
     client = _get_llm_client()
     model = settings.WORKSPACE_AGENT_MODEL or "llama-3.3-70b-versatile"
