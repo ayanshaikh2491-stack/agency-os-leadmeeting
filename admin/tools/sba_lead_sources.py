@@ -12,7 +12,11 @@ import asyncio
 import logging
 import os
 import re
+import urllib.parse
 from typing import Any
+
+import requests
+from bs4 import BeautifulSoup
 
 from admin.tools.chrome_tool import ChromeTool
 
@@ -101,6 +105,145 @@ def dedupe_leads(leads: list[dict]) -> list[dict]:
         else:
             out[key] = dict(lead)
     return list(out.values())
+
+
+# ── Lightweight finder (NO Chrome) ───────────────────────────────────────────
+# Browser scraping (find_leads_all) is heavy and wedges on a dead CDP transport.
+# This path uses httpx (async HTTP) + selectolax (fast HTML parse) so the agent
+# finds leads WITHOUT a browser, then deep-crawls each business's own website to
+# pull its real email + phone. Returns the same normalized lead shape.
+_LIGHT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
+
+
+def _light_fetch(url: str, timeout: float = 8.0) -> str:
+    """Fetch a URL with httpx (light, no browser). Returns '' on failure."""
+    try:
+        import httpx
+
+        with httpx.Client(
+            headers={"User-Agent": _LIGHT_UA, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=timeout,
+            follow_redirects=True,
+        ) as client:
+            resp = client.get(url)
+            return resp.text or ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("light fetch failed %s: %s", url, exc)
+        return ""
+
+
+def _extract_contact(html: str, base_domain: str) -> tuple[str, str]:
+    """Pull first real email + phone from a page using selectolax."""
+    email = ""
+    phone = ""
+    try:
+        from selectolax.parser import HTMLParser
+
+        tree = HTMLParser(html)
+        text = tree.text(separator=" ", strip=True)
+        # Email: prefer one whose domain matches the business site.
+        for m in _EMAIL_RE.finditer(text):
+            cand = m.group(0).lower()
+            if base_domain and base_domain in cand:
+                email = cand
+                break
+        if not email:
+            m = _EMAIL_RE.search(text)
+            email = m.group(0).lower() if m else ""
+        pm = _PHONE_RE.search(text)
+        phone = pm.group(0) if pm else ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("contact extract failed: %s", exc)
+    return email, phone
+
+
+def find_leads_lightweight(
+    category: str,
+    city: str,
+    state: str,
+    max_per_source: int = 5,
+) -> list[dict]:
+    """Find leads via Bing organic HTML (httpx + selectolax, no Chrome).
+
+    For each business we also fetch its own website and pull the real email +
+    phone, so the agent gets contactable leads without a browser.
+    """
+    query = f"{category} in {city}, {state}"
+    url = "https://www.bing.com/search?q=" + urllib.parse.quote(query) + "&count=20"
+    html = _light_fetch(url, timeout=10.0)
+    if not html:
+        logger.warning("light find: no HTML for %r", query)
+        return []
+
+    leads: list[dict] = []
+    try:
+        from selectolax.parser import HTMLParser
+
+        tree = HTMLParser(html)
+        blocks = tree.css("li.b_algo") or tree.css("div.b_algo")
+        for blk in blocks[: max(20, max_per_source * 3)]:
+            h2 = blk.css_first("h2")
+            name = (h2.text(strip=True) if h2 else "") or ""
+            website = ""
+            cite = blk.css_first("cite")
+            if cite:
+                website = cite.text(strip=True)
+            # Bing cite text carries breadcrumb junk like "site.com › plumber".
+            # Keep only the first whitespace/handle-delimited token as the host.
+            if website:
+                website = website.split()[0].split("›")[0].strip()
+            if website and not website.startswith("http"):
+                website = "https://" + website.lstrip("/")
+            snippet = blk.text(separator=" ", strip=True)
+            phone_m = _PHONE_RE.search(snippet)
+            phone = phone_m.group(0) if phone_m else ""
+            clean_name = name.strip().lower()
+            if not clean_name or clean_name in _GENERIC_LABELS:
+                continue
+            # Deep step: pull real email/phone from the business's own site.
+            email = ""
+            base_domain = ""
+            if website:
+                try:
+                    from urllib.parse import urlparse
+
+                    base_domain = (urlparse(website).hostname or "").replace("www.", "").lower()
+                except Exception:  # noqa: BLE001
+                    pass
+                site_html = _light_fetch(website, timeout=8.0)
+                if site_html:
+                    e, p = _extract_contact(site_html, base_domain)
+                    email, phone = e or email, p or phone
+            lead = normalize_lead({
+                "name": name,
+                "phone": phone,
+                "email": email,
+                "website": website,
+                "address": "",
+                "category": category,
+                "city": city,
+                "state": state,
+                "text": snippet,
+                "href": website,
+                "source": "bing_light",
+                "rating": None,
+                "verified": False,
+            }, "bing_light")
+            if email:
+                lead["email"] = email
+            leads.append(lead)
+            if len(leads) >= max_per_source:
+                break
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("light find parse failed: %s", exc)
+
+    logger.info("light find: %d leads for %r", len(leads), query)
+    return leads
 
 
 def _card_from_items(raw: dict) -> list[dict]:

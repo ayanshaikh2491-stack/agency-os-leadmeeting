@@ -519,12 +519,12 @@ class SBAAutopilot:
         (raw JSONB carries the extra scraped fields).
         """
         try:
-            from admin.tools.sba_lead_sources import find_leads_all
+            from admin.tools.sba_lead_sources import find_leads_lightweight
 
             cfg = supabase_config()
             if not cfg:
                 return 0
-            url, key = cfg
+            url, key = cfg, None
             targets = self._rotation or _rotation_targets()
             category, city, state = targets[self._target_idx % len(targets)]
             self._target_idx += 1
@@ -533,10 +533,13 @@ class SBAAutopilot:
                 "lead rotation: %s in %s, %s (pass %d/%d)",
                 category, city, state, self._target_idx, len(targets),
             )
-            # Browser scraping can wedge on a dead CDP transport; bound it so
-            # the autopilot loop always survives (previously hung 9h here).
+            # Browser scraping can wedge on a dead CDP transport; the
+            # lightweight finder uses plain HTTP (no Chrome) and is bounded so
+            # the autopilot loop always survives.
             leads = await asyncio.wait_for(
-                find_leads_all(category, city, state, max_per_source=5),
+                asyncio.to_thread(
+                    find_leads_lightweight, category, city, state, 5
+                ),
                 timeout=LEAD_PASS_TIMEOUT_SECONDS,
             )
 
@@ -544,7 +547,8 @@ class SBAAutopilot:
             existing = load_leads(url, key)
             existing_by_key: dict[tuple[str, str], dict] = {}
             for l in existing:
-                if (l.get("workspace_name") or "agency") != self.workspace_name:
+                l_ws = (l.get("workspace_name") or (l.get("context") or {}).get("workspace_name") or "agency")
+                if l_ws != self.workspace_name:
                     continue
                 n = _s(l.get("name")).lower()
                 p = _s(l.get("phone"))
@@ -557,9 +561,11 @@ class SBAAutopilot:
             for lead in leads:
                 n = _s(lead.get("name")).lower()
                 p = _s(lead.get("phone"))
-                # Defensive: scrapers filter these, but never save a lead
-                # without a phone or with a generic UI label as a name.
-                if not n or not p:
+                # Defensive: never save a lead with a generic UI label as a
+                # name. Phone is optional now: the lightweight finder often
+                # returns business name + website only, and enrichment/judge
+                # decide whether to keep and how to reach the lead.
+                if not n:
                     continue
                 key_pair = (n, p)
                 old = existing_by_key.get(key_pair)

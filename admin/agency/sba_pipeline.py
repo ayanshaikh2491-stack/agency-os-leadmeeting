@@ -60,10 +60,15 @@ def sb_request(url: str, key: str, path: str, method: str = "GET", body: Any = N
 
 
 def sb_patch_lead(url: str, key: str, sid: str, updates: dict[str, Any]) -> bool:
+    """Patch a stored lead by id (LOCAL per-workspace store). No-op if missing."""
     if not sid:
         return False
     try:
-        sb_request(url, key, f"/rest/v1/leads?id=eq.{sid}", method="PATCH", body=updates)
+        from admin.agency.sba_store import get_lead, update_lead
+
+        if get_lead(sid) is None:
+            return False
+        update_lead(sid, updates)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("PATCH lead %s failed: %s", sid, exc)
@@ -71,10 +76,17 @@ def sb_patch_lead(url: str, key: str, sid: str, updates: dict[str, Any]) -> bool
 
 
 def load_leads(url: str, key: str) -> list[dict[str, Any]]:
+    """Leads for the autopilot — now served from the LOCAL store (sba_store),
+    which is per-workspace and backed by local SQLite/Postgres. The autopilot
+    no longer depends on PocketBase/Supabase REST for reads. Callers filter by
+    workspace_name themselves.
+    """
     try:
-        return sb_request(url, key, "/rest/v1/leads?select=*&order=created_at.asc")
+        from admin.agency.sba_store import list_leads
+
+        return list_leads()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("load leads failed: %s", exc)
+        logger.warning("load leads (local store) failed: %s", exc)
         return []
 
 
@@ -134,11 +146,44 @@ def load_leads_preferred() -> list[dict[str, Any]]:
     return list_leads()
 
 
+def _store_lead_from_autopilot(lead: dict[str, Any]) -> dict | None:
+    """Map an autopilot candidate row -> sba_store.create_lead (local, per-ws)."""
+    from admin.agency.sba_store import create_lead
+
+    raw = lead.get("raw") or {}
+    ctx = {
+        "city_state": lead.get("city_state") or "",
+        "href": lead.get("href") or "",
+        "category": lead.get("category") or "",
+        "website": lead.get("website") or "",
+        "has_website": lead.get("has_website", False),
+        "website_status": lead.get("website_status") or "",
+        "lead_score": raw.get("lead_score"),
+        "lead_reason": raw.get("lead_reason"),
+        "lead_action": raw.get("lead_action"),
+        "mode": lead.get("mode") or "",
+        "source_platforms": lead.get("sources") or [lead.get("source")],
+        "workspace_name": lead.get("workspace_name") or "agency",
+        "text": lead.get("text") or "",
+    }
+    return create_lead({
+        "name": lead.get("name") or "",
+        "business_name": lead.get("name") or "",
+        "email": lead.get("email") or "",
+        "phone": lead.get("phone") or "",
+        "source": lead.get("source") or lead.get("category") or "sba",
+        "score": int(raw.get("lead_score") or 50),
+        "status": (lead.get("status") or "new"),
+        "context": ctx,
+    })
+
+
 def save_lead(url: str, key: str, lead: dict[str, Any]) -> dict | None:
+    """Persist an autopilot candidate lead to the LOCAL per-workspace store."""
     try:
-        return sb_request(url, key, "/rest/v1/leads", method="POST", body=lead)
+        return _store_lead_from_autopilot(lead)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("save lead failed: %s", exc)
+        logger.warning("save lead (local store) failed: %s", exc)
         return None
 
 

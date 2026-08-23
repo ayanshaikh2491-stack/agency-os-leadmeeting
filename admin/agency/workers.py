@@ -149,31 +149,114 @@ async def _run_real_agent(task: str, ctx: dict, agent_type: str | None = None) -
     return {"agent": agent_type, "tool": tool_name, "result": result}
 
 
+# Natural-language cues (Hinglish/English) that mean "SBA, DO the real
+# lead->email->meeting pipeline now" — not just a status heartbeat.
+# The CEO often says "clients lao", "leads nikaal", "meeting book kar", so we
+# match intent words, not only the literal "run pipeline".
+_PIPELINE_TRIGGERS = (
+    "pipeline", "run once", "run sba", "send", "leads", "lead nikal", "lead lao",
+    "client", "clients", "lao", "nikaal", "nikalo", "meeting", "book", "prospect",
+    "outreach", "reach out", "contact", "email kar", "email bhej", "follow up",
+    "dhund", "dhoond", "find", "generate", "campaign",
+)
+
+
+# Lightweight SBA tool keywords — when the CEO asks for ONE specific SBA
+# action (not the whole lead->email->meeting sweep), run just that tool via
+# sba_tools.execute_sba_tool instead of the heavy run_once browser+SMTP pass.
+# Keeps the SBA worker fast and targeted while still doing real work.
+_LIGHT_TOOL_KEYWORDS = {
+    "qualify": "qualify_lead",
+    "detect lead": "detect_lead_sources",
+    "lead source": "detect_lead_sources",
+    "save lead": "save_lead_record",
+    "list lead": "list_saved_leads",
+    "find email": "find_lead_email",
+    "update lead": "update_lead_info",
+    "lead info": "update_lead_info",
+}
+
+
 async def _run_sba(task: str, ctx: dict) -> dict:
     """SBA employee worker.
 
-    Default (CEO fan-out / coordination): a FAST heartbeat — return the agent's
-    last known status WITHOUT running the heavy lead->email->meeting pipeline
-    (that pass hits Supabase + SMTP and can take minutes, which used to block the
-    whole CEO fan-out for ~5 min). The orchestrator stays snappy.
+    Three modes, chosen by what the CEO actually asked:
 
-    To run the REAL pipeline, the brief must explicitly ask for it, e.g.
-    "run the SBA pipeline", "send the leads", "tool: sba_run_once". The full
-    pipeline still runs on its own scheduled cadence (run_forever); it just no
-    longer lives inside the synchronous CEO fan-out.
+    1. LIGHTWEIGHT TOOL — CEO named a specific SBA tool ("qualify this lead",
+       "detect lead sources", "find email"). We run JUST that tool via
+       sba_tools.execute_sba_tool. Fast, targeted, real work, no browser/SMTP.
+
+    2. HEARTBEAT — a pure status/health question ("what's your status",
+       "kya haal"). Returns last-known stats, no work at all. Keeps the
+       orchestrator snappy during broad fan-outs.
+
+    3. REAL PIPELINE — CEO asked for outreach work in natural language
+       ("clients lao", "leads nikaal", "run the SBA pipeline", "send emails",
+       "tool: sba_run_once"). Runs the full lead->email->meeting pass.
+
+    This split means the SBA agent does real work without always spinning up
+    the heavy browser+SMTP sweep, and it only does the full pipeline when the
+    boss actually wants leads/clients/emails.
     """
     from admin.agency.sba_autopilot import SBAAutopilot
 
     low = (task or "").lower().strip()
-    wants_pipeline = (
-        low.startswith("tool:")
-        or ("run" in low and ("pipeline" in low or "once" in low or "send" in low))
-    )
+    explicit_tool = low.startswith("tool:")
+
+    # Mode 1: a specific lightweight tool was named.
+    light_tool = None
+    for kw, tool in _LIGHT_TOOL_KEYWORDS.items():
+        if kw in low:
+            light_tool = tool
+            break
+
+    # Mode 2: pure status/heartbeat — no work.
+    if any(s in low for s in ("status", "kya haal", "what's up", "how are", "report only")):
+        ap = SBAAutopilot()
+        status = ap.status()
+        return {
+            "agent": "sba",
+            "tool": "sba_autopilot.status",
+            "result": {
+                "status": status,
+                "note": "Lightweight heartbeat (no work). 'clients lao' / 'leads nikaal' bolo to SBA real pipeline chalaayega.",
+            },
+        }
+
+    # Mode 1 wins when a specific tool is named (even if pipeline words appear).
+    if light_tool:
+        from admin.tools.sba_tools import execute_sba_tool
+
+        args = dict(ctx.get("scope", {}) or {})
+        args.update({"task": task})
+        result = execute_sba_tool(light_tool, args)
+        return {
+            "agent": "sba",
+            "tool": f"sba_tools.{light_tool}",
+            "result": {"result": result},
+        }
+
+    # Mode 3: natural-language outreach intent → full real pipeline.
+    wants_pipeline = explicit_tool or any(t in low for t in _PIPELINE_TRIGGERS)
     if wants_pipeline:
         ap = SBAAutopilot()
         stats = await ap.run_once()
-        return {"agent": "sba", "tool": "sba_autopilot.run_once", "result": {"stats": stats}}
+        new_leads = stats.get("new_leads_found", 0) if isinstance(stats, dict) else 0
+        sent = stats.get("emails_sent", 0) if isinstance(stats, dict) else 0
+        meetings = stats.get("meetings_scheduled", 0) if isinstance(stats, dict) else 0
+        return {
+            "agent": "sba",
+            "tool": "sba_autopilot.run_once",
+            "result": {
+                "stats": stats,
+                "summary": (
+                    f"SBA ne real pipeline chalaya: {new_leads} naye leads, "
+                    f"{sent} emails bheje, {meetings} meetings book hue."
+                ),
+            },
+        }
 
+    # Fallback: nothing matched — give a heartbeat so the fan-out stays snappy.
     ap = SBAAutopilot()
     status = ap.status()
     return {
@@ -181,7 +264,7 @@ async def _run_sba(task: str, ctx: dict) -> dict:
         "tool": "sba_autopilot.status",
         "result": {
             "status": status,
-            "note": "Lightweight heartbeat (no sends). Say 'run SBA pipeline' to execute the full lead->email->meeting pass.",
+            "note": "Lightweight heartbeat (no sends). 'clients lao' / 'leads nikaal' bolo to SBA real pipeline chalaayega.",
         },
     }
 

@@ -30,6 +30,8 @@ agent_gpu_job_*.json
 docs/superpowers/
 # Local secrets  
 .env  
+*.pem
+*.key
 
 # Scratch / one-off debug scripts (repo root) — never commit these
 /_*.py
