@@ -165,6 +165,29 @@ Snippets now populate correctly.
      the other agents.
 - This is the agency's MAIN CORE per the user — prioritize it. Build TOGETHER.
 
+## DONE: CEO's OWN skills wired in (2026-08-25)
+- User clarified: do NOT copy from ~/.jcode/skills (external catalog). CEO needs its
+  OWN brain. And `find-skills` is a DISCOVERY tool — used it to FIND relevant skills
+  for the CEO, not to give find-skills itself to the CEO.
+- Found via find-skills (web search of skills.sh ecosystem):
+  - `ceo-skill` (AIPMAndy/CEOskill) — world-class Chief-of-Staff decision advisor:
+    decision framing, risk, bias-check, war-gaming, stakeholder mapping, crisis mode.
+    Cloned from https://github.com/AIPMAndy/CEOskill into
+    `admin/agency/ceo_skills_repo/ceo-skill/` (SKILL.md + references + scripts + evals).
+  - `status-report` — anthropic skill for leadership status updates (KPIs, risks,
+    action items, green/yellow/red). Not in the cloned anthropics/skills v0.0.1, so
+    wrote a CEO-specific version at `admin/agency/ceo_skills_repo/status-report/SKILL.md`
+    (Hinglish digest + detailed, 🟢🟡🔴 health, actionable next-steps).
+- Built `admin/agency/ceo_skills.py` — mirrors the other agents' `*_skills.py`
+  mechanism (detect by keyword, build context block) BUT sources from the local
+  `ceo_skills_repo/` folder (CEO's own role skills, not the Jcode domain catalog).
+- Wired into `ceo.py::call_llm` — CEO skill context injected into the system prompt
+  alongside tools/functions. Boss message triggers the right skill (decision vs
+  report); neutral message falls back to a default so CEO stays skill-aware.
+- Verified (no model call): ceo-skill detects on "strategic decision/risk",
+  status-report on "status/update", context block builds correctly (6321 chars).
+- NOT gitignored — these are our files (not a reference clone), should be committed.
+
 ## Working agreement (user, 2026-08-25)
 - Keep Munder Difflin clone saved + this understanding saved (MEMORY.md = truth).
 - Next build = Section 2 (CEO-gated on-demand / LifecycleState) — to be done
