@@ -49,6 +49,16 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
+    # Agency-wide LLM RPM cap: every AsyncOpenAI client shares one throttled
+    # httpx pool, so parallel agent blasts stay under the provider ceiling.
+    try:
+        from admin.llm_throttle import install as install_llm_throttle
+
+        install_llm_throttle()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").warning(
+            "LLM throttle not installed: %s", exc)
+
     from admin.persistence import close_persistence, init_persistence, set_persistent_mode
     set_persistent_mode(True)  # long-running loop owns the shared DB connection
     await init_persistence()   # create workspace SQLite tables first
