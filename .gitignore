@@ -57,6 +57,9 @@ config/agentmail.json
 /deploy/_*.js
 /deploy/_*.sh
 
+# Reference clones (kept local only, documented in MEMORY.md — never commit the 1785-file clone)
+/references/
+
 # Runtime state / generated output
 /.sba_rotation_state
 /.sba_enrichment_state

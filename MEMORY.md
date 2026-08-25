@@ -69,3 +69,55 @@
 ("6 Tips for New Plumbers...", "Plumbing Forums", "21 Reliable Plumbing Blogs"),
 NOT global V2EX noise. Same for roofer / salon / yoga studio (topic-specific).
 Snippets now populate correctly.
+
+## Honest agent readiness (2026-08-25 structural scan)
+- 7 agents each import OK + `build_*_graph(): OK -> CompiledStateGraph` +
+  Agent class present: sba, seo, social, ads, website, content, analytics.
+- "Graph builds" != "end-to-end works". Real run needs WORKSPACE_API_KEY/model.
+  Earlier "5/6 ready" claim was shallow (only grepped function bodies for
+  requests/open). User rightly corrected: structural proof is import+build, not
+  grep. SBA lead-capture funcs (detect_lead_sources/save_lead_record/email
+  format_template) were placeholders but now real (see code).
+
+## User's product vision (from chat)
+- Agents must be SMART (LLM-driven decisions, context-aware), NOT dumb bots.
+- Run on-DEMAND under CEO command; do NOT run 24/7 (keeps server light/cheap).
+  CEO says "go" -> agent works; CEO says "rest" -> agent idles. Idle = standby,
+  not always-on loop.
+- New agent dropping in should AUTO-integrate: its tools + skills auto-discovered
+  via a registry/plugin model. External user data entering should also integrate.
+- Company owner gives work + work gets done. 7 agents (or any new agent) get
+  tools + skills and integrate automatically.
+- This is the NEXT design goal beyond per-agent readiness.
+
+## Reference project: Munder Difflin (THE inspiration for this Agency OS)
+- **What it is**: free, open-source, local-first multi-agent harness by
+  @chaitanyagiri. Each agent = a real `claude` CLI process; a 2D "office floor"
+  visualizes them. Wraps Claude Code, Codex, Copilot, etc (your existing subs).
+- **Repo**: `https://github.com/chaitanyagiri/munder-difflin` (MIT, ~2.5k stars).
+- **Cloned locally** at `references/munder-difflin/` (shallow `--depth 1`).
+  `.gitignore` excludes `/references/` so the 1785-file clone is NEVER committed
+  (keeps our repo light). Read it for architecture patterns; don't copy its code.
+- **Its CEO = "god agent"** (`desk-ceo`, `isGod` flag): an ordinary `claude`
+  process, *always-on listener* that runs the floor — EXACTLY our user's CEO model.
+- **Idle agents wake only when they hold unread inbox messages** (Stop-hook drains
+  inbox) — EXACTLY "agents sleep by default, wake on CEO command, self-sleep when
+  done". No 24/7 loops; event-driven.
+- **Key patterns to borrow** (from its `HIVE.md`, `SPEC.md`, `DESIGN.md`):
+  - Single-writer registry (`registry.json`): roster + capabilities + status.
+  - Markdown-first memory per agent (`memory.md`) + shared blackboard (`board.md`).
+  - Message schema (FIPA-lite speech acts): request/inform/propose/query/agree/
+    refuse/done, with `hops` cap to kill ping-pong loops.
+  - Mailbox/actor model: `inbox/` + `outbox/` per agent, atomic temp-file+rename,
+    append-only `log.jsonl` (each consumer tracks its own cursor).
+  - Native HITL: only critical (destructive / spend / scope change / unresolvable
+    conflict) escalates to human; everything else the god resolves itself.
+  - Git as coordination layer with SINGLE committer (main process) to avoid
+    `index.lock` corruption — agents only write files, never git themselves.
+  - Scheduled "missions" = cron that posts a request into an agent's queue (Hands
+    off, cadence-based) — distinct from an always-on autonomous loop.
+- **Local-first = no cloud server** — matches user's "server light / on-demand"
+  hard requirement. The "server" is just local processes reading/writing local files.
+- Important: Munder Difflin is a *generic* harness (code clones). Our Agency OS is
+  the *domain product* (SEO/AEO for TAGS agency) built on top of the same pattern.
+  Borrow architecture, not its code.
