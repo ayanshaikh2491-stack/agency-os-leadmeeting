@@ -210,21 +210,8 @@ async def api_status():
     total_in_pipeline = sum(by_status.values())
     hot_leads = len([l for l in all_leads if l.get("score", 0) >= 80 and l["status"] != "closed"])
 
-    # Boss visibility: LLM budget guards + autonomous CEO scheduler state.
-    try:
-        from admin.llm_throttle import snapshot as _llm_snap
-        from admin.agency.scheduler import get_scheduler as _get_sched
-
-        _guards: dict = {
-            "llm_guards": _llm_snap(),
-            "scheduled_tasks": len(_get_sched().list_schedules()),
-        }
-    except Exception:  # noqa: BLE001
-        _guards = {}
-
     return {
         "success": True,
-        **_guards,
         "pipeline": {
             "leads_found_today": new_count,
             "queue": {"total": total_in_pipeline, "new": new_count},

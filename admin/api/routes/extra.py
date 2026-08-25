@@ -55,8 +55,21 @@ async def api_status() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         workspace_count = 0
 
+    # Boss visibility: LLM budget guards + autonomous CEO scheduler state.
+    try:
+        from admin.agency.scheduler import get_scheduler
+        from admin.llm_throttle import snapshot as llm_snapshot
+
+        guards: dict[str, Any] = {
+            "llm_guards": llm_snapshot(),
+            "scheduled_tasks": len(get_scheduler().list_schedules()),
+        }
+    except Exception:  # noqa: BLE001
+        guards = {}
+
     return {
         "success": True,
+        **guards,
         "pipeline": {
             "leads_found_today": new_count,
             "queue": {"total": total_in_pipeline, "new": new_count},
