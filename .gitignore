@@ -83,3 +83,7 @@ implementation_plan.md
 /agent_registry.json
 lifecycle_state.json  
 data/  
+ec2-key.pem
+int_ec2.pem
+STATE.md
+deploy/_*
