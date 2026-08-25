@@ -144,8 +144,30 @@ Snippets now populate correctly.
   user's mental model. This is the "intelligence vs mechanism" split from Munder
   Difflin's god-orchestrator.
 
+## CRITICAL CORE requirement (user, 2026-08-25) — CEO must think like a REAL CEO
+- User's words: "ceo ko hamko aise banana hai ke wo real ceo ke jaise soch skill
+  ho... yehi agency ka main core hai." He knows it already uses an LLM — the gap
+  is that the CEO is NOT yet given a *CEO's skill/judgment* layer.
+- VERIFIED GAP: CEO has **NO skill registry** (`ceo_skills.py` does not exist).
+  Other agents DO have per-agent skill registries (`sba_skills.py`, `seo_skills.py`,
+  `social_skills.py`, `website_skills.py`) that auto-detect Jcode skills from the
+  message. CEO only has 12 raw tool functions — no "senior-leader reasoning" skill.
+- Current report is a HARD-CODED template (`=== CLIENT REPORT ===`,
+  `=== TAGS AGENCY WEEKLY REPORT ===` in `_tool_generate_report`) — mechanical data
+  dump, not "CEO-style thinking" + actionable next steps + boss-language (Hinglish).
+- What to BUILD (the core):
+  1. **CEO Skill layer** — business brain: strategy, prioritization, decision-
+     making, delegation judgment (which agent, when, how). Like other agents'
+     `*_skills.py` registry, but for CEO-level reasoning.
+  2. **Report skill** — define HOW the CEO reports: boss-language (Hindi/English
+     mix), digest vs detailed, actionable next-steps, not a raw data dump.
+  3. Plumbing: CEO gets its own `ceo_skills.py` registry so it auto-reacts like
+     the other agents.
+- This is the agency's MAIN CORE per the user — prioritize it. Build TOGETHER.
+
 ## Working agreement (user, 2026-08-25)
 - Keep Munder Difflin clone saved + this understanding saved (MEMORY.md = truth).
 - Next build = Section 2 (CEO-gated on-demand / LifecycleState) — to be done
   TOGETHER (user + agent), not solo. Spec: docs/specs/2026-08-25-ceo-gated-
   on-demand-design.md.
+- ALSO build the CEO-as-real-CEO skill core (above) — this is the bigger priority.
