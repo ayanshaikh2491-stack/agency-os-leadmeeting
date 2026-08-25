@@ -76,6 +76,23 @@ def _save_overrides(overrides: dict) -> None:
         _STATE_FILE.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
     except Exception as e:
         logger.warning("Could not persist lifecycle overrides: %s", e)
+    # External PocketBase mirror (best-effort; never breaks local runs).
+    _mirror_lifecycle_to_pb(overrides)
+
+
+def _mirror_lifecycle_to_pb(overrides: dict) -> None:
+    """Mirror CEO lifecycle/error state to external PocketBase (best-effort)."""
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.ensure_collection("ceo_lifecycle", {"slug": "text", "state": "text"})
+        for slug, state in overrides.items():
+            # Match on `slug` — PB's 15-char ids can't hold 'lc_<slug>'.
+            pb.upsert_by_key("ceo_lifecycle", "slug", {"slug": slug, "state": state})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase lifecycle mirror failed (non-fatal): %s", exc)
 
 
 def register(slug: str, disabled: bool = False) -> AgentRuntime:

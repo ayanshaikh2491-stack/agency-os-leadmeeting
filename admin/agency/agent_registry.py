@@ -11,6 +11,7 @@ Storage: the same workspace SQLite DB used by mandates.py, so no new infra.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +19,8 @@ from typing import Any
 import aiosqlite
 
 from admin.persistence import get_workspace_db, row_to_dict
+
+logger = logging.getLogger(__name__)
 
 CREATE_CUSTOM_AGENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS custom_agents (
@@ -80,7 +83,10 @@ async def create_agent(
         ),
     )
     await db.commit()
-    return await get_agent(agent_id)  # type: ignore[return-value]
+    stored = await get_agent(agent_id)  # type: ignore[return-value]
+    if stored:
+        _mirror_agent_to_pb(stored)
+    return stored
 
 
 async def get_agent(agent_id: str) -> dict[str, Any] | None:
@@ -106,7 +112,10 @@ async def delete_agent(agent_id: str) -> bool:
     db = await get_workspace_db()
     result = await db.execute("DELETE FROM custom_agents WHERE id = ?", (agent_id,))
     await db.commit()
-    return result.rowcount > 0
+    deleted = result.rowcount > 0
+    if deleted:
+        _mirror_agent_to_pb({"id": agent_id}, delete=True)
+    return deleted
 
 
 def _deserialize(row: aiosqlite.Row) -> dict[str, Any]:
@@ -116,3 +125,80 @@ def _deserialize(row: aiosqlite.Row) -> dict[str, Any]:
     except (ValueError, TypeError):
         data["tools"] = []
     return data
+
+
+# ── PocketBase: durable source of truth for custom agents ────────────────────
+_PB_SCHEMA = {
+    "record_id": "text", "name": "text", "role": "text",
+    "system_prompt": "text", "model": "text", "api_key_ref": "text",
+    "tools": "text", "created_by": "text", "created_at": "text",
+}
+_ensured_pb = False
+
+
+def _mirror_agent_to_pb(record: dict[str, Any], delete: bool = False) -> None:
+    """Best-effort push/delete of one custom agent in PocketBase."""
+    global _ensured_pb
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        if not _ensured_pb:
+            pb.ensure_collection("custom_agents", _PB_SCHEMA)
+            _ensured_pb = True
+        if delete:
+            pb.delete_by_key("custom_agents", "record_id", record.get("id", ""))
+            return
+        pb.upsert_by_key("custom_agents", "record_id", dict(record))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase custom_agent mirror failed (non-fatal): %s", exc)
+
+
+async def sync_from_pocketbase() -> int:
+    """Boot-time pull: PocketBase custom_agents -> local SQLite table.
+
+    PocketBase wins as source of truth; local rows are refreshed by id so the
+    registry reads (get_agent/list_agents) keep working unchanged offline.
+    Returns how many agents were pulled. Fully best-effort.
+    """
+    try:
+        from admin.pocketbase_client import get_pb_client
+    except Exception:  # noqa: BLE001
+        return 0
+    pb = get_pb_client()
+    if not pb or not pb.is_configured():
+        return 0
+    pulled = 0
+    try:
+        await _ensure_table()
+        db = await get_workspace_db()
+        for row in pb.pull_all("custom_agents"):
+            rid = str(row.get("record_id") or "")
+            if not rid:
+                continue
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO custom_agents
+                    (id, name, role, system_prompt, model, api_key_ref,
+                     tools, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rid,
+                    row.get("name") or rid,
+                    row.get("role") or "worker",
+                    row.get("system_prompt") or "",
+                    row.get("model") or "",
+                    row.get("api_key_ref") or "",
+                    row.get("tools") or "[]",
+                    row.get("created_by") or "owner",
+                    row.get("created_at")
+                    or datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            pulled += 1
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PocketBase custom_agents seed failed (non-fatal): %s", exc)
+    return pulled

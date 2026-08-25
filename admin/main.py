@@ -56,6 +56,24 @@ async def lifespan(app: FastAPI):
     await load_sba_from_db()
     await load_workspaces_from_db()
 
+    # ── PocketBase = durable source of truth ────────────────────────────────
+    # Pull workspaces + custom agents from external PB into the local cache
+    # BEFORE seeding defaults, so owner data survives container restarts and
+    # every agent/workspace picks up right where it left off. Best-effort:
+    # when POCKETBASE_URL is unset or unreachable, pure-local behaviour stays.
+    try:
+        from admin.workspace.manager import seed_from_pocketbase
+        from admin.agency.agent_registry import sync_from_pocketbase
+
+        await seed_from_pocketbase()
+        _pulled_agents = await sync_from_pocketbase()
+        if _pulled_agents:
+            logging.getLogger("admin.main").info(
+                "PocketBase: %d custom agent(s) restored.", _pulled_agents)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").warning(
+            "PocketBase boot-seed skipped (non-fatal): %s", exc)
+
     # Bind pre-provisioned Supabase schemas (ws_<slug>) to workspaces so the
     # Website Agent writes into the right schema on this deployment.
     seed_workspace(

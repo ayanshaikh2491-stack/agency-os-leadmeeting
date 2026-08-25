@@ -142,3 +142,13 @@ AGENCY_AGENT_LOOP_INTERVAL_SECONDS: int = int(
 AGENCY_AGENT_LOOP_TICK_TIMEOUT_SECONDS: int = int(
     os.getenv("AGENCY_AGENT_LOOP_TICK_TIMEOUT_SECONDS", "120")
 )
+
+# ── External PocketBase (survives container restart) ───────────────────────
+# Owner rule: PocketBase is THE database for key agency state (workspaces,
+# custom agents, agent outputs, CEO lifecycle/error state). When POCKETBASE_URL
+# is set, those writes ALSO mirror to PocketBase so they survive an App Runner
+# container restart (local SQLite/file state does not). Leave empty to keep pure
+# local behaviour. All PB writes are best-effort and never break local runs.
+POCKETBASE_URL: str = os.getenv("POCKETBASE_URL", "")
+POCKETBASE_ADMIN_EMAIL: str = os.getenv("POCKETBASE_ADMIN_EMAIL", "")
+POCKETBASE_ADMIN_PASSWORD: str = os.getenv("POCKETBASE_ADMIN_PASSWORD", "")

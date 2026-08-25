@@ -8,6 +8,7 @@ All persistence lives in agent_registry; this module is a thin HTTP layer.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -54,6 +55,24 @@ async def create_custom_agent(body: AgentCreate) -> dict[str, Any]:
         api_key_ref=body.api_key_ref,
         tools=body.tools,
     )
+    # Mirror to external PocketBase (best-effort; local runs unaffected).
+    try:
+        from admin.pocketbase_client import get_pb_client
+
+        pb = get_pb_client()
+        if pb and pb.is_configured():
+            pb.upsert_by_key("custom_agents", "record_id",
+                             {"record_id": agent.get("id", ""),
+                              "name": agent.get("name", ""),
+                              "role": agent.get("role", ""),
+                              "system_prompt": agent.get("system_prompt", ""),
+                              "model": agent.get("model", ""),
+                              "api_key_ref": agent.get("api_key_ref", ""),
+                              "tools": json.dumps(agent.get("tools", [])),
+                              "created_by": agent.get("created_by", "owner"),
+                              "created_at": agent.get("created_at", "")})
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase custom_agent mirror failed (non-fatal): %s", exc)
     return {"status": "ok", "agent": agent}
 
 

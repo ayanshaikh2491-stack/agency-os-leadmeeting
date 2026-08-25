@@ -153,6 +153,137 @@ def _sync_ws_to_db(record: dict[str, Any]) -> None:
         except Exception as e:
             logger.debug("SQLite write failed: %s", e)
     _fire_and_forget(_write())
+    _mirror_to_pb("workspaces", record)
+
+
+_PB_ENSURED: set[str] = set()
+
+# PocketBase collection schemas (all values stored as text/json-strings).
+_PB_SCHEMAS: dict[str, dict[str, str]] = {
+    "workspaces": {
+        "record_id": "text", "name": "text", "client_name": "text",
+        "description": "text", "agents": "text", "client_context": "text",
+        "created_at": "text",
+    },
+    "agent_outputs": {
+        "record_id": "text", "workspace_id": "text", "agent_type": "text",
+        "task": "text", "output": "text", "output_preview": "text",
+        "timestamp": "text", "reviewed": "text",
+    },
+}
+
+
+def _mirror_to_pb(collection: str, record: dict) -> None:
+    """Mirror a key record to external PocketBase (the durable source of truth).
+
+    No-op locally when POCKETBASE_URL is unset. Auto-creates the collection on
+    first use and matches records via a `record_id` column (PocketBase's own
+    15-char ids cannot hold ids like 'ws_default').
+    """
+    import json
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        if collection in _PB_SCHEMAS and collection not in _PB_ENSURED:
+            pb.ensure_collection(collection, _PB_SCHEMAS[collection])
+            _PB_ENSURED.add(collection)
+        safe = json.loads(json.dumps(
+            record, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)))
+        payload = {k: v for k, v in safe.items() if k != "id"}
+        # Nested dicts/lists must become JSON strings for PB text fields.
+        for k, v in list(payload.items()):
+            if isinstance(v, (dict, list)):
+                payload[k] = json.dumps(v)
+        pb.upsert_by_key(collection, "record_id", payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase mirror (%s) failed (non-fatal): %s", collection, exc)
+
+
+async def seed_from_pocketbase() -> None:
+    """Boot-time pull: PocketBase -> local memory + workspace SQLite.
+
+    Makes PocketBase the durable source of truth while keeping all existing
+    read paths untouched (they keep reading the fast local cache). Local
+    records win only when PB has nothing; PB rows are merged by `record_id`.
+    Fully best-effort: any failure just keeps current local behaviour.
+    """
+    try:
+        from admin.pocketbase_client import get_pb_client
+    except Exception:  # noqa: BLE001
+        return
+    pb = get_pb_client()
+    if not pb or not pb.is_configured():
+        return
+
+    # ── workspaces ──────────────────────────────────────────────────────
+    pulled = 0
+    try:
+        db = await get_workspace_db()
+        for row in pb.pull_all("workspaces"):
+            rid = str(row.get("record_id") or "")
+            if not rid:
+                continue
+            def _loads(v: Any) -> Any:
+                try:
+                    return json.loads(v) if isinstance(v, str) else v
+                except (ValueError, TypeError):
+                    return v
+            record = {
+                "id": rid,
+                "name": row.get("name") or rid,
+                "client_name": row.get("client_name") or row.get("name") or rid,
+                "description": row.get("description") or "",
+                "created_at": row.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                "agents": _loads(row.get("agents")) or list(DEFAULT_AGENTS),
+                "client_context": _loads(row.get("client_context")),
+            }
+            existing = _workspaces.get(rid)
+            if existing and existing != record:
+                continue  # local is newer/equal — don't clobber live state
+            _workspaces[rid] = record
+            ctx_json = json.dumps(record["client_context"]) if record["client_context"] else "{}"
+            agents_json = json.dumps(record["agents"]) if isinstance(record["agents"], list) else str(record["agents"])
+            await db.execute(
+                "INSERT OR REPLACE INTO workspaces "
+                "(id, name, client_name, description, agents, client_context, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (rid, record["name"], record["client_name"],
+                 record["description"], agents_json, ctx_json,
+                 str(record["created_at"])),
+            )
+            pulled += 1
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PocketBase seed (workspaces) failed (non-fatal): %s", exc)
+
+    # ── agent outputs ───────────────────────────────────────────────────
+    try:
+        seen = {o.get("id") for o in _agent_outputs}
+        for row in pb.pull_all("agent_outputs"):
+            rid = str(row.get("record_id") or "")
+            if not rid or rid in seen:
+                continue
+            rec = {
+                "id": rid,
+                "workspace_id": row.get("workspace_id") or "",
+                "agent_type": row.get("agent_type") or "",
+                "task": row.get("task") or "",
+                "output": row.get("output") or "",
+                "output_preview": row.get("output_preview") or "",
+                "timestamp": row.get("timestamp") or "",
+                "reviewed": str(row.get("reviewed", "")).lower() in ("true", "1"),
+            }
+            _agent_outputs.append(rec)
+            if not rec["reviewed"]:
+                _pending_reviews.append(rec)
+            pulled += 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PocketBase seed (agent_outputs) failed (non-fatal): %s", exc)
+
+    if pulled:
+        logger.info("PocketBase seed complete: %d record(s) restored from PB.", pulled)
 
 
 def create_workspace(payload: WorkspaceCreate) -> WorkspaceOut:
@@ -258,6 +389,7 @@ def store_agent_output(
     }
     _agent_outputs.append(record)
     _pending_reviews.append(record)
+    _mirror_to_pb("agent_outputs", record)
 
     # Fire-and-forget SQLite write
     async def _write():
