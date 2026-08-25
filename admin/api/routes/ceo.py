@@ -11,6 +11,9 @@ Endpoints:
   POST /api/ceo/knowledge             — Add learning to knowledge pool
   GET  /api/ceo/reviews               — List pending/completed reviews
   GET  /api/ceo/errors                — List error logs
+  GET  /api/ceo/state                 — Lifecycle snapshot of every agent (light, on-demand)
+  POST /api/ceo/agent/{slug}/wake     — Boss/CEO manual wake override
+  POST /api/ceo/agent/{slug}/sleep    — Boss/CEO manual sleep override
 """
 
 from __future__ import annotations
@@ -19,10 +22,11 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path as FastPath
 from pydantic import BaseModel, Field
 
 from admin.agency.ceo import AgencyCEO
+from admin.agency import lifecycle as lc
 from admin.api.models.schemas import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
@@ -75,6 +79,54 @@ class KnowledgeRequest(BaseModel):
     domain: str = ""
     learning: str = ""
     source_workspace: str = ""
+
+
+class WakeSleepResponse(BaseModel):
+    slug: str
+    state: str
+    message: str = ""
+
+
+# ── Lifecycle endpoints (CEO-gated on-demand control) ──────────────────────────
+
+@router.get("/state", tags=["ceo-lifecycle"])
+async def ceo_state():
+    """Light, on-demand lifecycle snapshot of every agent.
+
+    No polling loop — just reads the current LifecycleState table. CEO is the
+    only thing that flips states; this is read-only introspection so the boss
+    (or CEO) can see who is STANDBY vs ACTIVE.
+    """
+    agents = lc.snapshot()
+    # Ensure every known agent has a row (register lazily if missed at boot).
+    for slug in ("ceo", "sba", "seo", "social", "website"):
+        if not any(a["slug"] == slug for a in agents):
+            lc.register(slug)
+    return {
+        "ceo_listener": "active_24x7_http",  # CEO listens via HTTP, not a loop
+        "agents": lc.snapshot(),
+        "rule": "agents sleep by default (STANDBY); CEO wakes on demand; self-sleep when done",
+    }
+
+
+@router.post("/agent/{slug}/wake", response_model=WakeSleepResponse, tags=["ceo-lifecycle"])
+async def agent_wake(slug: str = FastPath(..., description="agent slug, e.g. sba")):
+    """Boss/CEO manual wake override (forces ACTIVE)."""
+    try:
+        rt = lc.force_wake(slug)
+        return WakeSleepResponse(slug=slug, state=rt.state.value, message=f"{slug} forced awake.")
+    except Exception as exc:  # noqa: BLE001
+        return WakeSleepResponse(slug=slug, state="error", message=str(exc)[:200])
+
+
+@router.post("/agent/{slug}/sleep", response_model=WakeSleepResponse, tags=["ceo-lifecycle"])
+async def agent_sleep(slug: str = FastPath(..., description="agent slug, e.g. sba")):
+    """Boss/CEO manual sleep override (forces STANDBY)."""
+    try:
+        rt = lc.force_sleep(slug)
+        return WakeSleepResponse(slug=slug, state=rt.state.value, message=f"{slug} forced to sleep.")
+    except Exception as exc:  # noqa: BLE001
+        return WakeSleepResponse(slug=slug, state="error", message=str(exc)[:200])
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────

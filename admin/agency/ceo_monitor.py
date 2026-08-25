@@ -1,72 +1,37 @@
-"""CEO Proactive Monitor — background heartbeat watching the agency.
+"""CEO Proactive Monitor — on-demand agency health snapshot (no background loop).
 
-Runs every 15 minutes and checks:
-  1. Token health → alerts if expiring/expired
-  2. Pending reviews → count of reviews needing CEO attention
-  3. SBA handoffs → pending handoffs waiting for CEO
-  4. Workspace activity → inactive workspaces (7+ days no activity)
+Per the boss rule, there is NO 24/7 monitoring loop. The CEO is a 24/7 listener
+(via HTTP /api/ceo/chat), but it does NOT run a polling task. Instead, health is
+computed ON DEMAND: the CEO calls get_agency_status() when it needs to report or
+decide. That keeps the server light — only the FastAPI process is always on.
+
+Checks (computed fresh each call):
+  1. Token health -> expiring/expired
+  2. Pending reviews -> count needing CEO attention
+  3. SBA handoffs -> pending handoffs waiting for CEO
+  4. Workspace activity -> inactive workspaces
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-CHECK_INTERVAL_SECONDS = 15 * 60  # Every 15 minutes
-
 
 class CEOMonitor:
-    """Background monitor that keeps CEO informed of agency health."""
+    """On-demand agency health snapshot. No background task, no loop."""
 
     def __init__(self) -> None:
-        self._task: asyncio.Task | None = None
         self._last_status: dict[str, Any] = {}
-        self._status_lock = asyncio.Lock()
-
-    async def start(self) -> None:
-        """Start the background monitoring loop."""
-        logger.info("CEO Monitor started (interval=%ds)", CHECK_INTERVAL_SECONDS)
-        self._task = asyncio.create_task(self._run_loop())
-
-    async def stop(self) -> None:
-        """Stop the background monitoring loop."""
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-            logger.info("CEO Monitor stopped")
 
     async def get_agency_status(self) -> dict[str, Any]:
-        """Get the latest agency status snapshot."""
-        async with self._status_lock:
-            if not self._last_status:
-                self._last_status = await self._build_status()
-            return self._last_status
-
-    async def _run_loop(self) -> None:
-        """Main monitoring loop."""
-        while True:
-            try:
-                status = await self._build_status()
-                async with self._status_lock:
-                    self._last_status = status
-
-                for alert in status.get("alerts", []):
-                    logger.warning("CEO ALERT [%s]: %s", alert["severity"], alert["message"])
-
-                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error("CEO Monitor error: %s", exc)
-                await asyncio.sleep(60)
+        """Build and return a fresh agency status snapshot (called on demand)."""
+        status = await self._build_status()
+        self._last_status = status
+        return status
 
     async def _build_status(self) -> dict[str, Any]:
         """Build current agency status snapshot."""
@@ -111,4 +76,3 @@ def get_monitor() -> CEOMonitor:
     if _monitor is None:
         _monitor = CEOMonitor()
     return _monitor
-

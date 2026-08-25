@@ -1308,27 +1308,9 @@ class SBAAutopilot:
         except Exception as exc:  # noqa: BLE001
             logger.warning("owner digest email failed: %s", exc)
 
-    async def run_forever(self) -> None:
-        """Infinite loop — never sleeps, keeps checking for work."""
-        logger.info("SBA autopilot starting (interval=%dm, cap=%d)", INTERVAL_MINUTES, DAILY_EMAIL_CAP)
-        while True:
-            try:
-                # Bound every pass: a wedged CDP/Supabase call must never
-                # freeze the loop (seen: autopilot hung 9h on a dead daemon
-                # connection). Timeout -> log + stale playwright reset.
-                await asyncio.wait_for(self.run_once(), timeout=PASS_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
-                logger.exception("autopilot pass timed out after %ss — resetting browser handle", PASS_TIMEOUT_SECONDS)
-                # Drop any stale playwright connection so the next pass
-                # reconnects fresh instead of awaiting a dead transport.
-                try:
-                    await asyncio.wait_for(self._reset_chrome(), timeout=15)
-                except Exception:  # noqa: BLE001
-                    logger.warning("chrome handle reset failed (will retry next pass)")
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("autopilot iteration failed: %s", exc)
-            await asyncio.sleep(INTERVAL_MINUTES * 60)
-
+    # NOTE: There is intentionally NO run_forever / while-True loop here. The SBA
+    # agent is CEO-gated: it only ever runs run_once() via Lifecycle.wake (called
+    # from a CEO tool). This keeps the server light — no 24/7 SBA loop (boss rule).
     async def _reset_chrome(self) -> None:
         """Best-effort close of the cached ChromeTool connection."""
         try:
@@ -1386,44 +1368,29 @@ class SBAWorkspaceRunner:
         }
         return stats
 
-    async def run_forever(self) -> None:
-        logger.info("SBA workspace runner starting (interval=%dm)", INTERVAL_MINUTES)
-        while True:
-            try:
-                await asyncio.wait_for(self.run_all_once(), timeout=max(PASS_TIMEOUT_SECONDS * 4, 600))
-            except asyncio.TimeoutError:
-                logger.exception("workspace runner pass timed out")
-                try:
-                    ap = SBAAutopilot(workspace_name="agency")
-                    await asyncio.wait_for(ap._reset_chrome(), timeout=15)
-                except Exception:  # noqa: BLE001
-                    pass
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("workspace runner pass failed: %s", exc)
-            await asyncio.sleep(INTERVAL_MINUTES * 60)
+    # NOTE: run_all_once() above is the ONLY entry. There is intentionally NO
+    # run_forever / while-True loop — the CEO wakes this runner via Lifecycle,
+    # not a 24/7 scheduler (boss rule: no always-on agent loops).
 
+    async def run_mandated(self, brief_id: str | None = None) -> dict[str, Any]:
+        """CEO-gated entry point: run all workspaces once, self-sleep after.
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    runner = SBAWorkspaceRunner()
-    # Outer guard: never let the process hard-crash. If a pass (or even the
-    # runner setup) throws something unexpected, log it once and retry after
-    # a backoff instead of exiting — systemd's Restart would otherwise tight-
-    # loop every 5s and peg the CPU (seen: 2000+ restarts). The inner loop
-    # already swallows per-pass errors; this catches the rare escape + the
-    # very first startup so the agent stays up smoothly.
-    backoff = 30
-    while True:
+        Called ONLY from a CEO tool via Lifecycle.wake + Lifecycle.sleep.
+        """
+        from admin.agency import lifecycle as lc
+        lc.wake("sba", brief_id=brief_id)
         try:
-            asyncio.run(runner.run_forever())
-        except KeyboardInterrupt:
-            logger.info("autopilot interrupted, exiting")
-            break
+            stats = await self.run_all_once()
+            lc.sleep("sba")
+            return stats
         except Exception as exc:  # noqa: BLE001
-            logger.exception("autopilot process crashed (will retry in %ss): %s", backoff, exc)
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 600)
+            lc.mark_error("sba", str(exc)[:200])
+            raise
 
 
 if __name__ == "__main__":
-    main()
+    # No 24/7 loop. To run a single mandated pass locally, use:
+    #   python -c "import asyncio,admin.agency.sba_autopilot as a; print(asyncio.run(a.SBAWorkspaceRunner().run_all_once()))"
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger(__name__).info("sba_autopilot: run_mandated() is CEO-gated; no standalone loop. Use run_all_once() directly for a one-off pass.")
+

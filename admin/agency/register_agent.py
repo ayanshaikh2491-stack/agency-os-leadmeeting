@@ -31,7 +31,7 @@ import logging
 from pathlib import Path
 import shutil
 
-from agent_skill_loader import AGENCY_DIR
+from .agent_skill_loader import AGENCY_DIR
 
 logger = logging.getLogger(__name__)
 

@@ -1,86 +1,38 @@
-"""SBA Proactive Monitor — 24/7 background heartbeat for lead discovery.
+"""SBA Proactive Monitor — on-demand pipeline snapshot (no background loop).
 
-Runs continuously and:
-  1. Checks for stale leads needing follow-up
-  2. Scans for new lead opportunities (via email)
-  3. Monitors pipeline health and alerts CEO
-  4. Auto-qualifies incoming leads
+Per the boss rule, there is NO 24/7 SBA monitoring loop. SBA runs only when the
+CEO wakes it (via Lifecycle.wake -> SBAWorkspaceRunner.run_mandated). This
+module provides an ON-DEMAND status snapshot the CEO can pull when it needs to
+report pipeline health — no polling, no background task, server stays light.
+
+Checks (computed fresh each call):
+  1. Stale leads needing follow-up
+  2. Hot leads ready for CEO attention
+  3. Pipeline health + pending CEO handoffs
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-CHECK_INTERVAL_SECONDS = 10 * 60  # Every 10 minutes
 LEAD_STALE_DAYS = 3  # Alert if lead untouched for 3+ days
 
 
 class SBAMonitor:
-    """Background monitor that keeps SBA pipeline running 24/7."""
+    """On-demand SBA pipeline snapshot. No background task, no loop."""
 
     def __init__(self) -> None:
-        self._task: asyncio.Task | None = None
         self._last_status: dict[str, Any] = {}
-        self._status_lock = asyncio.Lock()
-        self._ceo_alerts: list[dict[str, Any]] = []
-
-    async def start(self) -> None:
-        """Start the background monitoring loop."""
-        logger.info("SBA Monitor started (interval=%ds)", CHECK_INTERVAL_SECONDS)
-        self._task = asyncio.create_task(self._run_loop())
-
-    async def stop(self) -> None:
-        """Stop the background monitoring loop."""
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-            logger.info("SBA Monitor stopped")
 
     async def get_pipeline_status(self) -> dict[str, Any]:
-        """Get the latest pipeline status snapshot."""
-        async with self._status_lock:
-            if not self._last_status:
-                self._last_status = await self._build_status()
-            return self._last_status
-
-    def get_ceo_alerts(self) -> list[dict[str, Any]]:
-        """Get alerts that should be sent to CEO."""
-        alerts = list(self._ceo_alerts)
-        self._ceo_alerts.clear()
-        return alerts
-
-    async def _run_loop(self) -> None:
-        """Main monitoring loop — runs forever."""
-        while True:
-            try:
-                status = await self._build_status()
-                async with self._status_lock:
-                    self._last_status = status
-
-                # Generate alerts for CEO
-                for alert in status.get("alerts", []):
-                    self._ceo_alerts.append(alert)
-                    logger.info("SBA ALERT [%s]: %s", alert["severity"], alert["message"])
-
-                # Auto-action: stale leads
-                for stale in status.get("stale_leads", []):
-                    logger.info("Stale lead detected: %s (last: %s)", stale["name"], stale["last_contact"])
-
-                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error("SBA Monitor error: %s", exc)
-                await asyncio.sleep(60)
+        """Build and return a fresh SBA pipeline snapshot (called on demand)."""
+        status = await self._build_status()
+        self._last_status = status
+        return status
 
     async def _build_status(self) -> dict[str, Any]:
         """Build current SBA pipeline status snapshot."""
@@ -98,7 +50,6 @@ class SBAMonitor:
             updated = lead.get("updated_at", "")
             status = lead.get("status", "new")
 
-            # Parse updated_at
             try:
                 updated_dt = datetime.fromisoformat(updated) if updated else now
             except (ValueError, TypeError):
@@ -106,7 +57,6 @@ class SBAMonitor:
 
             days_since_update = (now - updated_dt).days if updated_dt else 0
 
-            # Flag stale leads
             if status in ("new", "contacted") and days_since_update >= LEAD_STALE_DAYS:
                 stale_leads.append({
                     "id": lead["id"],
@@ -122,7 +72,6 @@ class SBAMonitor:
                         "message": f"Lead '{lead.get('name', 'Unknown')}' stale for {days_since_update} days — needs follow-up",
                     })
 
-            # Flag hot leads
             if lead.get("score", 0) >= 80 and status not in ("closed", "lost"):
                 hot_leads.append({
                     "id": lead["id"],
@@ -132,7 +81,6 @@ class SBAMonitor:
                     "status": status,
                 })
 
-        # Pipeline summary
         pipeline_counts: dict[str, int] = {}
         for s in ["new", "contacted", "meeting", "proposal", "negotiation", "closed", "lost"]:
             pipeline_counts[s] = len([l for l in all_leads if l["status"] == s])

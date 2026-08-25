@@ -79,8 +79,13 @@ async def lifespan(app: FastAPI):
     try:
         from admin.agency import ceo_controller as ceo_ctrl
         from admin.agency import mandates as mandates_mod
+        from admin.agency import lifecycle as lc
         await mandates_mod.init_mandates_table()
         await ceo_ctrl.ceo_controller.register()
+        # Lifecycle gate: every agent starts STANDBY (no 24/7 loop). CEO wakes
+        # them on demand. CEO itself is the 24/7 listener (HTTP), not a loop.
+        for slug in ("ceo", "sba", "seo", "social", "website"):
+            lc.register(slug)
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("admin.main").warning("ceo controller init failed: %s", exc)
 

@@ -1020,12 +1020,19 @@ async def _tool_run_sales(args: dict) -> str:
     try:
         from admin.tools.email_queue import QueuedEmailClient
         from admin.agency.sba_autopilot import SBAAutopilot
+        from admin.agency import lifecycle as lc
 
-        ap = SBAAutopilot(
-            email_client=QueuedEmailClient(),
-            workspace_name=workspace_name,
-        )
-        stats = await ap.run_once()
+        # Lifecycle gate: SBA only runs while CEO-mandated (STANDBY -> ACTIVE).
+        lc.wake("sba", brief_id=f"run_sales:{workspace_name}")
+        try:
+            ap = SBAAutopilot(
+                email_client=QueuedEmailClient(),
+                workspace_name=workspace_name,
+            )
+            stats = await ap.run_once()
+        finally:
+            # Self-sleep back to STANDBY even on failure — no loop left running.
+            lc.sleep("sba")
         leads = stats.get("new_leads", 0) if isinstance(stats, dict) else 0
         emails = stats.get("emails_sent", 0) if isinstance(stats, dict) else 0
         return (
