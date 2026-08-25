@@ -84,16 +84,25 @@ class PocketBaseClient:
                 self._sdk = None
         if self.email and self.password:
             try:
-                r = requests.post(
-                    f"{self.url}/api/admins/auth-with-password",
-                    json={"identity": self.email, "password": self.password},
-                    timeout=self.timeout,
-                )
-                if r.status_code == 200:
-                    self._token = r.json().get("token")
-                    self._authed = True
-                    return True
-                logger.warning("PocketBase admin auth failed (%s)", r.status_code)
+                # PocketBase >= 0.23 moved admin auth under /api/collections/
+                # _superusers; older servers still expose /api/admins. Try both.
+                last_status = 0
+                for path in (
+                    "/api/collections/_superusers/auth-with-password",
+                    "/api/admins/auth-with-password",
+                ):
+                    r = requests.post(
+                        f"{self.url}{path}",
+                        json={"identity": self.email, "password": self.password},
+                        timeout=self.timeout,
+                    )
+                    if r.status_code == 200:
+                        self._token = r.json().get("token")
+                        self._authed = True
+                        return True
+                    last_status = r.status_code
+                logger.warning(
+                    "PocketBase admin auth failed (%s)", last_status)
                 return False
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PocketBase admin auth error: %s", exc)
