@@ -1,26 +1,28 @@
-"""Website Agent Skills — loaded from Jcode's skill catalog.
+"""Website Agent Skills — Website's OWN brain, loaded from its repo-local folder.
 
-Each skill is a SKILL.md file in ~/.jcode/skills/<skill-name>/ (or
-~/.agents/skills/<skill-name>/ as a fallback). Relevant skills are
-auto-detected from the message and passed as context so the Website
-Agent can apply real web design, frontend, and deployment frameworks.
+Website is the design/frontend/deploy agent. Its skills live in
+admin/agency/website_skills_repo/ (copied from the domain catalog). Repo-local so
+it deploys to AWS with the agent.
 
-Mirrors sba_skills.py / seo_skills.py.
+Covers design direction, frontend frameworks (React/Next), UI systems, copy for
+sites, domain ideas, and web testing.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from agent_skill_loader import (
+    detect_agent_skills,
+    build_agent_skill_context,
+    list_agent_skills,
+)
 
 logger = logging.getLogger(__name__)
 
-# ── Skill directories (Jcode first, agents catalog as fallback) ─────────
-JCODE_SKILLS_DIR = Path.home() / ".jcode" / "skills"
-AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
+AGENT_NAME = "website"
 
-# ── Website-relevant skills (design, frontend, deploy) ──────────────────
 WEBSITE_SKILL_REGISTRY: list[dict] = [
-    # ── Design direction ────────────────────────────────────────────
     {
         "name": "frontend-design",
         "keywords": [
@@ -86,7 +88,6 @@ WEBSITE_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "Style artifacts with a theme — 10 pre-set themes with colors/fonts or generate on-the-fly",
     },
-    # ── Frontend frameworks ──────────────────────────────────────────
     {
         "name": "nextjs-developer",
         "keywords": [
@@ -143,7 +144,6 @@ WEBSITE_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "Visually inspect sites to find and fix design issues at the source code level",
     },
-    # ── Copy & content for sites ─────────────────────────────────────
     {
         "name": "landing-page-copywriter",
         "keywords": [
@@ -153,7 +153,6 @@ WEBSITE_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "High-converting landing page copy — headlines, value props, CTAs, section copy",
     },
-    # ── Domain & deploy ──────────────────────────────────────────────
     {
         "name": "domain-name-brainstormer",
         "keywords": [
@@ -162,7 +161,6 @@ WEBSITE_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "Generate creative domain name ideas and check availability across TLDs",
     },
-    # ── Testing ──────────────────────────────────────────────────────
     {
         "name": "webapp-testing",
         "keywords": [
@@ -174,88 +172,16 @@ WEBSITE_SKILL_REGISTRY: list[dict] = [
 ]
 
 
-def _load_skill_content(skill_name: str) -> str | None:
-    """Read SKILL.md from Jcode or agents skill directories."""
-    for base in (JCODE_SKILLS_DIR, AGENTS_SKILLS_DIR):
-        skill_path = base / skill_name / "SKILL.md"
-        if skill_path.is_file():
-            try:
-                return skill_path.read_text(encoding="utf-8")
-            except Exception as e:
-                logger.error("Error reading skill %s: %s", skill_name, e)
-                return None
-    logger.warning("Skill not found: %s", skill_name)
-    return None
-
-
 def detect_skills(message: str, max_skills: int = 2) -> list[dict]:
-    """Detect relevant Website skills from a message.
-
-    Returns a list of matched skills with their loaded content.
-    At most `max_skills` skills are returned.
-    """
-    msg_lower = message.lower()
-    matched: list[dict] = []
-
-    for skill in WEBSITE_SKILL_REGISTRY:
-        for kw in skill["keywords"]:
-            if kw in msg_lower:
-                content = _load_skill_content(skill["name"])
-                if content:
-                    matched.append({
-                        "name": skill["name"],
-                        "description": skill["description"],
-                        "content": content,
-                    })
-                break  # One match per skill
-        if len(matched) >= max_skills:
-            break
-
-    return matched
-
-
-MAX_SKILL_CONTENT_CHARS = 2000  # Per skill — keeps total under LLM token caps
-MAX_TOTAL_SKILL_CHARS = 4000    # Total skill context cap
+    """Detect relevant Website skills from a message (loaded from website_skills_repo/)."""
+    return detect_agent_skills(AGENT_NAME, message, WEBSITE_SKILL_REGISTRY, max_skills=max_skills)
 
 
 def build_skill_context(skills: list[dict]) -> str:
-    """Build a skill context block from matched skills.
-
-    Truncates each skill's content to MAX_SKILL_CONTENT_CHARS to keep the
-    total context bounded.
-    """
-    if not skills:
-        return ""
-
-    blocks: list[str] = []
-    total_chars = 0
-    for s in skills:
-        content = s["content"]
-        if len(content) > MAX_SKILL_CONTENT_CHARS:
-            content = content[:MAX_SKILL_CONTENT_CHARS] + "\n...[truncated]"
-        if total_chars + len(content) > MAX_TOTAL_SKILL_CHARS:
-            break
-        total_chars += len(content)
-        blocks.append(
-            f"### Skill: {s['name']}\n"
-            f"{s['description']}\n\n"
-            f"{content}"
-        )
-
-    if not blocks:
-        return ""
-
-    return (
-        "── RELEVANT SKILLS ────────────────────────\n"
-        "Tuze jo skills relevant lagti hain, unko use kar:\n\n"
-        + "\n\n".join(blocks)
-        + "\n──────────────────────────────────────────"
-    )
+    """Build the Website skill context block."""
+    return build_agent_skill_context(skills)
 
 
 def list_website_skills() -> list[dict]:
-    """List all Website-relevant skills (without loading content)."""
-    return [
-        {"name": s["name"], "description": s["description"], "keywords": s["keywords"]}
-        for s in WEBSITE_SKILL_REGISTRY
-    ]
+    """List Website's own skills (without loading content)."""
+    return list_agent_skills(AGENT_NAME, WEBSITE_SKILL_REGISTRY)

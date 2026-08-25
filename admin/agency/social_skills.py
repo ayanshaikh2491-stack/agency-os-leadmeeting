@@ -1,19 +1,26 @@
-# admin/agency/social_skills.py
-"""Social Agent Skills — loaded from Jcode's skill catalog.
+"""Social Agent Skills — Social's OWN brain, loaded from its repo-local folder.
 
-Mirrors sba_skills.py / seo_skills.py / website_skills.py. Relevant skills
-are auto-detected from the message and passed as context so the Social
-Agent can apply real marketing, copywriting, and content frameworks.
+Social is the content/social-media agent. Its skills live in
+admin/agency/social_skills_repo/ (copied from the domain catalog + authored where
+missing: post-writer-sms). Repo-local so it deploys to AWS with the agent.
+
+Mirrors the other agents' pattern: detect by keyword -> load from own folder ->
+inject as context so the Social agent applies real marketing/copywriting frameworks.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from agent_skill_loader import (
+    detect_agent_skills,
+    build_agent_skill_context,
+    list_agent_skills,
+)
 
 logger = logging.getLogger(__name__)
 
-JCODE_SKILLS_DIR = Path.home() / ".jcode" / "skills"
-AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
+AGENT_NAME = "social"
 
 SOCIAL_SKILL_REGISTRY: list[dict] = [
     {
@@ -67,55 +74,17 @@ SOCIAL_SKILL_REGISTRY: list[dict] = [
     },
 ]
 
-MAX_SKILL_CONTENT_CHARS = 2000
-MAX_TOTAL_SKILL_CHARS = 4000
-
-
-def _load_skill_content(skill_name: str) -> str | None:
-    for base in (JCODE_SKILLS_DIR, AGENTS_SKILLS_DIR):
-        f = base / skill_name / "SKILL.md"
-        if f.exists():
-            try:
-                return f.read_text(encoding="utf-8", errors="ignore")[:MAX_SKILL_CONTENT_CHARS]
-            except OSError:
-                continue
-    return None
-
 
 def detect_skills(message: str, max_skills: int = 2) -> list[dict]:
-    msg_lower = message.lower()
-    hits = []
-    for skill in SOCIAL_SKILL_REGISTRY:
-        if any(kw in msg_lower for kw in skill["keywords"]):
-            content = _load_skill_content(skill["name"])
-            if content:
-                hits.append({**skill, "content": content})
-            else:
-                hits.append({**skill, "content": ""})
-        if len(hits) >= max_skills:
-            break
-    return hits
+    """Detect relevant Social skills from a message (loaded from social_skills_repo/)."""
+    return detect_agent_skills(AGENT_NAME, message, SOCIAL_SKILL_REGISTRY, max_skills=max_skills)
 
 
 def build_skill_context(skills: list[dict]) -> str:
-    parts = []
-    total = 0
-    for s in skills:
-        content = s.get("content", "") or s.get("description", "")
-        if not content:
-            continue
-        block = f"### {s['name']}\n{content}"
-        if total + len(block) > MAX_TOTAL_SKILL_CHARS:
-            block = block[: MAX_TOTAL_SKILL_CHARS - total]
-        parts.append(block)
-        total += len(block)
-        if total >= MAX_TOTAL_SKILL_CHARS:
-            break
-    return "\n\n".join(parts)
+    """Build the Social skill context block."""
+    return build_agent_skill_context(skills)
 
 
 def list_social_skills() -> list[dict]:
-    out = []
-    for s in SOCIAL_SKILL_REGISTRY:
-        out.append({"name": s["name"], "description": s["description"], "keywords": s["keywords"]})
-    return out
+    """List Social's own skills (without loading content)."""
+    return list_agent_skills(AGENT_NAME, SOCIAL_SKILL_REGISTRY)

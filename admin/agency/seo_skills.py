@@ -1,30 +1,31 @@
-"""SEO Agent Skills — loaded from Jcode's skill catalog.
+"""SEO Agent Skills — SEO's OWN brain, loaded from its repo-local skill folder.
 
-Relevant skills are auto-detected from the message and passed as context
-so the SEO agent can apply SEO strategies and frameworks.
+SEO is the search/AI-visibility agent. Its skills live in
+admin/agency/seo_skills_repo/ (copied from the domain catalog + authored where
+missing: seo-technical, seo-geo). Repo-local so it deploys to AWS with the agent.
 
-Supports SEO (ranking), SEO-technical (audits), AEO (Answer Engine
-Optimization — ranking inside AI answers like ChatGPT/Perplexity/Gemini),
-and GEO (Generative Engine Optimization — being cited by AI search engines).
-
-Skill content is loaded from either ~/.jcode/skills or ~/.agents/skills
-(the directory name per registry entry is given by ``dir``; defaults to the
-registry ``name`` when ``dir`` is omitted).
+Covers SEO (ranking), technical audits, AEO (Answer Engine Optimization — ranking
+inside AI answers like ChatGPT/Perplexity/Gemini), and GEO (Generative Engine
+Optimization — being cited by AI search engines).
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from agent_skill_loader import (
+    detect_agent_skills,
+    build_agent_skill_context,
+    list_agent_skills,
+)
 
 logger = logging.getLogger(__name__)
 
-JCODE_SKILLS_DIR = Path.home() / ".jcode" / "skills"
-AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
+AGENT_NAME = "seo"
 
 SEO_SKILL_REGISTRY: list[dict] = [
     {
         "name": "seo",
-        "dir": "seo",
         "keywords": [
             "seo", "search engine optimization", "ranking", "serp",
             "backlink", "link building", "domain authority",
@@ -39,7 +40,6 @@ SEO_SKILL_REGISTRY: list[dict] = [
     },
     {
         "name": "seo-technical",
-        "dir": "seo-technical",
         "keywords": [
             "technical seo", "technical audit", "crawl budget",
             "canonical", "hreflang", "render", "javascript seo",
@@ -49,8 +49,7 @@ SEO_SKILL_REGISTRY: list[dict] = [
         "description": "Technical SEO deep-dive -- crawlability, render, canonicalization, site architecture",
     },
     {
-        "name": "aeo",
-        "dir": "seo-aeo-best-practices",
+        "name": "seo-aeo-best-practices",
         "keywords": [
             "answer engine optimization", "aeo", "ai overview",
             "chatgpt", "perplexity", "gemini", "ai search",
@@ -62,8 +61,7 @@ SEO_SKILL_REGISTRY: list[dict] = [
         "description": "Answer Engine Optimization -- get the business cited/ranked inside AI answers (ChatGPT, Perplexity, Gemini, AI Overviews)",
     },
     {
-        "name": "geo",
-        "dir": "seo-geo",
+        "name": "seo-geo",
         "keywords": [
             "generative engine optimization", "geo", "generative search",
             "ai citation", "cited by ai", "llm visibility",
@@ -75,7 +73,6 @@ SEO_SKILL_REGISTRY: list[dict] = [
     },
     {
         "name": "content-engine",
-        "dir": "content-engine",
         "keywords": [
             "blog", "article", "content strategy", "content calendar",
             "repurpose", "content gap", "pillar content",
@@ -85,7 +82,6 @@ SEO_SKILL_REGISTRY: list[dict] = [
     },
     {
         "name": "seo-audit",
-        "dir": "seo-technical",
         "keywords": [
             "audit", "site audit", "technical audit", "seo audit",
             "broken link", "404", "redirect", "canonical",
@@ -97,77 +93,16 @@ SEO_SKILL_REGISTRY: list[dict] = [
 ]
 
 
-def _load_skill_content(skill_name: str, skill_dir: str | None = None) -> str | None:
-    dirname = skill_dir or skill_name
-    for base in (JCODE_SKILLS_DIR, AGENTS_SKILLS_DIR):
-        skill_path = base / dirname / "SKILL.md"
-        if skill_path.is_file():
-            try:
-                return skill_path.read_text(encoding="utf-8")
-            except Exception as e:  # noqa: BLE001 - never crash on skill load
-                logger.error("Error reading skill %s: %s", skill_name, e)
-                return None
-    return None
-
-
-def detect_skills(message: str, max_skills: int = 3) -> list[dict]:
-    msg_lower = message.lower()
-    matched: list[dict] = []
-    seen: set[str] = set()
-    for skill in SEO_SKILL_REGISTRY:
-        if skill["name"] in seen:
-            continue
-        for kw in skill["keywords"]:
-            if kw in msg_lower:
-                content = _load_skill_content(skill["name"], skill.get("dir"))
-                matched.append({
-                    "name": skill["name"],
-                    "description": skill["description"],
-                    "content": content or f"Skill: {skill['name']} - {skill['description']}",
-                })
-                seen.add(skill["name"])
-                break
-        if len(matched) >= max_skills:
-            break
-    return matched
-
-
-MAX_SKILL_CONTENT_CHARS = 2000
-MAX_TOTAL_SKILL_CHARS = 5000
+def detect_skills(message: str, max_skills: int = 2) -> list[dict]:
+    """Detect relevant SEO skills from a message (loaded from seo_skills_repo/)."""
+    return detect_agent_skills(AGENT_NAME, message, SEO_SKILL_REGISTRY, max_skills=max_skills)
 
 
 def build_skill_context(skills: list[dict]) -> str:
-    if not skills:
-        return ""
-    blocks: list[str] = []
-    total_chars = 0
-    for s in skills:
-        content = s["content"]
-        if len(content) > MAX_SKILL_CONTENT_CHARS:
-            content = content[:MAX_SKILL_CONTENT_CHARS] + "\n...[truncated]"
-        if total_chars + len(content) > MAX_TOTAL_SKILL_CHARS:
-            break
-        total_chars += len(content)
-        blocks.append(
-            f"### Skill: {s['name']}\n"
-            f"{s['description']}\n\n"
-            f"{content}"
-        )
-    if not blocks:
-        return ""
-    return (
-        "-- RELEVANT SEO SKILLS --\n"
-        + "\n\n".join(blocks)
-        + "\n----------------------------------------------"
-    )
+    """Build the SEO skill context block."""
+    return build_agent_skill_context(skills)
 
 
 def list_seo_skills() -> list[dict]:
-    return [
-        {"name": s["name"], "description": s["description"], "keywords": s["keywords"]}
-        for s in SEO_SKILL_REGISTRY
-    ]
-
-
-# Backward compat alias
-detect_seo_skills = detect_skills
+    """List SEO's own skills (without loading content)."""
+    return list_agent_skills(AGENT_NAME, SEO_SKILL_REGISTRY)

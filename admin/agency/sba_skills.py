@@ -1,20 +1,30 @@
-"""SBA Agent Skills — loaded from Jcode's skill catalog.
+"""SBA Agent Skills — SBA's OWN brain, loaded from its repo-local skill folder.
 
-Each skill is a SKILL.md file in ~/.jcode/skills/<skill-name>/.
-Relevant skills are auto-detected from the message and passed as context.
+SBA is the sales/lead-gen agent. Its skills live in
+admin/agency/sba_skills_repo/ (copied from the domain catalog + authored where
+missing). This is repo-local so it deploys to AWS with the agent — it does NOT
+depend on ~/.jcode/skills existing on the server.
+
+Mechanism: detect by keyword -> load SKILL.md from sba_skills_repo/ -> inject as
+context into SBA's model call. SBA thinks in its OWN sales domain, not as a
+dumb router.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from agent_skill_loader import (
+    detect_agent_skills,
+    build_agent_skill_context,
+    list_agent_skills,
+)
 
 logger = logging.getLogger(__name__)
 
-# ── Path to Jcode skills ────────────────────────────────────────────
-JCODE_SKILLS_DIR = Path.home() / ".jcode" / "skills"
+AGENT_NAME = "sba"
 
-# ── SBA-relevant skills (sales agent role only) ──────────────────────────
+# ── SBA's own skill registry (its domain brain) ─────────────────────────────
 SBA_SKILL_REGISTRY: list[dict] = [
     {
         "name": "cold-outreach",
@@ -25,7 +35,6 @@ SBA_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "8 proven sales systems for cold outreach, DM, email prospecting",
     },
-    # ── Upwork & Freelance Lead Gen ──────────────────────────────────
     {
         "name": "upwork-lead-gen",
         "keywords": [
@@ -36,7 +45,6 @@ SBA_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "Find and win leads on Upwork, Fiverr, Freelancer — search jobs, submit proposals, convert to clients",
     },
-    # ── LinkedIn Lead Gen ────────────────────────────────────────────
     {
         "name": "linkedin-lead-gen",
         "keywords": [
@@ -46,7 +54,6 @@ SBA_SKILL_REGISTRY: list[dict] = [
         ],
         "description": "LinkedIn prospecting, profile research, connection requests, InMail outreach",
     },
-    # ── Web Research & Lead Discovery ────────────────────────────────
     {
         "name": "web-lead-discovery",
         "keywords": [
@@ -55,7 +62,7 @@ SBA_SKILL_REGISTRY: list[dict] = [
             "competitor", "directory", "listings", "yelp", "google maps",
             "crunchbase", "angellist", "producthunt", "g2", "capterra",
         ],
-        "description": "Use Chrome browser to search for leads, research companies, find contact info on any platform",
+        "description": "Use browser to search for leads, research companies, find contact info on any platform",
     },
     {
         "name": "alex-hormozi-pitch",
@@ -96,87 +103,16 @@ SBA_SKILL_REGISTRY: list[dict] = [
 ]
 
 
-def _load_skill_content(skill_name: str) -> str | None:
-    """Read SKILL.md from Jcode skills directory."""
-    skill_path = JCODE_SKILLS_DIR / skill_name / "SKILL.md"
-    if not skill_path.is_file():
-        logger.warning("Skill not found: %s (%s)", skill_name, skill_path)
-        return None
-    try:
-        return skill_path.read_text(encoding="utf-8")
-    except Exception as e:
-        logger.error("Error reading skill %s: %s", skill_name, e)
-        return None
-
-
 def detect_skills(message: str, max_skills: int = 2) -> list[dict]:
-    """Detect relevant SBA skills from a message.
-
-    Returns a list of matched skills with their loaded content.
-    At most `max_skills` skills are returned.
-    """
-    msg_lower = message.lower()
-    matched: list[dict] = []
-
-    for skill in SBA_SKILL_REGISTRY:
-        for kw in skill["keywords"]:
-            if kw in msg_lower:
-                content = _load_skill_content(skill["name"])
-                if content:
-                    matched.append({
-                        "name": skill["name"],
-                        "description": skill["description"],
-                        "content": content,
-                    })
-                break  # One match per skill
-        if len(matched) >= max_skills:
-            break
-
-    return matched
-
-
-MAX_SKILL_CONTENT_CHARS = 2000  # Per skill — keeps total under Groq free TPM
-MAX_TOTAL_SKILL_CHARS = 4000   # Total skill context cap
+    """Detect relevant SBA skills from a message (loaded from sba_skills_repo/)."""
+    return detect_agent_skills(AGENT_NAME, message, SBA_SKILL_REGISTRY, max_skills=max_skills)
 
 
 def build_skill_context(skills: list[dict]) -> str:
-    """Build a skill context block from matched skills.
-
-    Truncates each skill's content to MAX_SKILL_CONTENT_CHARS to stay
-    within Groq free-tier TPM limits (total context < 4000 chars).
-    """
-    if not skills:
-        return ""
-
-    blocks: list[str] = []
-    total_chars = 0
-    for s in skills:
-        content = s["content"]
-        if len(content) > MAX_SKILL_CONTENT_CHARS:
-            content = content[:MAX_SKILL_CONTENT_CHARS] + "\n...[truncated]"
-        if total_chars + len(content) > MAX_TOTAL_SKILL_CHARS:
-            break
-        total_chars += len(content)
-        blocks.append(
-            f"### Skill: {s['name']}\n"
-            f"{s['description']}\n\n"
-            f"{content}"
-        )
-
-    if not blocks:
-        return ""
-
-    return (
-        "── RELEVANT SKILLS ────────────────────────\n"
-        "Tuze jo skills relevant lagti hain, unko use kar:\n\n"
-        + "\n\n".join(blocks)
-        + "\n──────────────────────────────────────────"
-    )
+    """Build the SBA skill context block."""
+    return build_agent_skill_context(skills)
 
 
 def list_sba_skills() -> list[dict]:
-    """List all SBA-relevant skills (without loading content)."""
-    return [
-        {"name": s["name"], "description": s["description"], "keywords": s["keywords"]}
-        for s in SBA_SKILL_REGISTRY
-    ]
+    """List SBA's own skills (without loading content)."""
+    return list_agent_skills(AGENT_NAME, SBA_SKILL_REGISTRY)
