@@ -99,10 +99,11 @@ If external `curl` returns empty again, re-check SG inbound before assuming app 
 
 - [ ] Munder-style UI (agent gallery + CEO command console + live results)
 - [ ] Put backend behind a domain / reverse proxy (currently raw IP:9002).
-      NOTE 2026-08-24: ye BLOCKER hai Vercel ke liye - https frontend se
-      ws://18.213.66.136:9002 mixed-content block hota hai. Floor render
-      hota hai par live ticker nahi chalta. Local (http://localhost) aur
-      EC2 direct pe sab fine hai.
+      NOTE 2026-08-25: office floor ab WS use NAHI karta - ye same-origin
+      /api/ceo/floor ko 3s poll karta hai (Vercel proxy -> EC2), jo HTTPS pe
+      bhi chalta hai aur PROD VERIFIED hai. Purana ws:// endpoint backend mein
+      tha hi nahi. Avatars activity-driven hain: working=laptop/desk,
+      coding(website)=desktop monitor, idle=cafeteria coffee, error=red !
 - [x] Open EC2 security-group inbound for 9002 (DONE 2026-08-23: rule `sgr-01dbacef76e41c4e3`, SG `sg-02b87bc26027dc457`, CIDR `0.0.0.0/0`)
 - [ ] Push commits to `origin` (currently 4 commits ahead of origin, not pushed)
 
