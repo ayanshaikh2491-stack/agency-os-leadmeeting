@@ -10,6 +10,7 @@ SBA handles:
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -119,6 +120,90 @@ def _get_agency_sba() -> SBAAgent:
             client_name="TAGS Agency (Internal)",
         )
     return _sba
+
+
+# ── Mirror lead to PocketBase + JSON files ────────────────────────────────
+
+def _mirror_lead(record, delete: bool = False) -> None:
+    """Best-effort mirror of a lead (LeadModel or dict) to data/store + PocketBase.
+
+    Collection: "sba_leads", keyed on "record_id" (the lead's primary id,
+    stringified). Payload is flattened to JSON-safe strings only (datetimes
+    become ISO strings, nested dict/list are json.dumps'd). The file write is
+    attempted first, then PocketBase.
+
+    Fully wrapped in try/except and NEVER raises, so a mirror failure can
+    never break the main lead DB write (CREATE/UPDATE/DELETE).
+    """
+    # Extract a plain dict from either a LeadModel or a plain dict.
+    try:
+        if hasattr(record, "to_dict"):
+            rec = record.to_dict()
+        elif isinstance(record, dict):
+            rec = record
+        else:
+            rec = {}
+        record_id = str(rec.get("id", "") or "")
+        if not record_id:
+            logger.debug("mirror_lead skipped: missing lead id")
+            return
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("mirror_lead id extract failed (non-fatal): %s", exc)
+        return
+
+    if delete:
+        try:
+            from admin.file_store import delete_record as _fs_del
+            _fs_del("sba_leads", record_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("file delete (sba_leads) failed (non-fatal): %s", exc)
+        try:
+            from admin.pocketbase_client import get_pb_client
+            pb = get_pb_client()
+            if pb and pb.is_configured():
+                pb.delete_by_key("sba_leads", "record_id", record_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("PocketBase delete (sba_leads) failed (non-fatal): %s", exc)
+        return
+
+    # Build a flat, strings-only payload.
+    try:
+        payload: dict = {}
+        for key in (
+            "id", "name", "business_name", "email", "phone", "source",
+            "score", "status", "notes", "meeting_ids", "context",
+            "created_at", "updated_at",
+        ):
+            val = rec.get(key, "")
+            if hasattr(val, "isoformat"):
+                val = val.isoformat()
+            elif isinstance(val, (dict, list)):
+                val = json.dumps(val, default=str)
+            elif val is None:
+                val = ""
+            else:
+                val = str(val)
+            payload[key] = val
+        # Keep our id under "record_id" (PB ids are 15-char only).
+        payload["record_id"] = payload.pop("id", "")
+        payload.pop("id", None)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("sba_leads mirror payload build failed (non-fatal): %s", exc)
+        return
+
+    try:
+        from admin.file_store import save_record as _fs_save
+        _fs_save("sba_leads", record_id, payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("file mirror (sba_leads) failed (non-fatal): %s", exc)
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.upsert_by_key("sba_leads", "record_id", payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase mirror (sba_leads) failed (non-fatal): %s", exc)
 
 
 # ── Status ──────────────────────────────────────────────────────────────────
@@ -242,6 +327,7 @@ async def api_list_leads(status: str | None = None):
 async def api_create_lead(payload: LeadCreate):
     """Create a new lead."""
     lead = await create_lead(payload.model_dump())
+    _mirror_lead(lead)
     return {"success": True, "data": {"lead": lead}}
 
 
@@ -259,6 +345,7 @@ async def api_update_lead(lead_id: str, payload: LeadUpdate):
     lead = await update_lead(lead_id, updates)
     if not lead:
         raise HTTPException(404, "Lead not found")
+    _mirror_lead(lead)
     return {"success": True, "data": {"lead": lead}}
 
 
@@ -266,6 +353,7 @@ async def api_update_lead(lead_id: str, payload: LeadUpdate):
 async def api_delete_lead(lead_id: str):
     if not await delete_lead(lead_id):
         raise HTTPException(404, "Lead not found")
+    _mirror_lead({"id": lead_id}, delete=True)
     return {"success": True}
 
 
