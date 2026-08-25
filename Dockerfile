@@ -20,14 +20,15 @@ WORKDIR /app
 
 # Install dependencies first (better layer caching).
 COPY admin/requirements.txt /app/admin/requirements.txt
-RUN pip install -r /app/admin/requirements.txt && \
-    playwright install --with-deps chromium 2>/dev/null || true
+RUN pip install -r /app/admin/requirements.txt
 
 # Copy the application source.
 COPY . /app
 
 # SQLite data dir lives here; mount a volume for durable persistence.
 ENV TAGS_DATA_DIR=/app/data
+ENV ADMIN_HOST=0.0.0.0
+ENV ADMIN_PORT=9002
 RUN mkdir -p /app/data
 
 EXPOSE 9002

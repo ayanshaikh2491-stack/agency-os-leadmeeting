@@ -1,0 +1,30 @@
+version: 0.2
+
+# Builds the TAGS Agency OS container image and pushes it to ECR.
+# Used by AWS CodeBuild (or run locally with `aws codebuild`/docker).
+# App Runner then serves it (scale-to-zero, $0 when idle).
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - IMAGE_TAG=${IMAGE_TAG:-latest}
+      - IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO:$IMAGE_TAG"
+  build:
+    commands:
+      - echo "Building image $IMAGE_URI"
+      - docker build -t $IMAGE_URI -f Dockerfile .
+  post_build:
+    commands:
+      - echo "Pushing image $IMAGE_URI"
+      - docker push $IMAGE_URI
+      - echo "Image pushed: $IMAGE_URI"
+
+artifacts:
+  files:
+    - "**/*"
+
+cache:
+  paths:
+    - "C:/Users/*/.cache/pip"

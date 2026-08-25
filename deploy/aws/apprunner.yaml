@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  TAGS Agency OS — lightweight AWS deployment.
+  Single container on AWS App Runner (scale-to-zero: $0 when idle, no always-on
+  heavy EC2). CEO is the only 24/7 HTTP listener; worker agents self-sleep
+  (STANDBY) and are woken on demand. Image is built/pushed to ECR, then served
+  by App Runner.
+
+Parameters:
+  ServiceName:
+    Type: String
+    Default: tags-agency-os
+    AllowedPattern: "[A-Za-z0-9][A-Za-z0-9-_]{3,39}"
+    Description: App Runner service name (unique in account/region).
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: ECR image tag to deploy.
+  Cpu:
+    Type: String
+    Default: "0.25 vCPU"
+    AllowedValues: ["0.25 vCPU", "0.5 vCPU", "1 vCPU", "2 vCPU"]
+  Memory:
+    Type: String
+    Default: "0.5 GB"
+    AllowedValues: ["0.5 GB", "1 GB", "2 GB", "3 GB", "4 GB"]
+  Port:
+    Type: String
+    Default: "9002"
+    Description: Container port the FastAPI app listens on.
+
+Resources:
+  # ── Container image registry ──────────────────────────────────────────────
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ServiceName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 5 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  # ── IAM role App Runner uses to pull the image from ECR ────────────────────
+  AppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ServiceName}-apprunner-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ecr-pull
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !GetAtt EcrRepository.Arn
+
+  # ── App Runner service (scale-to-zero, 24/7 HTTP listener) ─────────────────
+  AppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: !Ref ServiceName
+      SourceConfiguration:
+        ImageRepository:
+          ImageRepositoryType: ECR
+          ImageIdentifier: !Sub "${EcrRepository.RepositoryUri}:${ImageTag}"
+          ImageConfiguration:
+            Port: !Ref Port
+            RuntimeEnvironmentVariables:
+              - Name: ADMIN_HOST
+              - Name: ADMIN_PORT
+                Value: !Ref Port
+              - Name: ADMIN_RELOAD
+                Value: "false"
+        AuthenticationConfiguration: {}
+        AutoDeploymentsEnabled: false
+      InstanceConfiguration:
+        Cpu: !Ref Cpu
+        Memory: !Ref Memory
+        InstanceRoleArn: !GetAtt AppRunnerInstanceRole.Arn
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /api/health
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 3
+        UnhealthyThreshold: 5
+
+Outputs:
+  ServiceUrl:
+    Description: Public URL of the deployed Agency OS (CEO 24/7 HTTP listener).
+    Value: !GetAtt AppRunnerService.ServiceUrl
+  EcrRepositoryUri:
+    Description: Push your built image here as :latest (or the ImageTag).
+    Value: !GetAtt EcrRepository.RepositoryUri
+  Region:
+    Value: !Ref AWS::Region
