@@ -242,6 +242,8 @@ class AgentBus:
             )
             self._conn.commit()
         logger.info("bus.brief %s -> %s [%s]: %s", sender, receiver, workspace, task[:60])
+        _msg = self.thread(mid)
+        _mirror_message(_msg.to_dict() if _msg else {})
         return mid
 
     def respond(
@@ -271,7 +273,9 @@ class AgentBus:
                 (result, status, errors, now, message_id),
             )
             self._conn.commit()
-            return self.thread(message_id)
+        msg = self.thread(message_id)
+        _mirror_message(msg.to_dict() if msg else {})
+        return msg
 
     def parallel_blast(
         self,
@@ -385,6 +389,59 @@ class AgentBus:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+# ── durable mirroring (PocketBase + JSON files) ────────────────────────────
+
+def _mirror_message(record: dict[str, Any]) -> None:
+    """Mirror an agent bus message to a JSON file AND PocketBase.
+
+    PocketBase is the durable source of truth; the JSON file under
+    ``data/store/agent_messages`` is the boss-readable backup that works even
+    when POCKETBASE_URL is unset. Both calls are best-effort and NEVER raise,
+    so a mirror failure can never break the main bus path.
+
+    The row dict is flattened to JSON-safe strings (nested dicts/lists are
+    serialised, datetimes become ISO strings). Our own id is kept under the
+    ``message_id`` key because PocketBase record ids are 15-char only.
+    """
+    try:
+        payload: dict[str, Any] = {}
+        for key in (
+            "id", "sender", "receiver", "workspace", "task", "objective",
+            "context", "required_action", "result", "status", "errors",
+            "metadata", "created_at", "updated_at",
+        ):
+            val = record.get(key, "")
+            if hasattr(val, "isoformat"):
+                val = val.isoformat()
+            elif isinstance(val, (dict, list)):
+                val = json.dumps(val, default=_json_default)
+            elif val is None:
+                val = ""
+            else:
+                val = str(val)
+            payload[key] = val
+        # Keep our id under "message_id" (PB ids are 15-char only).
+        payload["message_id"] = payload.pop("id", "")
+        # Never send our internal "id" to PB (would clash with its record id).
+        payload.pop("id", None)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("agent_messages mirror payload build failed (non-fatal): %s", exc)
+        return
+    try:
+        from admin.file_store import save_record as _fs_save
+        _fs_save("agent_messages", payload["message_id"], payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("file mirror (agent_messages) failed (non-fatal): %s", exc)
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.upsert_by_key("agent_messages", "message_id", payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase mirror (agent_messages) failed (non-fatal): %s", exc)
 
 
 _bus_singleton: Optional[AgentBus] = None
