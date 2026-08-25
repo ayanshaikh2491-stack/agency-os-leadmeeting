@@ -111,6 +111,10 @@ If external `curl` returns empty again, re-check SG inbound before assuming app 
       bhi chalta hai aur PROD VERIFIED hai. Purana ws:// endpoint backend mein
       tha hi nahi. Avatars activity-driven hain: working=laptop/desk,
       coding(website)=desktop monitor, idle=cafeteria coffee, error=red !
+      UPDATE 2026-08-26: A* pathfinding (pathfinding.js, furniture collision
+      grid) + pixel-human directional rig, sit pose, typing arms
+      (character.js). Subagent-built, prod verified. Paperclip dashboard UI
+      deleted; office floor ab home base hai (/admin -> /admin/office).
 - [x] Open EC2 security-group inbound for 9002 (DONE 2026-08-23: rule `sgr-01dbacef76e41c4e3`, SG `sg-02b87bc26027dc457`, CIDR `0.0.0.0/0`)
 - [ ] Push commits to `origin` (currently 4 commits ahead of origin, not pushed)
 
