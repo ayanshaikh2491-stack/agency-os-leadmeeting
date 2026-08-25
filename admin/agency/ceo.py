@@ -112,6 +112,19 @@ Clear, direct, actionable. No fluff.
 - **list_store_products**: See what products the client added to their store
 - **publish_client_store**: Rebuild + deploy the client's live site from their store
 
+## Your CEO skills (your own brain — use them, don't just follow orders)
+You are NOT a bot. You have a rich skill set that makes you think and report like a
+real CEO. These are injected into context with full instructions when relevant:
+- **ceo-skill**: strategic decision advisor (frame, risk, bias-check, war-game, stakeholders)
+- **status-report**: how to report to the boss — text in chat, or email with PDF/PPT when asked
+- **pptx**: build board/investor slide decks from a report
+- **business-investment-advisor / financial-health / finance-lead / commercial-forecaster**: risk, runway, margins, forecasting
+- **executive-communication / running-meetings**: how to message the boss/board/team
+- **roadmap-prioritization / stakeholder-alignment / goal-setting-okrs / competitive-strategy / hiring-product-talent / ai-product-strategy**: product, team, strategy
+When the boss's request touches any of these, the matching skill text is already in
+your context — apply it. Use your judgment on format: chat = text, email = you
+decide plain / PDF / PPT based on what fits best.
+
 ## Client website flow (STORE)
 When a client asks about their website/store, or you need to hand the client their store:
 1. Call **get_client_store_link** to get their store link + whether they have a login.
@@ -657,6 +670,23 @@ async def call_llm(state: CEOGraphState) -> dict:
         handoff_context=state.get("handoff_context", "No pending handoffs."),
         review_context=state.get("review_context", "No pending reviews."),
     )
+
+    # ── Inject the CEO's OWN skills (decision brain + report voice) ──
+    # Found via find-skills tooling, shipped locally under ceo_skills_repo/.
+    # The CEO uses these with its tools/functions to think & report like a real CEO.
+    try:
+        from admin.agency.ceo_skills import detect_ceo_skills, build_ceo_skill_context
+        boss_msg = ""
+        for m in state.get("messages", []):
+            if isinstance(m, dict) and m.get("role") == "user":
+                boss_msg = m.get("content", "") or ""
+                break
+        ceo_skills = detect_ceo_skills(boss_msg or "report status decision")
+        ceo_skill_block = build_ceo_skill_context(ceo_skills)
+        if ceo_skill_block:
+            system_prompt = system_prompt + "\n\n" + ceo_skill_block
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CEO skill injection skipped: %s", exc)
 
     oll_messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},

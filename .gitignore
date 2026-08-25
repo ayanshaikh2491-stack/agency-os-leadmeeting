@@ -61,12 +61,21 @@ config/agentmail.json
 /references/
 
 # Runtime state / generated output
+# Runtime state / generated output
 /.sba_rotation_state
 /.sba_enrichment_state
 /.sba_followup_state
 /generated_sites/
 /admin/generated_sites/
-crewai-repo/  
-deploy/pocketbase/ 
+crewai-repo/
+deploy/pocketbase/
 deploy/gw.log
-.worktrees/  
+.worktrees/
+spawn.ps1
+push*.txt
+ec2_*.txt
+ec2_*.log
+maps_*.txt
+agency-ui-build.*
+implementation_plan.md
+.hire-frontend-brief.txt
