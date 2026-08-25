@@ -1,118 +1,117 @@
-# Handoff — TAGS Agency OS Documentation Session
+# HANDOFF — TAGS Agency OS (Backend + EC2 Deploy)
 
-> Session date: July 9, 2026
-> Handoff for: Next documentation/audit session
+**Date:** 2026-08-22  |  **Status:** DEPLOYED & LIVE on EC2 — continue from here tomorrow.
 
----
-
-## Session State
-
-### What Was Accomplished
-
-1. **Audited the entire `admin/` Python backend codebase** — all 17 files (including empty `__init__.py` files)
-2. **Created formalization documents:**
-   - `letta.md` — Letta Code agent memory (project context, codebase map, known issues)
-   - `agent.md` — Agent architecture specification (CEO, execution engine, sub-agents, routing, API)
-   - `handoff.md` — (this file) Session handoff for continuity
-   - `ARCHITECTURE.md` — Updated architecture plan (CrewAI → LangGraph, corrected design)
-
-3. **Key discoveries during audit:**
-   - CEO uses raw OpenAI API calls, NOT LangGraph yet (deps installed but not wired)
-   - Execution Engineer is defined as dict metadata but NOT integrated into CEO flow
-   - Workspace agents are stubs — simple system prompts with no real tools/autonomy
-   - CRM/in-memory only — no database persistence active
-   - Workspace Manager default agent types include `memory` (not in ARCHITECTURE.md)
-   - Many `__init__.py` files are empty (workspace/agents/__init__.py, tools/__init__.py, api/models/__init__.py, etc.)
-   - Frontend (`agency-frontend/`) has CEO components but NOT connected to admin backend yet
-   - Free-tier defaults use Groq Llama models (not GPT-4o as ARCHITECTURE.md suggests)
+> Kal subah seedha isi state se kaam shuru karna. Neeche sab hai: kya deploy hua,
+> kahan hai, kaise update karna hai, kya verify hua, aur kya next hai.
+> 6 lead-scraper files AUR agency-frontend submodule — INHE MAT CHHEDNA.
 
 ---
 
-## Next Steps (Priority Ordered)
+## 1. Aaj kya hua (recap)
 
-### P1 — Implementation Gap: Wire Execution Engineer into CEO Flow
-- [ ] CEO (`agency/ceo.py`) currently calls LLM directly instead of using LangGraph
-- [ ] Create a real LangGraph state graph: `UserMessage → CEO thinks → [Execution | Reply]`
-- [ ] Integrate `execution_agent` from `agency_agents.py` as a LangGraph node
-- [ ] Test end-to-end: CEO receives task → delegates to Execution Engineer → returns result
+Phase 1-3 backend complete + EC2 deploy complete. CEO (Michael, LangGraph)
+orchestrator-only; dynamic user-added agents (Munder-style); CEO fan-out to
+built-in + custom agents; agents think before acting; AWS-light single-process.
 
-### P1 — Implementation Gap: Real LangGraph Graph
-- [ ] Build LangGraph state definition (`admin/agency/graph.py` or similar)
-- [ ] Define state schema (messages, workspace_context, agent_outputs)
-- [ ] Create nodes: `ceo_node`, `execute_node`, `route_node`
-- [ ] Add conditional edges based on CEO's decision output
+Commits (branch `feat/sba-lead-to-meeting-pipeline`):
+- `47fc16d` feat(agency): dynamic user-added agents (registry + worker bridge + CRUD API)
+- `4be51d1` feat(agency): multi-agent orchestration (CEO fan-out to built-in + custom)
+- `d2ba350` chore(deploy): AWS-light deploy artifacts (Dockerfile, Procfile, .dockerignore, DEPLOY.md)
+- `03f3eeb` fix(agents): social/website tool dispatchers tolerate injected delegation kwargs
 
-### P2 — Workspace Sub-Agent Implementation
-- [ ] Move workspace agents from stubs to real LangGraph agents with tools
-- [ ] Implement per-agent system prompts that match their domain (SEO, Content, Website, etc.)
-- [ ] Add Workspace CEO → Sub-agent delegation flow (parallel blast pattern from Q4)
-- [ ] Add CEO review/QA stage (as confirmed in Q5)
+## 2. EC2 deploy — live details
 
-### P2 — Database Persistence
-- [ ] Set up PostgreSQL and connect via asyncpg
-- [ ] Replace in-memory workspace store with DB-backed
-- [ ] Add conversation persistence per workspace
-- [ ] Migrate settings from env vars to `.env` file at project root
+| Item | Value |
+|------|-------|
+| Host | `ubuntu@18.213.66.136` (public IP `18.213.66.136`) |
+| SSH key | `int_ec2.pem` (in working dir `C:\Users\TAUSHEF\Downloads\int`) |
+| Our app dir | `/opt/tags-agency-os` |
+| Our port | **9002** (Uvicorn `0.0.0.0:9002`) |
+| Our service | `tags-agency.service` (systemd, auto-restart, log `/var/log/tags-agency.log`) |
+| DB (ORM/SBA) | `data/tags_agency.db` (SQLite) |
+| DB (workspace/custom agents) | `tags_agency_workspace.db` (SQLite, has `custom_agents` table) |
+| Existing live app | `sba-backend` on **port 8000** — SEPARATE, untouched, still running |
+| Python | 3.12 venv at `/opt/tags-agency-os/venv` |
 
-### P3 — Frontend Integration
-- [ ] Connect `/admin/chat/ceo` page to `POST /api/chat/ceo` (admin backend, not Hermes)
-- [ ] Connect per-workspace chat pages to `POST /api/workspace/{ws_id}/chat`
-- [ ] Build workspace creation UI
-- [ ] Update CEO dashboard to show live workspace status from backend
+Health: `curl http://18.213.66.136:9002/api/health` → `{"status":"ok","ceo_ready":true,...}`
 
-### P3 — Frontend Hermes Replacement
-- [ ] Confirm Hermes (`localhost:9000`) is no longer the default CEO target
-- [ ] Update frontend proxy routes to point at admin backend (`localhost:9002`) instead
+## 3. Verified working live (real EC2)
 
-### P3 — EC2 Backend
-- [ ] EC2 at `18.213.66.136` has nginx and PostgreSQL running
-- [ ] Cloudflared may need restart
-- [ ] Coordinate with frontend API proxy deployment
+- `GET /api/health` → ok, ceo_ready true, workspace_count 2 ✅
+- `POST /api/agents/custom` → creates dynamic agent, PERSISTS to SQLite
+  (`custom_agents` table had 2 rows from live calls: SmokeBot, QA2) ✅
+- `POST /api/ceo/run` → CEO fans out to ALL 8 agents (7 built-in + custom),
+  real LLM calls return 200 OK, NO dispatch errors after the `03f3eeb` fix ✅
 
-### P4 — Testing & Hardening
-- [ ] Write tests for CEO multi-phase thinking
-- [ ] Write tests for workspace CRUD
-- [ ] Add error handling to all API routes
-- [ ] Add input validation
+## 4. Bug fixes done during deploy (commit `03f3eeb`)
 
----
+- **Root cause:** `workers.py:_parse_brief` injects `{"workspace_id":..., "__brief":...}`
+  into every tool call, but social/website tool funcs (e.g. `content_calendar`)
+  don't accept those kwargs → TypeError failed the CEO fan-out for those agents.
+- **Fix:** `execute_social_tool` and `execute_website_tool` now filter `args` to each
+  tool's declared signature (`inspect.signature`) before calling.
+- **Missing deps added to `admin/requirements.txt` + installed on EC2 venv:**
+  `aiosqlite`, `python-multipart`, `dnspython`, `bs4`, `lxml`, `pandas`, `numpy`,
+  `openpyxl`, `Pillow`, `aiohttp`, `markdown`, `jinja2`, `boto3`, `python-docx`, `PyMuPDF`.
 
-## Known Issues & Blockers
+## 5. KNOWN behavior (not a bug)
 
-1. **No .env file** at project root — `settings.py` defaults may not load correctly. Currently relies on environment variables already being set.
-2. **`settings.py` imports `dotenv.find_dotenv()` and `dotenv.load_dotenv()`** — but no dotenv is imported in the file I read. Re-check.
-3. **All agents share the same workspace API key** — `settings.WORKSPACE_API_KEY` is a single key for all workspace agents. This may need per-agent keys later.
-4. **Workspace CEO is marked as talking to clients** in the old ARCHITECTURE.md — this was corrected. Workspace CEOs are internal only.
-5. **Empty `__init__.py` files** exist in several places — likely fine for now, but `admin/workspace/agents/__init__.py` being empty means no agent modules are importable from that package.
+- **CEO run is SLOW (~5 min).** The SBA agent runs its full email-enrichment +
+  send pipeline and the website agent launches Chrome/Playwright. This is the
+  existing `admin` codebase's design, not a deploy defect. Each agent is
+  failure-isolated (one slow/failing agent doesn't block the rest).
+- If a curl to `/api/ceo/run` returns empty, it just means the 180-300s client
+  timeout elapsed before the server finished the synchronous fan-out. The server
+  keeps processing; check `/var/log/tags-agency.log`.
 
----
+## 6. How to UPDATE the EC2 deploy (when code changes)
 
-## Guidance for Future Session
+```bat
+REM 1. On local Windows, from C:\Users\TAUSHEF\Downloads\int:
+git bundle create _deploy.bundle HEAD
+scp -i int_ec2.pem -o StrictHostKeyChecking=no -o BatchMode=yes _deploy.bundle ubuntu@18.213.66.136:/tmp/tags_deploy.bundle
 
-### Quick Start
-```
-cd C:\Users\TAUSHEF\Downloads\int
-# Start admin backend:
-cd admin && python main.py
-# Or just read the current state:
-cat letta.md agent.md
+REM 2. On EC2 (ssh), pull + restart. .env and data/ are UNTRACKED so they survive:
+cd /opt/tags-agency-os
+git fetch /tmp/tags_deploy.bundle HEAD
+git reset --hard FETCH_HEAD
+sudo systemctl restart tags-agency.service
 ```
 
-### Documents Created
-| File | What to Use It For |
-|------|-------------------|
-| `letta.md` | Read this FIRST to recover full project context |
-| `agent.md` | Reference for agent definitions, architecture, API specs |
-| `handoff.md` | (this file) Next steps, priorities, blockers |
-| `ARCHITECTURE.md` | Updated architecture plan (corrected from CrewAI) |
+**SSH gotcha (important for tomorrow):** the remote login shell has `IFS` unset,
+so multi-word remote commands get mangled ("echo SSH_OK" treated as one command).
+Workaround that WORKS: write a `.sh` script (LF line-endings!), then
+`type script.sh | ssh -i int_ec2.pem -o BatchMode=yes ubuntu@18.213.66.136 bash`.
+Single-token commands (e.g. `whoami`) also work directly.
 
-### Key Files to Read Next
-- `admin/agency/ceo.py` — If modifying CEO thinking loop or LangGraph integration
-- `admin/api/routes/workspace.py` — If working on workspace CRUD or per-agent chat
-- `admin/config/settings.py` — If adjusting model config or API keys
-- `admin/main.py` — If adding new routes or middleware
+**2026-08-23 note:** external inbound on 9002 was NOT open in SG `sg-02b87bc26027dc457`
+(only 80/443/22/8000/3001-3004/4000/4007/4008/8050/8055/8090 were). Opened via
+`AuthorizeSecurityGroupIngress` (rule `sgr-01dbacef76e41c4e3`, tcp 9002, 0.0.0.0/0).
+If external `curl` returns empty again, re-check SG inbound before assuming app died.
 
-### Memory Updates Needed
-- After any implementation work on LangGraph, update `letta.md` ("What Has Been Built" section)
-- After adding real workspace agents, update `agent.md` (implementation status table)
-- After connecting frontend, update the frontend section in `letta.md`
+## 7.5 EC2 instance facts
+
+- Instance ID `i-09a4dceddec646417`, region `us-east-1`, account `176980002493`
+- Security group: `sg-02b87bc26027dc457` (inbound 9002 now open)
+
+## 7. What's NOT done / NEXT (user decides)
+
+- [ ] Munder-style UI (agent gallery + CEO command console + live results)
+- [ ] Put backend behind a domain / reverse proxy (currently raw IP:9002)
+- [x] Open EC2 security-group inbound for 9002 (DONE 2026-08-23: rule `sgr-01dbacef76e41c4e3`, SG `sg-02b87bc26027dc457`, CIDR `0.0.0.0/0`)
+- [ ] Push commits to `origin` (currently 4 commits ahead of origin, not pushed)
+
+## 8. Do NOT touch
+
+- The 6 staged lead-scraper files (in `admin/...`, lead pipeline).
+- The `agency-frontend` git submodule.
+- The live `sba-backend` on port 8000 (separate service, don't restart/kill it).
+
+## 9. Quick re-verify tomorrow
+
+```sh
+curl -s http://18.213.66.136:9002/api/health
+curl -s -X POST http://18.213.66.136:9002/api/agents/custom -H 'Content-Type: application/json' -d '{"name":"X","role":"qa","system_prompt":"hi"}'
+sudo systemctl status tags-agency.service
+```
