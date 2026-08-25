@@ -31,6 +31,7 @@ from admin.api.routes import store as store_routes
 from admin.api.routes import agent_aliases as agent_aliases_routes
 from admin.api.routes import agents_crud as agents_crud_routes
 from admin.api.routes import multiagent as multiagent_routes
+from admin.api.routes import scheduler as scheduler_routes
 from admin.config import settings
 from admin.database import close_db, init_db
 from admin.agency.sba_store import load_all_from_db as load_sba_from_db
@@ -116,7 +117,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("admin.main").warning("mandates init failed: %s", exc)
 
+    # ── Autonomous CEO scheduler (best-effort, never breaks boot) ──────────
+    try:
+        from admin.agency.scheduler import get_scheduler
+
+        await get_scheduler().start()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").warning(
+            "CEO autonomous scheduler failed to start (non-fatal): %s", exc)
+
     yield
+    # ── Stop autonomous CEO scheduler (best-effort, never breaks shutdown) ──
+    try:
+        from admin.agency.scheduler import get_scheduler
+
+        await get_scheduler().stop()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("admin.main").warning(
+            "CEO autonomous scheduler failed to stop (non-fatal): %s", exc)
     await close_persistence()
     await close_db()
 
@@ -159,6 +177,7 @@ app.include_router(agent_aliases_routes.router)  # /api/agents + /api/agents/{id
 app.include_router(agent_aliases_routes._seo_router)  # /api/agents/seo-engine/*
 app.include_router(agents_crud_routes.router)        # /api/agents/custom/*
 app.include_router(multiagent_routes.router)         # /api/ceo/run + /api/ceo/run/custom (multi-agent)
+app.include_router(scheduler_routes.router)          # /api/ceo/schedules — autonomous CEO triggers (L1)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
@@ -191,8 +210,21 @@ async def api_status():
     total_in_pipeline = sum(by_status.values())
     hot_leads = len([l for l in all_leads if l.get("score", 0) >= 80 and l["status"] != "closed"])
 
+    # Boss visibility: LLM budget guards + autonomous CEO scheduler state.
+    try:
+        from admin.llm_throttle import snapshot as _llm_snap
+        from admin.agency.scheduler import get_scheduler as _get_sched
+
+        _guards: dict = {
+            "llm_guards": _llm_snap(),
+            "scheduled_tasks": len(_get_sched().list_schedules()),
+        }
+    except Exception:  # noqa: BLE001
+        _guards = {}
+
     return {
         "success": True,
+        **_guards,
         "pipeline": {
             "leads_found_today": new_count,
             "queue": {"total": total_in_pipeline, "new": new_count},
