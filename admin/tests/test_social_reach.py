@@ -66,3 +66,38 @@ def test_reach_falls_back_on_import_failure():
         assert h["note"] == "real-research-unavailable"
         a = sr.reach_audience("instagram")
         assert "best_times" in a  # local intel still works
+
+
+def test_parse_search_results_extracts_snippet_and_title():
+    # Regression: the snippet line is a markdown link whose URL is a
+    # duckduckgo.com redirect. The OLD code dropped the whole line because it
+    # matched "duckduckgo.com" on the raw line. This proves title + snippet are
+    # both captured now.
+    fake = (
+        "Title: plumbing tips at DuckDuckGo\n\n"
+        "## [6 Tips for New Plumbers](https://duckduckgo.com/l/?uddg=https%3A%2F%2Fx)\n\n"
+        "[![img](https://external-content.duckduckgo.com/a.png)]"
+        "(https://duckduckgo.com/l/?uddg=https%3A%2F%2Fx)"
+        "[x.com/qa/6-tips](https://duckduckgo.com/l/?uddg=https%3A%2F%2Fx) 2025\n\n"
+        "[Subscribing to industry publications is an effective way for new plumbers.]"
+        "(https://duckduckgo.com/l/?uddg=https%3A%2F%2Fx)\n"
+    )
+    results = sr._parse_search_results(fake, 5)
+    assert len(results) == 1
+    assert "6 Tips for New Plumbers" in results[0]["title"]
+    # snippet must come through, not be swallowed by the duckduckgo url check
+    assert "Subscribing to industry publications" in results[0]["snippet"]
+    # image-only lines must not leak in
+    assert "external-content.duckduckgo.com" not in results[0]["snippet"]
+
+
+def test_reach_trending_topic_specific_with_network():
+    # Proof the data is query-specific (not global V2EX noise like keyboards).
+    # Real network call; skips gracefully if offline.
+    r = sr.reach_trending("plumber", "instagram", limit=10)
+    titles = [t.get("title", "") for t in r["trending_topics"]]
+    joined = " ".join(titles).lower()
+    # plumber-specific signal must be present
+    assert joined.count("plumb") >= 1, f"expected plumber-specific results, got: {titles[:3]}"
+    # generic global-tech noise from V2EX hot list must NOT dominate
+    assert "voice input" not in joined and "keyboard" not in joined

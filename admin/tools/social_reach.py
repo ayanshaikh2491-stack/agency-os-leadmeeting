@@ -17,8 +17,11 @@ Usage:
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import logging
 from typing import Any
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,77 @@ def _load_reach():
         return None, None
 
 
+def _web_search(web, query: str, max_results: int = 8) -> list[dict[str, Any]]:
+    """Topic-specific web search via Jina Reader (DuckDuckGo/Bing).
+
+    Google direct returns 403; DuckDuckGo/Bing HTML via r.jina.ai works and
+    returns REAL, query-specific results. We parse the returned markdown into
+    a list of {title, url, snippet} instead of dumping raw text.
+    Returns [] on any failure (caller falls back safely).
+    """
+    if web is None:
+        return []
+    for engine in (
+        f"https://r.jina.ai/https://duckduckgo.com/html/?q={quote(query)}",
+        f"https://r.jina.ai/https://www.bing.com/search?q={quote(query)}",
+    ):
+        try:
+            text = web.read(engine)
+            if not text or len(text.strip()) < 50:
+                continue
+            results = _parse_search_results(text, max_results)
+            if results:
+                return results
+        except Exception as exc:
+            logger.warning("web search %s failed: %s", engine, exc)
+    return []
+
+
+def _parse_search_results(text: str, max_results: int) -> list[dict[str, Any]]:
+    """Extract {title, url, snippet} from Jina's DuckDuckGo/Bing markdown."""
+    results: list[dict[str, Any]] = []
+    # Split on markdown headings that start a result: '## [Title](url)'
+    parts = re.split(r"\n##\s+", text)
+    for part in parts[1:]:
+        m = re.match(r"\[(?P<title>.+?)\]\((?P<url>https?://[^)\s]+)\)", part)
+        if not m:
+            continue
+        title = m.group("title").strip()
+        url = m.group("url").strip()
+        if not title or "duckduckgo.com" in url and "uddg=" not in url and "bing.com" not in url:
+            continue
+        body = part[m.end():].strip()
+        lines = []
+        for ln in body.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if s.startswith("!["):
+                continue
+            # The snippet arrives as a markdown link: [snippet text](url).
+            # The url is a duckduckgo.com/bing.com redirect, so we must test the
+            # LINK TEXT, not the whole line, or we'd drop the real snippet.
+            lm = re.match(r"^\[(.+?)\]\(https?://[^)]+\)\s*$", s, re.S)
+            if lm:
+                inner = lm.group(1).strip()
+                if inner.startswith("!["):
+                    continue  # image, not text
+                if re.search(r"\.(com|net|org|io|co|uk|cn)\b", inner) and len(inner) < 80:
+                    continue  # host label, not snippet
+                if len(inner) >= 20:
+                    lines.append(inner)
+                continue
+            # Bare redirect url line (no link text) -> skip
+            if "duckduckgo.com" in s or "bing.com" in s:
+                continue
+            lines.append(s)
+        snippet = " ".join(lines)[:240]
+        results.append({"title": title, "url": url, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+    return results
+
+
 # ── Real trending topics ─────────────────────────────────────────────────────
 def reach_trending(topic: str = "", platform: str = "instagram", limit: int = 10) -> dict[str, Any]:
     """Real trending discussion + formats for a topic (Web + V2EX)."""
@@ -56,34 +130,32 @@ def reach_trending(topic: str = "", platform: str = "instagram", limit: int = 10
         result["note"] = "real-research-unavailable"
         return result
 
-    # V2EX hot topics = real current discussions
-    if v2ex is not None:
-        try:
-            for t in v2ex.get_hot_topics(limit=limit):
-                result["trending_topics"].append({
-                    "title": t.get("title", ""),
-                    "replies": t.get("replies", 0),
-                    "node": t.get("node_title", ""),
-                    "url": t.get("url", ""),
-                })
-        except Exception as exc:
-            logger.warning("V2EX trend fetch failed: %s", exc)
-            result["note"] = f"v2ex-unavailable: {exc}"
+    # V2EX: only useful for its own (Chinese-tech) community nodes. When a
+    # topic maps to a real V2EX node we surface it, else skip the global-noise
+    # hot list so we don't pollute plumber/roofer queries with keyboard posts.
+    if v2ex is not None and topic:
+        node = topic.lower().replace(" ", "")
+        if node in {"tech", "programmer", "python", "java", "nodejs", "create", "jobs", "share", "hardware", "golang", "design", "apple", "android"}:
+            try:
+                for t in v2ex.get_node_topics(node, limit=limit):
+                    result["trending_topics"].append({
+                        "title": t.get("title", ""),
+                        "replies": t.get("replies", 0),
+                        "node": t.get("node_title", ""),
+                        "url": t.get("url", ""),
+                    })
+            except Exception as exc:
+                logger.warning("V2EX trend fetch for %s failed: %s", node, exc)
 
-    # Web: read a trending/explore page for the topic when given
+    # Web: topic-specific search (DuckDuckGo via Jina) -> REAL plumber etc.
     if web is not None and topic:
-        try:
-            page = web.read(f"https://www.google.com/search?q={topic}+trending")
-            # crude signal: pull first ~1500 chars of real page text
-            snippet = page[:1500].strip()
-            if snippet:
-                result["trending_topics"].append({
-                    "title": f"web:{topic}",
-                    "source": "web",
-                    "snippet": snippet,
-                })
-        except Exception as exc:
-            logger.warning("Web trend fetch failed: %s", exc)
+        for r in _web_search(web, f"{topic} tips trends discussion", max_results=limit):
+            result["trending_topics"].append({
+                "title": r["title"],
+                "source": "web",
+                "url": r["url"],
+                "snippet": r["snippet"],
+            })
 
     if not result["trending_topics"]:
         result["note"] = "no-real-data-returned"
@@ -144,22 +216,14 @@ def reach_hashtags(topic: str = "", platform: str = "instagram", count: int = 20
         result["note"] = "real-research-unavailable"
         return result
 
-    # V2EX node topics for the topic = real discussion themes -> hashtag seeds
-    if v2ex is not None and topic:
-        try:
-            for t in v2ex.get_node_topics(topic, limit=8):
-                result["suggested"].append(f"#{t.get('node_name','')} {t.get('title','')[:40]}")
-        except Exception as exc:
-            logger.warning("V2EX hashtag fetch failed: %s", exc)
-
-    # Web: search the topic + hashtag to find real usage
+    # Web: topic-specific hashtag search -> real usage context + example posts
     if web is not None and topic:
-        try:
-            page = web.read(f"https://www.google.com/search?q=%23{topic}")
-            if page:
-                result["suggested"].append(f"web-snippet:{page[:300].strip()}")
-        except Exception as exc:
-            logger.warning("Web hashtag fetch failed: %s", exc)
+        for r in _web_search(web, f"{topic} hashtags {platform} popular", max_results=10):
+            result["suggested"].append({
+                "idea": r["title"],
+                "url": r["url"],
+                "snippet": r["snippet"],
+            })
 
     if not result["suggested"]:
         result["note"] = "no-real-hashtags-returned"
@@ -187,10 +251,10 @@ def reach_audience(platform: str = "instagram", industry: str = "") -> dict[str,
         "note": "",
     }
     if web is not None and industry:
-        try:
-            page = web.read(f"https://www.google.com/search?q={industry}+audience+demographics+{platform}")
-            if page:
-                result["web_signal"] = page[:500].strip()
-        except Exception as exc:
-            logger.warning("Web audience fetch failed: %s", exc)
+        rows = _web_search(web, f"{industry} audience demographics {platform}", max_results=3)
+        if rows:
+            result["web_signal"] = [
+                {"title": r["title"], "snippet": r["snippet"]} for r in rows
+            ]
+            result["source"] = "local-intel + web"
     return result
