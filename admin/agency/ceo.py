@@ -191,6 +191,38 @@ CEO_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "heal_agent",
+            "description": (
+                "CEO self-healing: when an agent fails (tool crash, API/429 error, "
+                "timeout, missing credential), the CEO detects it, classifies the "
+                "error, retries/fixes the ORIGINAL task, and only escalates to the "
+                "owner after N failed attempts. Keeps work flowing - no stall."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "Workspace ID"},
+                    "agent_type": {
+                        "type": "string",
+                        "description": "Failed agent slug to heal (e.g. ads, seo, sba)",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "The ORIGINAL task to re-run after fixing",
+                    },
+                    "context": {"type": "string", "description": "Original context"},
+                    "error": {
+                        "type": "string",
+                        "description": "Captured error text from the failure",
+                    },
+                },
+                "required": ["workspace_id", "agent_type", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delegate_parallel_blast",
             "description": (
                 "Brief ALL agents in a workspace simultaneously (Q4 — parallel blast). "
@@ -846,6 +878,9 @@ async def _execute_ceo_tool(name: str, args: dict) -> str:
     elif name == "route_error_fix":
         return await _tool_route_error(args)
 
+    elif name == "heal_agent":
+        return await _tool_heal_agent(args)
+
     elif name == "generate_report":
         return await _tool_generate_report(args)
 
@@ -1122,12 +1157,19 @@ async def _tool_delegate(args: dict) -> str:
         )
         ok = result.get("ok", False)
         resp = (result.get("result") or {}).get("answer") or result.get("error") or str(result)
-        status = "done" if ok else "failed"
+        if not ok:
+            # CEO self-heals instead of just reporting the failure.
+            from admin.agency.self_heal import heal_and_report
+
+            return await heal_and_report(
+                slug=agent_type, workspace_id=ws_id, task=task,
+                context=context, error=result.get("error", ""),
+            )
         return (
             f"Delegated to {custom['name']} (custom) in {ws.name}:\n"
             f"Task: {task}\n"
             f"Priority: {priority}\n"
-            f"Status: {status}\n"
+            f"Status: done\n"
             f"Response: {str(resp)[:500]}"
         )
 
@@ -1207,10 +1249,12 @@ async def _tool_delegate(args: dict) -> str:
             f"Response: {response[:500]}"
         )
     except Exception as exc:
-        # Boss-readable Hindi status (consistent with workers._hindi_status).
-        return (
-            f"Bhai, {agent_type.upper()} employee kaam fail ho gaya: {exc}. "
-            "CEO ko bhej diya hai — wo fix route karega."
+        # CEO self-heals the failure instead of just reporting it.
+        from admin.agency.self_heal import heal_and_report
+
+        return await heal_and_report(
+            slug=agent_type, workspace_id=ws_id, task=task,
+            context=context, error=f"{type(exc).__name__}: {exc}",
         )
 
 
@@ -1398,9 +1442,28 @@ async def _tool_run_multiagent(args: dict) -> str:
         return "Multi-agent run: koi agents nahi chale. Pehle agents add karo ya list check karo."
 
     lines = [f"=== MULTI-AGENT RUN ({report['ran']} agents, {report['failed']} failed) ===\n"]
+    scope = args.get("scope") or {}
+    ws_id = scope.get("workspace_id", "") if isinstance(scope, dict) else ""
+    task_per_agent = args.get("task_per_agent") or {}
+    brief = args.get("brief", "")
     for r in report["results"]:
         status = "OK" if r.get("ok") else "FAIL"
         ans = (r.get("answer") or r.get("hindi_status") or "")[:400]
+        if not r.get("ok") and ws_id:
+            # CEO self-heals the failed agent instead of leaving it broken.
+            try:
+                from admin.agency.self_heal import heal_and_report
+
+                heal = await heal_and_report(
+                    slug=r["agent_id"],
+                    workspace_id=ws_id,
+                    task=task_per_agent.get(r["agent_id"], brief),
+                    error=r.get("hindi_status") or r.get("answer") or "multiagent failure",
+                )
+                ans = f"HEALED: {heal[:300]}"
+                status = "HEALED" if "✅" in heal else "FAIL"
+            except Exception as hx:  # noqa: BLE001
+                ans = f"heal error: {hx}"
         lines.append(f"[{status}] {r['agent_id']}: {ans}")
     return "\n".join(lines)
 
@@ -1641,6 +1704,19 @@ async def _tool_route_error(args: dict) -> str:
             f"Route to: {target_agent}\n"
             f"Error: {exc}"
         )
+
+
+async def _tool_heal_agent(args: dict) -> str:
+    """CEO self-heal: detect a failed agent run, fix/retry, escalate if needed."""
+    from admin.agency.self_heal import heal_and_report
+
+    return await heal_and_report(
+        slug=args.get("agent_type") or args.get("slug", ""),
+        workspace_id=args.get("workspace_id", ""),
+        task=args.get("task", ""),
+        context=args.get("context", ""),
+        error=args.get("error", ""),
+    )
 
 
 async def _tool_generate_report(args: dict) -> str:

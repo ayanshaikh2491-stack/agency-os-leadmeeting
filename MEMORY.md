@@ -4,6 +4,18 @@
 > `memory` backend was non-persistent in this environment, so this file is the
 > source of truth. Update it as work progresses.
 
+## ⛔ DATABASE DECISION (HARD RULE — user stated repeatedly, 2026-08-25)
+- **PocketBase (self-hosted) is THE database for EVERYTHING.** Do NOT default to
+  SQLite for any new system. No exceptions.
+- User was frustrated I kept falling back to SQLite. Locked: every agent, every
+  system (agency-os + sba-backend) MUST persist to the self-hosted PocketBase.
+- Current reality (MUST be fixed): sba-backend (8000) → PocketBase ✅;
+  agency-os (9002) → currently SQLite (config/settings.py default) ❌ — needs
+  migration to PocketBase so there is ONE db for all.
+- Only SBA agent has a real production backend. Other 6 agents (seo/social/
+  content/ads/website/analytics) have graphs but no PocketBase-backed prod
+  workflow yet — build them on PocketBase too.
+
 ## What this is
 - Multi-agent SEO / AI-visibility ("Agency OS") system for agency TAGS.
 - Repo: `C:\Users\TAUSHEF\Downloads\int`, branch `feat/sba-lead-to-meeting-pipeline`.
@@ -194,3 +206,33 @@ Snippets now populate correctly.
   TOGETHER (user + agent), not solo. Spec: docs/specs/2026-08-25-ceo-gated-
   on-demand-design.md.
 - ALSO build the CEO-as-real-CEO skill core (above) — this is the bigger priority.
+
+## CEO SELF-HEALING (built 2026 session, §2.5)
+
+- **User requirement (verbatim intent):** "CEO khud heal karega — agent ka tool nahi
+  chala ya agent fail ho gaya toh CEO usko sahi karega. CEO agent backend mai khud
+  jayega, error + tool sahi karega, kaam rukna nahi chahiye, user ke wait mein nahi
+  baithna." Agents sleep by default; CEO is the 24/7 supervisor that also HEALS.
+- **Implemented:** `admin/agency/self_heal.py` — `heal_agent()` + `heal_and_report()`.
+  Flow: failure detected (custom agent `ok=False` / delegation exception / multi-agent
+  FAIL) → CEO classifies error (transient / config / tool) → re-dispatches the
+  ORIGINAL task (not just "analyze") → retries with backoff (transient) → escalates to
+  boss ONLY after 3 failed attempts (config/credential + tool-exhausted).
+- Wired into `ceo.py`:
+  - New tool `heal_agent` registered in `CEO_TOOLS` + `_tool_heal_agent` + dispatch case.
+  - `_tool_delegate`: custom-agent `ok=False` → heal; any delegation exception → heal
+    (covers built-in agents like ads/seo that raise).
+  - `_tool_run_multiagent`: each FAILED result → CEO heal (status shows HEALED/FAIL).
+- Extends the earlier `route_error_fix` concept (ceo.py `_tool_route_error`) but adds
+  automatic detection + re-dispatch of the original brief + retry/escalate. The old
+  `_tool_route_error` only routed an error to an agent for "analysis", it did not
+  re-run the work or retry.
+- **Known limitation (v1):** built-in agents (route_to_agent) return a plain string,
+  not an `ok` flag, so non-exception failures (agent returns an error string without
+  raising) are NOT auto-healed yet — only exception-level failures trigger heal for
+  built-ins. Custom agents (run_worker) DO report `ok`, so they are fully covered.
+  Future: make route_to_agent return structured {ok, error} for full coverage.
+- Design note: CEO is the ONLY thing that triggers agent wake/sleep (Lifecycle), and
+  now the ONLY thing that heals them — consistent with the "CEO = 24/7 supervisor"
+  model. No 24/7 polling loop added; healing happens inline within the CEO's own
+  delegation context (CEO is already 24/7 on as the FastAPI server).

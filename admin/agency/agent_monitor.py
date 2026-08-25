@@ -116,10 +116,14 @@ def probe_agent(slug: str, spec: dict[str, Any]) -> dict[str, Any]:
 
 
 class AgentHealthMonitor:
-    """Background monitor that keeps every agent's construction health live."""
+    """On-demand construction-health snapshot (no background loop).
+
+    Per the boss rule there are NO 24/7 polling loops. Health is recomputed
+    fresh on each call to get_health(). start()/stop() are kept for API
+    symmetry but intentionally launch/stop NO background task.
+    """
 
     def __init__(self) -> None:
-        self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._health: dict[str, dict[str, Any]] = {}
         # Consecutive failure counts per slug (alert only on sustained down).
@@ -127,18 +131,11 @@ class AgentHealthMonitor:
         self._alerts: list[dict[str, Any]] = []
 
     async def start(self) -> None:
-        logger.info("Agent Health Monitor started (interval=%ds)", CHECK_INTERVAL_SECONDS)
-        self._task = asyncio.create_task(self._run_loop())
+        # Intentionally does NOT start a background loop (boss rule).
+        logger.info("Agent Health Monitor is on-demand; call get_health().")
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-            logger.info("Agent Health Monitor stopped")
+        logger.info("Agent Health Monitor has no background task to stop.")
 
     async def get_health(self) -> dict[str, Any]:
         async with self._lock:
@@ -158,34 +155,9 @@ class AgentHealthMonitor:
         self._alerts.clear()
         return alerts
 
-    async def _run_loop(self) -> None:
-        while True:
-            try:
-                results: dict[str, dict[str, Any]] = {}
-                for slug, spec in _AGENT_PROBES.items():
-                    rec = probe_agent(slug, spec)
-                    results[slug] = rec
-                    if rec["status"] == "down":
-                        self._failures[slug] = self._failures.get(slug, 0) + 1
-                        # Alert on first sustained failure (>=2 consecutive checks).
-                        if self._failures[slug] == 2:
-                            msg = f"Agent '{slug}' is DOWN: {rec['error']}"
-                            self._alerts.append({"severity": "critical", "agent": slug, "message": msg})
-                            logger.error("AGENT HEALTH [%s]: %s", slug, rec["error"])
-                    else:
-                        if self._failures.get(slug, 0) >= 2:
-                            logger.info("AGENT HEALTH [%s]: recovered", slug)
-                        self._failures[slug] = 0
-
-                async with self._lock:
-                    self._health = results
-
-                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Agent Health Monitor loop error: %s", exc)
-                await asyncio.sleep(60)
+    # No _run_loop: the monitor is on-demand only (boss rule — no 24/7 loop).
+    # Health is recomputed in get_health(); there is intentionally no
+    # while-True / run_forever background task anywhere in this module.
 
 
 _monitor: AgentHealthMonitor | None = None

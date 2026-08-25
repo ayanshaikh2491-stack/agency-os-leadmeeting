@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   TAGS Agency OS — lightweight AWS deployment.
-  Single container on AWS App Runner (scale-to-zero: $0 when idle, no always-on
-  heavy EC2). CEO is the only 24/7 HTTP listener; worker agents self-sleep
-  (STANDBY) and are woken on demand. Image is built/pushed to ECR, then served
-  by App Runner.
+  Single container on AWS App Runner. CEO is the 24/7 always-on listener
+  (MinSize 1 — never scales to zero), while worker agents run on-demand
+  (woken by the CEO, self-sleep when done). Image is built/pushed to ECR,
+  then served by App Runner. PocketBase is external (not baked into the image).
 
 Parameters:
   ServiceName:
@@ -67,11 +67,12 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                 Resource: !GetAtt EcrRepository.Arn
 
-  # ── App Runner service (scale-to-zero, 24/7 HTTP listener) ─────────────────
+  # ── App Runner service (CEO 24/7 via MinSize 1; agents on-demand) ───────────
   AppRunnerService:
     Type: AWS::AppRunner::Service
     Properties:
       ServiceName: !Ref ServiceName
+      AutoScalingConfigurationArn: !GetAtt AppRunnerAutoScaling.AutoScalingConfigurationArn
       SourceConfiguration:
         ImageRepository:
           ImageRepositoryType: ECR
@@ -97,6 +98,14 @@ Resources:
         Timeout: 5
         HealthyThreshold: 3
         UnhealthyThreshold: 5
+
+  AppRunnerAutoScaling:
+    Type: AWS::AppRunner::AutoScalingConfiguration
+    Properties:
+      AutoScalingConfigurationName: !Sub "${ServiceName}-autoscaling"
+      MinSize: 1
+      MaxSize: 2
+      MaxConcurrency: 100
 
 Outputs:
   ServiceUrl:
