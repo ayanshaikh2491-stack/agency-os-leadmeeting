@@ -1205,6 +1205,29 @@ async def _tool_delegate(args: dict) -> str:
             message=full_message,
         )
 
+        # Built-in agents return plain strings; non-exception failures come
+        # back as error-ish replies. Detect them here so the CEO heals
+        # instead of reporting success (closes the built-in self-heal gap).
+        from admin.agency.self_heal import looks_like_error
+
+        if looks_like_error(str(response)):
+            if message_id:
+                try:
+                    from admin.agency.agent_bus import get_bus
+
+                    get_bus().respond(
+                        message_id, result=str(response)[:4000],
+                        status="error", errors=str(response)[:500],
+                    )
+                except Exception:
+                    pass
+            from admin.agency.self_heal import heal_and_report
+
+            return await heal_and_report(
+                slug=agent_type, workspace_id=ws_id, task=task,
+                context=context, error=str(response)[:500],
+            )
+
         # Record the employee's report on the bus (audit trail).
         if message_id:
             try:
