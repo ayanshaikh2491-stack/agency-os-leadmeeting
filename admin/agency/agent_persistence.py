@@ -88,10 +88,55 @@ def save_memory(workspace: str, agent: str, key: str, value: Any) -> dict[str, A
             on_conflict="agent_name,memory_key",
             profile=schema_for(workspace),
         )
-        return rows[0] if rows else None
+        result = rows[0] if rows else None
     except Exception as e:  # noqa: BLE001
         logger.warning("agent_persistence: save_memory failed: %s", e)
         return None
+    _mirror_save_memory(workspace, agent, key, value)
+    return result
+
+
+# ── PocketBase mirror (best-effort, never fatal) ───────────────────────────
+
+def _mirror_save_memory(workspace: str, agent: str, key: str, value: Any) -> None:
+    """Mirror one memory record to PocketBase so the boss can see it.
+
+    Stable key ``record_id`` = ``<workspace>:<agent>:<key>``. The value is
+    serialised to a JSON string. Best-effort: failures are logged at debug
+    level and never break the main save path.
+    """
+    try:
+        payload = {
+            "record_id": f"{workspace}:{agent}:{key}",
+            "workspace": workspace,
+            "agent": agent,
+            "memory_key": key,
+            "value": json.dumps(value, default=str),
+            "updated_at": _now_iso(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("agent_memory mirror payload build failed (non-fatal): %s", exc)
+        return
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.upsert_by_key("agent_memory", "record_id", payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase mirror (agent_memory) failed (non-fatal): %s", exc)
+
+
+def _mirror_delete_memory(workspace: str, agent: str, key: str) -> None:
+    """Best-effort PocketBase delete mirror for a single memory key."""
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.delete_by_key("agent_memory", "record_id", f"{workspace}:{agent}:{key}")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase delete mirror (agent_memory) failed (non-fatal): %s", exc)
 
 
 def get_memory(workspace: str, agent: str, key: str) -> Any:
@@ -138,10 +183,12 @@ def delete_memory(workspace: str, agent: str, key: str | None = None) -> bool:
         q += "&memory_key=eq." + urllib.parse.quote(key)
     try:
         _api("DELETE", url, key_cfg, "/rest/v1/agent_memory?" + q, profile=schema_for(workspace))
-        return True
     except Exception as e:  # noqa: BLE001
         logger.warning("agent_persistence: delete_memory failed: %s", e)
         return False
+    if key:
+        _mirror_delete_memory(workspace, agent, key)
+    return True
 
 
 # ── Messages (chat history) ───────────────────────────────────────────────

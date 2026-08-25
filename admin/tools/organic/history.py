@@ -8,6 +8,7 @@ Override the root with the ORGANIC_DATA_DIR env var (used by tests).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -78,7 +79,50 @@ def record_post(
             f.write(json.dumps(entry) + "\n")
     except OSError as exc:
         logger.warning("history write failed for %s/%s: %s", workspace_id, channel, exc)
+    _mirror_to_pb(workspace_id, channel, entry)
     return entry["id"]
+
+
+# ── PocketBase mirror (best-effort, never fatal) ───────────────────────────
+
+def _mirror_to_pb(workspace_id: str, channel: str, entry: dict) -> None:
+    """Mirror one organic history entry to PocketBase so the boss can see it.
+
+    Stable dedupe key ``record_id`` = ``<workspace>:<channel>:<sha1[:12]>``.
+    All fields are flattened to JSON-safe strings. Best-effort: failures are
+    logged at debug level and never break the main history path.
+    """
+    try:
+        entry_json = json.dumps(entry, default=str, sort_keys=True)
+        record_id = (
+            f"{workspace_id}:{channel}:"
+            f"{hashlib.sha1(entry_json.encode('utf-8')).hexdigest()[:12]}"
+        )
+        payload: dict[str, Any] = {
+            "record_id": record_id,
+            "workspace_id": workspace_id,
+            "channel": channel,
+            "history_id": entry.get("id", ""),
+            "ts": entry.get("ts", ""),
+            "status": entry.get("status", ""),
+            "post_id": entry.get("post_id", ""),
+            "post_url": entry.get("post_url", ""),
+            "error": entry.get("error", ""),
+            "scheduled_for": entry.get("scheduled_for", ""),
+            "payload": json.dumps(entry.get("payload", {}), default=str),
+            "appended_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("organic_history mirror payload build failed (non-fatal): %s", exc)
+        return
+    try:
+        from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
+        if not pb or not pb.is_configured():
+            return
+        pb.upsert_by_key("organic_history", "record_id", payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PocketBase mirror (organic_history) failed (non-fatal): %s", exc)
 
 
 def list_posts(workspace_id: str, channel: str | None = None, limit: int = 200) -> list[dict]:
