@@ -136,6 +136,42 @@ class PocketBaseClient:
             logger.debug("PocketBase rest_list failed (%s): %s", collection, exc)
         return []
 
+    def ensure_key_field(self, collection: str, key_field: str) -> bool:
+        """Make sure `key_field` exists on the collection (self-healing).
+
+        Pre-existing PB collections often lack our linking columns; PocketBase
+        silently strips unknown payload fields, which breaks key-based
+        upserts. This patches the collection preserving all existing field
+        definitions and appending the missing text column.
+        """
+        if not self.auth():
+            return False
+        meta = self.get_collection(collection)
+        if not meta:
+            # Collection itself missing -> create minimal with the key field.
+            return self.ensure_collection(collection, {key_field: "text"})
+        fields = list(meta.get("fields") or meta.get("schema") or [])
+        names = [f.get("name") for f in fields]
+        if key_field in names:
+            return True
+        fields.append({"name": key_field, "type": "text"})
+        try:
+            r = requests.patch(
+                f"{self.url}/api/collections/{collection}",
+                json={"fields": fields}, headers=self._headers(),
+                timeout=self.timeout)
+            if r.status_code == 200:
+                logger.info(
+                    "PocketBase: added '%s' field to collection '%s'",
+                    key_field, collection)
+                return True
+            logger.warning(
+                "PocketBase ensure_key_field %s/%s failed (%s): %s",
+                collection, key_field, r.status_code, r.text[:200])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PocketBase ensure_key_field error: %s", exc)
+        return False
+
     def upsert_by_key(self, collection: str, key_field: str,
                       data: dict) -> Optional[dict]:
         """Create-or-update a record matched on `key_field`.
@@ -147,6 +183,7 @@ class PocketBaseClient:
         kv = str(data.get(key_field, "") or "")
         if not kv or not self.auth():
             return None
+        self.ensure_key_field(collection, key_field)
         payload = {k: v for k, v in data.items()
                    if k not in ("id", key_field)}
         payload[key_field] = kv
@@ -172,6 +209,9 @@ class PocketBaseClient:
 
     def delete_by_key(self, collection: str, key_field: str, key_value: str) -> bool:
         """Delete the record whose `key_field` matches (best-effort)."""
+        if not self.auth():
+            return False
+        self.ensure_key_field(collection, key_field)
         existing = self._rest_list(
             collection, filters=f'{key_field}="{key_value}"', per_page=1)
         if not existing:
