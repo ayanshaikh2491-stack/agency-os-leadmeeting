@@ -98,7 +98,11 @@ If external `curl` returns empty again, re-check SG inbound before assuming app 
 ## 7. What's NOT done / NEXT (user decides)
 
 - [ ] Munder-style UI (agent gallery + CEO command console + live results)
-- [ ] Put backend behind a domain / reverse proxy (currently raw IP:9002)
+- [ ] Put backend behind a domain / reverse proxy (currently raw IP:9002).
+      NOTE 2026-08-24: ye BLOCKER hai Vercel ke liye - https frontend se
+      ws://18.213.66.136:9002 mixed-content block hota hai. Floor render
+      hota hai par live ticker nahi chalta. Local (http://localhost) aur
+      EC2 direct pe sab fine hai.
 - [x] Open EC2 security-group inbound for 9002 (DONE 2026-08-23: rule `sgr-01dbacef76e41c4e3`, SG `sg-02b87bc26027dc457`, CIDR `0.0.0.0/0`)
 - [ ] Push commits to `origin` (currently 4 commits ahead of origin, not pushed)
 
