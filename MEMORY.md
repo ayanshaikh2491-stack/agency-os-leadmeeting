@@ -236,3 +236,20 @@ Snippets now populate correctly.
   now the ONLY thing that heals them — consistent with the "CEO = 24/7 supervisor"
   model. No 24/7 polling loop added; healing happens inline within the CEO's own
   delegation context (CEO is already 24/7 on as the FastAPI server).
+
+## DUAL PERSISTENCE: PocketBase + JSON FILES (2026 session)
+
+Boss rule: "memory aur FILE dono jagah sab save ho."
+- **PocketBase** = networked source of truth. **Files** (`data/store/<collection>/<id>.json`,
+  `admin/file_store.py`) = always-written, boss-readable backup - works even with
+  `POCKETBASE_URL` unset. Lifecycle already had its own `lifecycle_state.json`.
+- Boot restore order: local SQLite -> PB pull -> file-store gap fill
+  (`manager.seed_from_pocketbase`, `agent_registry.sync_from_pocketbase`).
+- Custom agents create/delete sync to BOTH; workspaces + agent_outputs mirror to
+  BOTH via `_mirror_to_pb` (keyed upserts, never fatal).
+- PB server: EC2-local `pocketbase.service` @ `127.0.0.1:8090` (v0.39.10). Auth is
+  the NEW `_superusers` endpoint (old `/api/admins` 404s); creds wired in EC2
+  `/opt/tags-agency-os/.env`. Client self-heals missing key fields on legacy shared
+  collections (`ensure_key_field`) - e.g. `workspaces` is SHARED with sba-gateway,
+  never drop it.
+- E2E proven live: API create -> row in PB + JSON file; API delete -> gone from both.

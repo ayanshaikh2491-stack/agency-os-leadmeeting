@@ -174,13 +174,18 @@ _PB_SCHEMAS: dict[str, dict[str, str]] = {
 
 
 def _mirror_to_pb(collection: str, record: dict) -> None:
-    """Mirror a key record to external PocketBase (the durable source of truth).
+    """Mirror a key record to PocketBase AND a plain JSON file under data/store.
 
-    No-op locally when POCKETBASE_URL is unset. Auto-creates the collection on
-    first use and matches records via a `record_id` column (PocketBase's own
-    15-char ids cannot hold ids like 'ws_default').
+    PocketBase = durable source of truth; files = boss-readable backup that
+    works even with POCKETBASE_URL unset. Both best-effort, never fatal.
     """
     import json
+    try:
+        from admin.file_store import save_record as _fs_save
+
+        _fs_save(collection, str(record.get("id", "")), record)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("file mirror (%s) failed (non-fatal): %s", collection, exc)
     try:
         from admin.pocketbase_client import get_pb_client
         pb = get_pb_client()
@@ -201,20 +206,55 @@ def _mirror_to_pb(collection: str, record: dict) -> None:
         logger.debug("PocketBase mirror (%s) failed (non-fatal): %s", collection, exc)
 
 
+def _merge_files_into_cache() -> int:
+    """Boot fallback: load data/store JSON backups into the local cache.
+
+    Runs after the PocketBase pull, so PB rows win and files only fill gaps
+    (e.g. PB was unreachable). Returns how many records were restored.
+    """
+    restored = 0
+    try:
+        from admin.file_store import load_all as fs_load_all
+
+        for rec in fs_load_all("workspaces"):
+            rid = str(rec.get("id") or "")
+            if rid and rid not in _workspaces:
+                rec.setdefault("agents", list(DEFAULT_AGENTS))
+                rec.setdefault("client_context", None)
+                rec.setdefault("created_at", datetime.now(timezone.utc))
+                _workspaces[rid] = rec
+                _sync_ws_to_db(rec)
+                restored += 1
+        seen = {o.get("id") for o in _agent_outputs}
+        for rec in fs_load_all("agent_outputs"):
+            rid = str(rec.get("id") or "")
+            if rid and rid not in seen:
+                _agent_outputs.append(rec)
+                if not rec.get("reviewed"):
+                    _pending_reviews.append(rec)
+                restored += 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("file-store merge failed (non-fatal): %s", exc)
+    return restored
+
+
 async def seed_from_pocketbase() -> None:
     """Boot-time pull: PocketBase -> local memory + workspace SQLite.
 
     Makes PocketBase the durable source of truth while keeping all existing
     read paths untouched (they keep reading the fast local cache). Local
     records win only when PB has nothing; PB rows are merged by `record_id`.
+    Falls back to data/store JSON files when PB is unset/unreachable.
     Fully best-effort: any failure just keeps current local behaviour.
     """
     try:
         from admin.pocketbase_client import get_pb_client
     except Exception:  # noqa: BLE001
+        _merge_files_into_cache()
         return
     pb = get_pb_client()
     if not pb or not pb.is_configured():
+        _merge_files_into_cache()
         return
 
     # ── workspaces ──────────────────────────────────────────────────────
@@ -284,6 +324,11 @@ async def seed_from_pocketbase() -> None:
 
     if pulled:
         logger.info("PocketBase seed complete: %d record(s) restored from PB.", pulled)
+
+    # Files fill any gaps left by PocketBase (belt-and-suspenders).
+    _file_restored = _merge_files_into_cache()
+    if _file_restored:
+        logger.info("File-store restored %d additional record(s).", _file_restored)
 
 
 def create_workspace(payload: WorkspaceCreate) -> WorkspaceOut:

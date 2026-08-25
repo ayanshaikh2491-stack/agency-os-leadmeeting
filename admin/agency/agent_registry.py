@@ -137,8 +137,22 @@ _ensured_pb = False
 
 
 def _mirror_agent_to_pb(record: dict[str, Any], delete: bool = False) -> None:
-    """Best-effort push/delete of one custom agent in PocketBase."""
+    """Persist one custom agent to a JSON file AND PocketBase (best-effort).
+
+    Files (data/store/custom_agents/<id>.json) always work; PocketBase is the
+    networked source of truth when configured.
+    """
     global _ensured_pb
+    try:
+        from admin.file_store import delete_record as fs_del
+        from admin.file_store import save_record as fs_save
+
+        if delete:
+            fs_del("custom_agents", str(record.get("id", "")))
+        else:
+            fs_save("custom_agents", str(record.get("id", "")), record)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("custom_agent file mirror failed (non-fatal): %s", exc)
     try:
         from admin.pocketbase_client import get_pb_client
         pb = get_pb_client()
@@ -158,25 +172,58 @@ def _mirror_agent_to_pb(record: dict[str, Any], delete: bool = False) -> None:
 async def sync_from_pocketbase() -> int:
     """Boot-time pull: PocketBase custom_agents -> local SQLite table.
 
-    PocketBase wins as source of truth; local rows are refreshed by id so the
-    registry reads (get_agent/list_agents) keep working unchanged offline.
-    Returns how many agents were pulled. Fully best-effort.
+    PocketBase wins as source of truth; data/store JSON files fill any gaps
+    (e.g. PB unreachable). Registry reads (get_agent/list_agents) keep working
+    unchanged offline. Returns how many agents were pulled. Best-effort.
     """
     try:
         from admin.pocketbase_client import get_pb_client
+        pb = get_pb_client()
     except Exception:  # noqa: BLE001
-        return 0
-    pb = get_pb_client()
-    if not pb or not pb.is_configured():
-        return 0
+        pb = None
     pulled = 0
     try:
         await _ensure_table()
         db = await get_workspace_db()
-        for row in pb.pull_all("custom_agents"):
-            rid = str(row.get("record_id") or "")
-            if not rid:
+
+        if pb and pb.is_configured():
+            for row in pb.pull_all("custom_agents"):
+                rid = str(row.get("record_id") or "")
+                if not rid:
+                    continue
+                await db.execute(
+                    """
+                    INSERT OR REPLACE INTO custom_agents
+                        (id, name, role, system_prompt, model, api_key_ref,
+                         tools, created_by, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rid,
+                        row.get("name") or rid,
+                        row.get("role") or "worker",
+                        row.get("system_prompt") or "",
+                        row.get("model") or "",
+                        row.get("api_key_ref") or "",
+                        row.get("tools") or "[]",
+                        row.get("created_by") or "owner",
+                        row.get("created_at")
+                        or datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                pulled += 1
+
+        # File-store fallback: restore ids still unknown locally.
+        from admin.file_store import load_all as fs_load_all
+
+        cur = await db.execute("SELECT id FROM custom_agents")
+        known = {r[0] for r in await cur.fetchall()}
+        for rec in fs_load_all("custom_agents"):
+            rid = str(rec.get("id") or "")
+            if not rid or rid in known:
                 continue
+            tools = rec.get("tools")
+            tools = json.dumps(tools) if isinstance(tools, list) else (tools or "[]")
             await db.execute(
                 """
                 INSERT OR REPLACE INTO custom_agents
@@ -186,19 +233,20 @@ async def sync_from_pocketbase() -> int:
                 """,
                 (
                     rid,
-                    row.get("name") or rid,
-                    row.get("role") or "worker",
-                    row.get("system_prompt") or "",
-                    row.get("model") or "",
-                    row.get("api_key_ref") or "",
-                    row.get("tools") or "[]",
-                    row.get("created_by") or "owner",
-                    row.get("created_at")
+                    rec.get("name") or rid,
+                    rec.get("role") or "worker",
+                    rec.get("system_prompt") or "",
+                    rec.get("model") or "",
+                    rec.get("api_key_ref") or "",
+                    tools,
+                    rec.get("created_by") or "owner",
+                    rec.get("created_at")
                     or datetime.now(timezone.utc).isoformat(),
                 ),
             )
+            known.add(rid)
             pulled += 1
         await db.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("PocketBase custom_agents seed failed (non-fatal): %s", exc)
+        logger.warning("PocketBase/file custom_agents seed failed (non-fatal): %s", exc)
     return pulled
