@@ -227,11 +227,12 @@ Snippets now populate correctly.
   automatic detection + re-dispatch of the original brief + retry/escalate. The old
   `_tool_route_error` only routed an error to an agent for "analysis", it did not
   re-run the work or retry.
-- **Known limitation (v1):** built-in agents (route_to_agent) return a plain string,
-  not an `ok` flag, so non-exception failures (agent returns an error string without
-  raising) are NOT auto-healed yet — only exception-level failures trigger heal for
-  built-ins. Custom agents (run_worker) DO report `ok`, so they are fully covered.
-  Future: make route_to_agent return structured {ok, error} for full coverage.
+- **Known limitation (v1) — CLOSED (latest session, see "LLM RATE LIMITER +
+  SELF-HEAL GAP CLOSED" section below):** built-in agents (route_to_agent) return a
+  plain string that is now checked via `self_heal.looks_like_error()` — non-exception
+  failures (agent returns an error string without raising) ARE auto-healed: the bus
+  message is marked `status="error"` and CEO runs `heal_and_report` (same flow custom
+  agents had). Custom agents (run_worker) report `ok` and were always covered.
 - Design note: CEO is the ONLY thing that triggers agent wake/sleep (Lifecycle), and
   now the ONLY thing that heals them — consistent with the "CEO = 24/7 supervisor"
   model. No 24/7 polling loop added; healing happens inline within the CEO's own
@@ -253,3 +254,17 @@ Boss rule: "memory aur FILE dono jagah sab save ho."
   collections (`ensure_key_field`) - e.g. `workspaces` is SHARED with sba-gateway,
   never drop it.
 - E2E proven live: API create -> row in PB + JSON file; API delete -> gone from both.
+
+## LLM RATE LIMITER + SELF-HEAL GAP CLOSED (latest session)
+
+- **Agency-wide LLM rate limiter** (commit `b7390a0`, new file `admin/llm_throttle.py`):
+  sliding-window RPM limiter. Env `AGENCY_LLM_RPM` (default 38); provider ceiling is
+  40 on OpenCode Zen. Installed once in `admin/main.py` lifespan via `install()`:
+  patches `openai.AsyncOpenAI` so ALL agents' clients share one throttled httpx pool
+  (request event hook awaits a slot). Zero call-site changes; future agents inherit cap.
+- Smoke-proven: 5 calls @RPM=3 delayed ~61s (4th/5th waited out the window).
+- **CEO auto-heals built-in non-exception failures** (commit `266c3b0`):
+  `admin/agency/ceo.py` `_tool_delegate` now checks `route_to_agent` replies with
+  `self_heal.looks_like_error()`; error-ish reply => bus message marked
+  `status="error"` and CEO runs `heal_and_report` (same flow custom agents had).
+  Signature unchanged. This CLOSES the old self-healing limitation above.

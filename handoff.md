@@ -34,6 +34,13 @@ Commits (branch `feat/sba-lead-to-meeting-pipeline`):
 | Existing live app | `sba-backend` on **port 8000** — SEPARATE, untouched, still running |
 | Python | 3.12 venv at `/opt/tags-agency-os/venv` |
 
+- **PocketBase runs ON the EC2 box** as systemd service `pocketbase.service` at
+  `http://127.0.0.1:8090` (v0.39.10; auth endpoint is the NEW
+  `/api/collections/_superusers/auth-with-password`). Agency OS talks to it over
+  localhost:8090; credentials are wired from `/opt/tags-agency-os/.env`
+  (`POCKETBASE_URL` / `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD`) — see
+  that server `.env` / sba-gateway unit env for the values; never inline secrets here.
+
 Health: `curl http://18.213.66.136:9002/api/health` → `{"status":"ok","ceo_ready":true,...}`
 
 ## 3. Verified working live (real EC2)
