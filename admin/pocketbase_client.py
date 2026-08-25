@@ -9,42 +9,22 @@ is touched and the app keeps its current local behaviour. When set, callers may
 mirror writes to PocketBase. All PB calls are best-effort: failures are logged
 and never raised, so local runs are never broken.
 
-Uses the `pocketbase` PyPI SDK when importable; otherwise falls back to a thin
-`requests` wrapper around the PocketBase REST API.
+Thin `requests` wrapper around the PocketBase REST API (no SDK dependency).
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
-from typing import Any, Optional
+from typing import Optional
 
 import requests
 
-try:  # pragma: no cover - optional dependency
-    from pocketbase import PocketBase as _PBSdk
-    _HAS_PB_SDK = True
-except Exception:  # noqa: BLE001
-    _PBSdk = None
-    _HAS_PB_SDK = False
-
 logger = logging.getLogger(__name__)
-
-# Collection names used by the Agency OS mirror.
-COL_WORKSPACES = "workspaces"
-COL_CUSTOM_AGENTS = "custom_agents"
-COL_AGENT_OUTPUTS = "agent_outputs"
-COL_CEO_LIFECYCLE = "ceo_lifecycle"
-
-
-def _json_default(o: Any) -> Any:
-    if hasattr(o, "isoformat"):
-        return o.isoformat()
-    return str(o)
 
 
 class PocketBaseClient:
-    """Admin-auth PocketBase client with get_collection/upsert/list helpers."""
+    """Admin-auth PocketBase REST client (keyed upsert/delete/collection helpers)."""
 
     def __init__(self, url: str, email: str = "", password: str = "",
                  timeout: int = 10) -> None:
@@ -55,12 +35,6 @@ class PocketBaseClient:
         self._token: Optional[str] = None
         self._authed: bool = False
         self._lock = threading.Lock()
-        self._sdk = None
-        if _HAS_PB_SDK and self.url:
-            try:
-                self._sdk = _PBSdk(self.url)
-            except Exception:  # noqa: BLE001
-                self._sdk = None
 
     # ── config ──────────────────────────────────────────────────────────
     def is_configured(self) -> bool:
@@ -73,15 +47,6 @@ class PocketBaseClient:
             return False
         if self._authed:
             return True
-        # Prefer SDK auth when available.
-        if self._sdk is not None and self.email and self.password:
-            try:
-                self._sdk.admins.auth_with_password(self.email, self.password)
-                self._authed = True
-                return True
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("PocketBase SDK auth failed, trying REST: %s", exc)
-                self._sdk = None
         if self.email and self.password:
             try:
                 # PocketBase >= 0.23 moved admin auth under /api/collections/
@@ -238,22 +203,17 @@ class PocketBaseClient:
             return True
         if not self.auth():
             return False
-        entries_old = [{"name": k, "type": t} for k, t in fields.items()]
-        body_variants = [
-            {"name": name, "schema": entries_old},
-            {"name": name, "fields": [
-                {"name": k, "type": t} for k, t in fields.items()]},
-        ]
-        for body in body_variants:
-            try:
-                r = requests.post(f"{self.url}/api/collections",
-                                  json=body, headers=self._headers(),
-                                  timeout=self.timeout)
-                if r.status_code in (200, 201):
-                    logger.info("PocketBase collection '%s' created", name)
-                    return True
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("PocketBase ensure_collection error: %s", exc)
+        entries = [{"name": k, "type": t} for k, t in fields.items()]
+        try:
+            # PB >= 0.23 collection format ("fields").
+            r = requests.post(f"{self.url}/api/collections",
+                              json={"name": name, "fields": entries},
+                              headers=self._headers(), timeout=self.timeout)
+            if r.status_code in (200, 201):
+                logger.info("PocketBase collection '%s' created", name)
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("PocketBase ensure_collection error: %s", exc)
         logger.warning(
             "PocketBase collection '%s' missing and auto-create failed — "
             "create it manually in the PB admin UI.", name)
@@ -267,11 +227,6 @@ class PocketBaseClient:
         """Return collection metadata, or None if missing/unreachable."""
         if not self.auth():
             return None
-        if self._sdk is not None:
-            try:
-                return self._sdk.collections.get_one(name)
-            except Exception:  # noqa: BLE001
-                self._sdk = None
         try:
             r = requests.get(f"{self.url}/api/collections/{name}",
                              headers=self._headers(), timeout=self.timeout)
@@ -280,74 +235,6 @@ class PocketBaseClient:
         except Exception:  # noqa: BLE001
             pass
         return None
-
-    def list(self, collection: str, filters: Optional[str] = None,
-             per_page: int = 200) -> list[dict]:
-        """List records in a collection (optional PocketBase filter string)."""
-        if not self.auth():
-            return []
-        params = {"perPage": per_page}
-        if filters:
-            params["filter"] = filters
-        if self._sdk is not None:
-            try:
-                res = self._sdk.collection(collection).get_list(
-                    1, per_page, {"filter": filters or ""})
-                return list(res.items)
-            except Exception:  # noqa: BLE001
-                self._sdk = None
-        try:
-            r = requests.get(f"{self.url}/api/collections/{collection}/records",
-                             headers=self._headers(), params=params,
-                             timeout=self.timeout)
-            if r.status_code == 200:
-                return r.json().get("items", [])
-        except Exception:  # noqa: BLE001
-            pass
-        return []
-
-    def upsert(self, collection: str, data: dict) -> Optional[dict]:
-        """Create or update a record. If `data['id']` is present, update-or-create."""
-        if not self.auth():
-            return None
-        rid = data.get("id")
-        if self._sdk is not None:
-            try:
-                if rid:
-                    try:
-                        return self._sdk.collection(collection).update(rid, data)
-                    except Exception:  # noqa: BLE001
-                        return self._sdk.collection(collection).create(data)
-                return self._sdk.collection(collection).create(data)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("PocketBase SDK upsert failed, trying REST: %s", exc)
-                self._sdk = None
-        # REST path
-        try:
-            if rid:
-                r = requests.patch(
-                    f"{self.url}/api/collections/{collection}/records/{rid}",
-                    json=data, headers=self._headers(), timeout=self.timeout)
-                if r.status_code == 200:
-                    return r.json()
-                # not found -> create with explicit id
-                r = requests.post(
-                    f"{self.url}/api/collections/{collection}/records",
-                    json=data, headers=self._headers(), timeout=self.timeout)
-                if r.status_code in (200, 201):
-                    return r.json()
-                logger.warning("PocketBase upsert failed (%s)", r.status_code)
-                return None
-            r = requests.post(
-                f"{self.url}/api/collections/{collection}/records",
-                json=data, headers=self._headers(), timeout=self.timeout)
-            if r.status_code in (200, 201):
-                return r.json()
-            logger.warning("PocketBase create failed (%s)", r.status_code)
-            return None
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("PocketBase upsert error: %s", exc)
-            return None
 
 
 _client: Optional[PocketBaseClient] = None

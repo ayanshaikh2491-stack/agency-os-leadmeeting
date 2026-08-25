@@ -81,17 +81,3 @@ def load_all(collection: str) -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("file_store.load_all(%s) failed: %s", collection, exc)
     return out
-
-
-def load_one(collection: str, record_id: str) -> Optional[dict[str, Any]]:
-    """Load a single record by id, or None."""
-    try:
-        p = _path(collection, record_id)
-        if not p.exists():
-            return None
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("file_store.load_one(%s/%s) failed: %s",
-                     collection, record_id, exc)
-        return None

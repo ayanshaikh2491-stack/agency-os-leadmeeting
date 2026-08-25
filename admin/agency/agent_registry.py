@@ -186,31 +186,37 @@ async def sync_from_pocketbase() -> int:
         await _ensure_table()
         db = await get_workspace_db()
 
+        async def upsert_row(rec: dict, key: str) -> None:
+            """One INSERT for both PB rows (key=record_id) and file rows."""
+            tools = rec.get("tools")
+            tools = json.dumps(tools) if isinstance(tools, list) else (tools or "[]")
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO custom_agents
+                    (id, name, role, system_prompt, model, api_key_ref,
+                     tools, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key,
+                    rec.get("name") or key,
+                    rec.get("role") or "worker",
+                    rec.get("system_prompt") or "",
+                    rec.get("model") or "",
+                    rec.get("api_key_ref") or "",
+                    tools,
+                    rec.get("created_by") or "owner",
+                    rec.get("created_at")
+                    or datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
         if pb and pb.is_configured():
             for row in pb.pull_all("custom_agents"):
                 rid = str(row.get("record_id") or "")
                 if not rid:
                     continue
-                await db.execute(
-                    """
-                    INSERT OR REPLACE INTO custom_agents
-                        (id, name, role, system_prompt, model, api_key_ref,
-                         tools, created_by, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        rid,
-                        row.get("name") or rid,
-                        row.get("role") or "worker",
-                        row.get("system_prompt") or "",
-                        row.get("model") or "",
-                        row.get("api_key_ref") or "",
-                        row.get("tools") or "[]",
-                        row.get("created_by") or "owner",
-                        row.get("created_at")
-                        or datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
+                await upsert_row(row, rid)
                 pulled += 1
 
         # File-store fallback: restore ids still unknown locally.
@@ -222,28 +228,7 @@ async def sync_from_pocketbase() -> int:
             rid = str(rec.get("id") or "")
             if not rid or rid in known:
                 continue
-            tools = rec.get("tools")
-            tools = json.dumps(tools) if isinstance(tools, list) else (tools or "[]")
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO custom_agents
-                    (id, name, role, system_prompt, model, api_key_ref,
-                     tools, created_by, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    rid,
-                    rec.get("name") or rid,
-                    rec.get("role") or "worker",
-                    rec.get("system_prompt") or "",
-                    rec.get("model") or "",
-                    rec.get("api_key_ref") or "",
-                    tools,
-                    rec.get("created_by") or "owner",
-                    rec.get("created_at")
-                    or datetime.now(timezone.utc).isoformat(),
-                ),
-            )
+            await upsert_row(rec, rid)
             known.add(rid)
             pulled += 1
         await db.commit()
