@@ -121,3 +121,31 @@ Snippets now populate correctly.
 - Important: Munder Difflin is a *generic* harness (code clones). Our Agency OS is
   the *domain product* (SEO/AEO for TAGS agency) built on top of the same pattern.
   Borrow architecture, not its code.
+
+## VERIFIED: our CEO is a REAL LLM (not a dumb router) + orchestrator exists
+- `admin/agency/ceo.py` (2059 lines): `class AgencyCEO` -> `__init__` sets
+  `self.graph = build_ceo_graph()`. `build_ceo_graph()` builds a langgraph
+  `StateGraph(CEOGraphState)` and `.compile()`s it => a genuine reasoning LLM agent.
+- `CEO_SYSTEM_PROMPT` (L37): "You are the Agency CEO of TAGS Agency — the
+  co-founder and strategic brain." So it has its own persona/prompt (behaves like a
+  real CEO, reasons, not a bot).
+- CEO tools (delegate work / report / answer): `_tool_delegate` (L1037),
+  `_tool_run_sales` (L957), `_tool_email_client` (L1003),
+  `_tool_generate_report` (L1596), `_tool_parallel_blast` (L1167),
+  `_tool_run_multiagent` (L1339), `_tool_answer`-style reasoning.
+- Multi-agent handler/orchestrator EXISTS (user calls it "multi orch"):
+  `admin/agency/orchestrator.py` has `register_agent` (L97),
+  `run_seo_agent_for_workspace` (L310), `sba_pipeline_scan` (L584).
+- Agent-to-agent comms: `admin/agency/agent_bus.py` (SQLite inbox/outbox queue,
+  15 SQL hits). Route `/api/ceo/run` runs multi-agent.
+- So: CEO = brain (LLM, reasons + system prompt); Orchestrator = plumbing that
+  actually runs agents + registry; agent_bus = message layer. Together they give
+  the multi-agent network work, manage it, answer, and report — exactly the
+  user's mental model. This is the "intelligence vs mechanism" split from Munder
+  Difflin's god-orchestrator.
+
+## Working agreement (user, 2026-08-25)
+- Keep Munder Difflin clone saved + this understanding saved (MEMORY.md = truth).
+- Next build = Section 2 (CEO-gated on-demand / LifecycleState) — to be done
+  TOGETHER (user + agent), not solo. Spec: docs/specs/2026-08-25-ceo-gated-
+  on-demand-design.md.
