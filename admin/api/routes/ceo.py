@@ -18,11 +18,10 @@ Endpoints:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path as FastPath
+from fastapi import APIRouter, Path as FastPath
 from pydantic import BaseModel, Field
 
 from admin.agency.ceo import AgencyCEO
@@ -314,46 +313,6 @@ async def ceo_agency_overview():
     from admin.ceo_data import get_agency_overview
     overview = get_agency_overview()
     return {"status": "ok", "overview": overview}
-
-
-# ── CEO control loop endpoints (Task 7) ───────────────────────────────────────
-
-class DelegateRequest(BaseModel):
-    worker: str
-    task: str
-    scope: dict = {"kind": "agency", "workspace_id": "agency"}
-    standing: bool = False
-
-
-@router.get("/state")
-async def ceo_state():
-    from admin.agency.ceo_controller import ceo_controller as ctrl
-    return await ctrl.get_state()
-
-
-@router.post("/delegate")
-async def ceo_delegate(body: DelegateRequest):
-    from admin.agency.ceo_controller import ceo_controller as ctrl
-    return await ctrl.delegate(body.worker, body.task, body.scope, standing=body.standing)
-
-
-@router.websocket("/ws/office")
-async def ws_office(ws: WebSocket):
-    await ws.accept()
-    try:
-        while True:
-            from admin.agency.ceo_controller import ceo_controller as ctrl
-            state = await ctrl.get_state()
-            await ws.send_json(state)
-            await asyncio.sleep(3)
-    except WebSocketDisconnect:
-        return
-
-
-@router.get("/digest")
-async def ceo_digest():
-    from admin.agency.ceo_controller import ceo_controller as ctrl
-    return {"digest": await ctrl.digest()}
 
 
 # ── CEO Email Outbox (queued client emails) ─────────────────────────────────
