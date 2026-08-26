@@ -222,6 +222,103 @@ async def api_status():
     }
 
 
+# ── CEO Chat Test Page (for end-to-end verification) ──────────────────────────
+
+@app.get("/test/ceo", tags=["test"], include_in_schema=False)
+async def test_ceo_page():
+    """Simple HTML page to test CEO chat endpoint from browser."""
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CEO Chat Test</title>
+  <meta charset="utf-8"/>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 1rem; }
+    .msg { margin: 1rem 0; padding: 1rem; border-radius: 8px; white-space: pre-wrap; }
+    .user { background: #e3f2fd; }
+    .ceo { background: #f3e5f5; }
+    .error { background: #ffebee; color: #c62828; }
+    .info { background: #e8eaf6; font-size: 0.85rem; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+    input, textarea { width: 100%; padding: 0.5rem; font-size: 1rem; margin: 0.5rem 0; }
+    .log { max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>🤖 CEO Chat Test</h1>
+  <p>Test <code>POST /api/ceo/chat</code> endpoint with proper timeout.</p>
+  
+  <div>
+    <label>Message:</label>
+    <textarea id="msg" rows="3">Hello CEO, any leads today?</textarea>
+    <br/>
+    <button onclick="send()">Send to CEO</button>
+    <span id="status" class="info"></span>
+  </div>
+  
+  <h3>Conversation:</h3>
+  <div id="log" class="log"></div>
+
+  <script>
+    let convId = null;
+    
+    async function send() {
+      const msg = document.getElementById('msg').value.trim();
+      if (!msg) return;
+      
+      const log = document.getElementById('log');
+      const status = document.getElementById('status');
+      const btn = document.querySelector('button');
+      
+      // Add user message
+      log.innerHTML += `<div class="msg user">You: ${escapeHtml(msg)}</div>`;
+      log.scrollTop = log.scrollHeight;
+      
+      status.textContent = 'Sending... (up to 120s for CEO thinking)';
+      btn.disabled = true;
+      
+      try {
+        const res = await fetch('/api/ceo/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: document.getElementById('msg').value, conversation_id: convId }),
+          signal: AbortSignal.timeout(150000)  // 150s timeout
+        });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        
+        const data = await res.json();
+        convId = data.conversation_id;
+        
+        log.innerHTML += `<div class="msg ceo">CEO: ${escapeHtml(data.response || '(empty)')}</div>`;
+        if (data.thinking_phases?.length) {
+          log.innerHTML += `<div class="msg info">Thinking phases: ${data.thinking_phases.length}</div>`;
+        }
+        
+      } catch (e) {
+        log.innerHTML += `<div class="msg error">Error: ${escapeHtml(e.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        status.textContent = 'Ready';
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+    
+    function escapeHtml(text) {
+      return text.replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');
+    }
+    
+    // Enter to send (Shift+Enter for newline)
+    document.getElementById('msg').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+  </script>
+</body>
+</html>
+"""
+
+
 # ── Entry ──────────────────────────────────────────────────────────────────
 
 
