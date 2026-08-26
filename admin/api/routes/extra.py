@@ -273,6 +273,58 @@ async def api_workspace_sba(ws_id: str) -> dict[str, Any]:
     return {"success": True, "data": _ws_item(ws)}
 
 
+@router.get("/api/workspaces/{ws_id}/context")
+async def api_workspace_context(ws_id: str) -> dict[str, Any]:
+    """Everything that switches when the boss switches workspace.
+
+    Agents are shared stateless workers; all their state is namespaced by
+    workspace_id. This endpoint surfaces that per-workspace slice in one
+    call so a frontend switcher only needs the id.
+    """
+    from admin.file_store import load_all
+    from admin.workspace.manager import get_workspace
+
+    ws = get_workspace(ws_id)
+    if not ws:
+        return {"success": False, "error": "Workspace not found"}
+
+    mem_by_agent: dict[str, int] = {}
+    try:
+        for rec in load_all("agent_memory").values():
+            if rec.get("workspace") != ws_id:
+                continue
+            agent = str(rec.get("agent") or "?")
+            mem_by_agent[agent] = mem_by_agent.get(agent, 0) + 1
+    except Exception:  # noqa: BLE001
+        pass
+
+    recent: list[dict[str, Any]] = []
+    try:
+        outputs = [
+            r for r in load_all("agent_outputs").values()
+            if r.get("workspace_id") == ws_id
+        ]
+        outputs.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+        recent = [
+            {
+                "agent": r.get("agent_type"),
+                "task": str(r.get("task", ""))[:80],
+                "created_at": r.get("created_at"),
+            }
+            for r in outputs[:3]
+        ]
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "success": True,
+        "workspace": {"id": ws.id, "name": ws.name, "client_name": ws.client_name},
+        "agents": list(ws.agents),
+        "memory_counts": mem_by_agent,
+        "recent_outputs": recent,
+    }
+
+
 @router.delete("/api/workspaces/{ws_id}")
 async def api_workspace_delete(ws_id: str) -> dict[str, Any]:
     from admin.workspace.manager import delete_workspace
