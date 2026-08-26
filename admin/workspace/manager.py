@@ -600,10 +600,41 @@ async def route_to_agent(
     agent_type: str,
     message: str,
 ) -> str:
-    """Route a message to a specific agent inside a workspace.
+    """Route a message to an agent with expert-mode wrapping.
 
-    Used by CEO for delegation. Returns the agent's response text.
+    Expert mode (AGENCY_EXPERT_MODE=0 to disable) makes the agent work
+    like a real domain human: it first gets its account brief (client
+    facts, own memories, recent deliverables), then a senior-reviewer
+    pass polices quality before anything reaches the CEO.
     """
+    if os.getenv("AGENCY_EXPERT_MODE", "1") != "0":
+        try:
+            from admin.workspace.agents.expert_mode import build_brief
+
+            brief = await build_brief(workspace_id, agent_type)
+            if brief:
+                message = (
+                    f"{message}\n\n[EXPERT BRIEF - your account notes]\n{brief}"
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("expert brief unavailable", exc_info=True)
+        draft = await _route_to_agent_raw(workspace_id, agent_type, message)
+        try:
+            from admin.workspace.agents.expert_mode import review
+
+            return await review(agent_type, message, draft)
+        except Exception:  # noqa: BLE001
+            logger.debug("expert review skipped", exc_info=True)
+            return draft
+    return await _route_to_agent_raw(workspace_id, agent_type, message)
+
+
+async def _route_to_agent_raw(
+    workspace_id: str,
+    agent_type: str,
+    message: str,
+) -> str:
+    """Original router (sba / domain LangGraph agents / generic LLM)."""
     from admin.runtime import get_agent_runtime
 
     ws = get_workspace(workspace_id)
