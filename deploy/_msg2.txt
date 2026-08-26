@@ -1,1 +1,0 @@
-docs: STATE.md - Supabase removed, freed 8.5GB disk + 290MB RAM

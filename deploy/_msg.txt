@@ -1,1 +1,0 @@
-docs: STATE.md - PocketBase bound to systemd service, PRODUCTION GREEN

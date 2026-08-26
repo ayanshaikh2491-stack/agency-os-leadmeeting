@@ -87,3 +87,8 @@ ec2-key.pem
 int_ec2.pem
 STATE.md
 deploy/_*
+deploy/
+STATE.md
+ec2-key.pem
+*.pem
+int_ec2.pem

@@ -1,1 +1,0 @@
-feat(pocketbase): Supabase-compat gateway GREEN locally - filters fixed

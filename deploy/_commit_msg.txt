@@ -1,9 +1,0 @@
-fix(sba): prioritize enrichment-ready leads so emails get found, backfill phone-match fix
-
-- sba_reason.prioritize now tiers leads: email-ready (+2000) > website-no-email
-  (+1000) > no-website. The autopilot's 12/pass enrichment budget previously
-  burned through 600+ no-website leads (Bing-only, ~0 yield) before reaching
-  the few website leads that actually produce emails.
-- _backfill_websites.py: normalize phone (E.164 +1 vs 10-digit) when matching
-  scraped cards to DB leads; restore the script under deploy/ (was lost in
-  cleanup, pulled back from EC2).

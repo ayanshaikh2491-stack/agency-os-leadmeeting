@@ -1,1 +1,0 @@
-docs: STATE.md - lead sources confirmed (google_maps, yellowpages, bing_maps live)

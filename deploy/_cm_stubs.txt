@@ -1,5 +1,0 @@
-chore(agents): remove stub agents (intake-researcher, sales-closer, client-success, review-qc)
-
-These 4 agents were registry-only names aliased to SBA with no real
-implementation. Removed from all frontend lists, proxy routes, and seeds.
-Lead/sales routing now goes directly to the real SBA agent.
