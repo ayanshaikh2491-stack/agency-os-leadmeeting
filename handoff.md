@@ -41,6 +41,13 @@ Commits (branch `feat/sba-lead-to-meeting-pipeline`):
   (`POCKETBASE_URL` / `POCKETBASE_ADMIN_EMAIL` / `POCKETBASE_ADMIN_PASSWORD`) — see
   that server `.env` / sba-gateway unit env for the values; never inline secrets here.
 
+- **New live endpoints (2026-08-26 session):**
+  - `GET /api/status` → exposes `llm_guards` (RPM/token/USD snapshots) + `scheduled_tasks` count
+  - `GET /api/workspaces/{id}/context` → agents, per-agent memory counts, recent outputs
+  - `GET /api/ceo/schedules` / `POST/PATCH/DELETE /api/ceo/schedules` → CEO autonomous scheduler CRUD
+  - `POST /api/chat/workspace/{ws_id}/chat` → expert-mode delegation (brief + senior review)
+  - Agent-bus mirror `agent_messages` + SBA leads mirror `sba_leads` both PB + JSON files
+
 Health: `curl http://18.213.66.136:9002/api/health` → `{"status":"ok","ceo_ready":true,...}`
 
 ## 3. Verified working live (real EC2)
@@ -116,7 +123,7 @@ If external `curl` returns empty again, re-check SG inbound before assuming app 
       (character.js). Subagent-built, prod verified. Paperclip dashboard UI
       deleted; office floor ab home base hai (/admin -> /admin/office).
 - [x] Open EC2 security-group inbound for 9002 (DONE 2026-08-23: rule `sgr-01dbacef76e41c4e3`, SG `sg-02b87bc26027dc457`, CIDR `0.0.0.0/0`)
-- [ ] Push commits to `origin` (currently 4 commits ahead of origin, not pushed)
+- [x] Push commits to `origin` (DONE 2026-08-26: all features synced)
 
 ## 8. Do NOT touch
 
@@ -128,6 +135,8 @@ If external `curl` returns empty again, re-check SG inbound before assuming app 
 
 ```sh
 curl -s http://18.213.66.136:9002/api/health
-curl -s -X POST http://18.213.66.136:9002/api/agents/custom -H 'Content-Type: application/json' -d '{"name":"X","role":"qa","system_prompt":"hi"}'
+curl -s http://18.213.66.136:9002/api/status | python3 -c "import json,sys; d=json.load(sys.stdin); print('llm_guards:', d.get('llm_guards')); print('scheduled_tasks:', d.get('scheduled_tasks'))"
+curl -s http://18.213.66.136:9002/api/workspaces/ws_agency/context
+curl -s http://18.213.66.136:9002/api/ceo/schedules
 sudo systemctl status tags-agency.service
 ```

@@ -268,3 +268,38 @@ Boss rule: "memory aur FILE dono jagah sab save ho."
   `self_heal.looks_like_error()`; error-ish reply => bus message marked
   `status="error"` and CEO runs `heal_and_report` (same flow custom agents had).
   Signature unchanged. This CLOSES the old self-healing limitation above.
+
+## MEDIUM + CEO FEATURES (2026-08-26 session)
+
+- **Daily budget guard on top of RPM** (`admin/llm_throttle.py`):
+  UTC-day token + estimated USD counters (env `AGENCY_LLM_DAILY_TOKENS`,
+  `AGENCY_LLM_DAILY_USD`, per-1M pricing via `AGENCY_LLM_USD_IN/OUT`, 0=off).
+  `acquire()` raises `BudgetExceededError` past caps so agents fail fast and
+  CEO heals/escalates instead of burning spend. Single patch point wraps
+  `AsyncCompletions.create` for throttle + usage; `snapshot()` exposed.
+- **Agent-bus mirror to PB + files** (`admin/agency/agent_bus.py`):
+  every `brief()`/`respond()` upserts to `agent_messages` PB collection
+  (key `message_id`) + JSON file store — CEO↔agent chat audit survives
+  restarts and is visible in PB admin UI.
+- **Expert mode wrapper** (`admin/workspace/agents/expert_mode.py`):
+  single-chokepoint `route_to_agent` wrapper that (1) injects client facts +
+  the agent's own memories + recent deliverables into the task message
+  (EXPERT BRIEF), then (2) runs a senior-reviewer pass on the draft:
+  checks task alignment, client specificity, actionability; appends
+  `WORK NOTES` + `NEED FROM CEO` lines; fails soft to raw draft.
+  Kill switch: `AGENCY_EXPERT_MODE=0`. Review calls flow through RPM/budget
+  guards automatically.
+- **CEO autonomous scheduler** (`admin/agency/scheduler.py` +
+  `admin/api/routes/scheduler.py`):
+  PB+file-backed `ceo_schedules` collection (key `slug`), crash-safe
+  next_run_at bump BEFORE each run, per-slug in-flight lock, 300s timeout,
+  L1 REPORT-ONLY enforced prefix, `AGENCY_SCHEDULER_OFF=1` kill switch,
+  CRUD at `/api/ceo/schedules`. Existing SEO scheduler module preserved.
+  Live `/api/status` exposes `llm_guards` snapshot + `scheduled_tasks` count.
+- **Workspace context endpoint** (`admin/api/routes/extra.py`):
+  `GET /api/workspaces/{id}/context` returns agents, per-agent memory
+  counts, recent outputs — makes workspace switching instant for the boss.
+- **SBA leads mirror** (`admin/api/routes/sba.py`):
+  CREATE/UPDATE/DELETE upsert to `sba_leads` PB collection + JSON files
+  via `_mirror_lead` (key `record_id`), same flattening pattern as
+  `agent_bus._mirror_message`.

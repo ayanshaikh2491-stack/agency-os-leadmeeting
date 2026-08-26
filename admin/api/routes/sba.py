@@ -44,6 +44,14 @@ import openai
 
 logger = logging.getLogger(__name__)
 
+
+def _json_default(obj: Any) -> Any:
+    """JSON serializer for non-standard types (mirrors agent_bus._json_default)."""
+    if isinstance(obj, (dict, list, str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
 router = APIRouter(prefix="/api/sba", tags=["sba"])
 _sba: SBAAgent | None = None
 
@@ -178,7 +186,7 @@ def _mirror_lead(record, delete: bool = False) -> None:
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
             elif isinstance(val, (dict, list)):
-                val = json.dumps(val, default=str)
+                val = json.dumps(val, default=_json_default)
             elif val is None:
                 val = ""
             else:
