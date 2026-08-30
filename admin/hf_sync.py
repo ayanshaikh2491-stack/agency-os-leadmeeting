@@ -26,11 +26,15 @@ from pathlib import Path
 PREFIX = os.getenv("HF_SYNC_PREFIX", "agency-os-backup")
 PB_DIR = Path(os.getenv("PB_DATA_DIR", "/app/pb_data"))
 
-# JSON file stores jo PB ke sath mirror hote hain (workspace data)
-_EXTRA_DIRS = [
-    Path("admin/data"),
-    Path("data"),
-]
+# JSON file stores jo PB ke sath mirror hote hain (workspace data).
+# HF container mein /app/admin/data, local dev mein admin/data — dono chalein.
+_CANDIDATE_BASES = [Path("/app"), Path(__file__).resolve().parent.parent]
+_EXTRA_DIRS: list[Path] = []
+for _base in _CANDIDATE_BASES:
+    for _d in ("admin/data", "data"):
+        _p = _base / _d
+        if _p.is_dir() and _p not in _EXTRA_DIRS:
+            _EXTRA_DIRS.append(_p)
 
 # Ye dirs bade artifacts hote hain — multi-provider round-robin routing
 _BIG_DIRS = {
@@ -144,7 +148,9 @@ def sync() -> int:
             top = rel.split("/", 1)[0]
             group = "big" if top in _BIG_DIRS else "critical"
             prov = _route(group, rel, providers)
-            upload(prov, path, f"{PREFIX}/files/{extra.name}/{rel}")
+            # key: files/<admin|data>/<rel> — admin/data vs data distinguish
+            stem = "admin/data" if extra.parent.name == "admin" else extra.name
+            upload(prov, path, f"{PREFIX}/files/{stem}/{rel}")
 
     print(f"[hf_sync] uploaded: " + ", ".join(f"{n}={c}" for n, c in counts.items()))
     return sum(counts.values())
@@ -174,7 +180,14 @@ def restore() -> int:
                     parts = rel.removeprefix("files/").split("/", 1)
                     if len(parts) != 2:
                         continue
-                    target = Path(parts[0]) / parts[1]
+                    # files/admin/data/... ya files/data/... — base dir detect karo
+                    sub = parts[1]
+                    if parts[0] == "admin" and sub.startswith("data/"):
+                        target = Path("/app") / "admin" / sub
+                    elif parts[0] == "data":
+                        target = Path("/app") / "data" / sub.removeprefix("data/")
+                    else:
+                        target = Path("/app") / parts[0] / sub
                 else:
                     continue
 
