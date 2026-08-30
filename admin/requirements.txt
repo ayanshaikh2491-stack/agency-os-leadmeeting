@@ -17,3 +17,6 @@ selectolax>=0.4.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 
+# HF Spaces R2 data-sync (boto3 sirf sync ke liye; import lazy hai)
+boto3>=1.34.0
+
