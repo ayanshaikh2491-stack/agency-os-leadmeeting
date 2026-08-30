@@ -55,14 +55,28 @@ FastAPI se hi reach hota hai (`POCKETBASE_URL=http://127.0.0.1:8090`), jo exactl
 HF free Spaces **48 hours inactivity** pe sleep karte hain. Free fix:
 - cron-job.org (free) → har 30 min → `GET https://<user>-agency-os.hf.space/api/health`
 
-## Data Survival (R2 Sync)
+## Data Survival (R2 + Multi-Provider Sync)
 
 ```
-Restart/Rebuild → start.sh → hf_sync.py restore → pb_data wapas
-Har 5 min → hf_sync.py sync → pb_data R2 pe save
+HF 50GB ephemeral  = WORKING DISK (fast local — sab runtime writes yahan)
+R2 10GB (critical)  = pb_data + JSON stores ka survival layer (restore on boot)
+B2/e2 (~55GB stack) = bade artifacts (outputs, sites, PDFs) ka round-robin backup
+
+Restart/Rebuild → start.sh → hf_sync.py restore → critical data wapas
+Har 5 min → hf_sync.py sync → working data providers pe save
 ```
 
-PocketBase SQLite (WAL checkpoint ke sath) + `admin/data` + `data` JSON stores — sab R2 pe safe.
+### Storage Strategy (50GB proper use):
+
+| Layer | Kaam | Restart Behavior |
+|-------|------|------------------|
+| **HF 50GB (ephemeral)** | Working disk — PocketBase runtime, agent outputs, PDF generation, caches | Wipe — regenerable stuff only |
+| **R2 10GB (free)** | Critical: pb_data (SQLite WAL checkpoint) + JSON stores | ✅ Auto-restore boot pe |
+| **B2 + e2 + Storj (~55GB)** | Artifacts: outputs, generated_sites, published_posts, store | ✅ Round-robin sync |
+
+**50GB ka matlab:** tumhari saari runtime activity (agents chalna, PDF banana, sites generate hona)
+HF ke fast local disk pe hogi — koi API latency nahi. Sirf survival-critical data
+5-minute interval pe providers pe replicate hota hai.
 
 ## Local Test (deploy se pehle)
 

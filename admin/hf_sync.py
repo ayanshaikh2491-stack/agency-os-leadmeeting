@@ -1,28 +1,29 @@
-"""HF Spaces ephemeral storage survival — PocketBase data sync to/from Cloudflare R2.
+"""HF Spaces ephemeral storage survival — multi-provider S3 sync.
+
+Providers (S3-compatible, sab boto3 se):
+  Provider 1 (critical data):  R2_SYNC_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY
+  Provider 2..N (artifacts):  SYNC_EXTRA_PROVIDERS="b2,e2" + <NAME>_BUCKET,
+                               <NAME>_ENDPOINT, <NAME>_ACCESS_KEY, <NAME>_SECRET_KEY
+
+Routing:
+  pb_data + chhote JSON stores -> provider 1 (R2, critical)
+  bade dirs (outputs, generated_sites, published_posts, store) -> sab
+  providers pe round-robin (hash % len) — ~55GB tak free stack.
 
 Usage:
-    python -m admin.hf_sync sync    # upload pb_data + JSON stores to R2
-    python -m admin.hf_sync restore # download from R2 into pb_data (startup pe)
-
-Env vars (HF Space Settings mein set karo):
-    R2_SYNC_BUCKET   — bucket name (required; agar unset, no-op)
-    R2_ENDPOINT      — https://<account>.r2.cloudflarestorage.com
-    R2_ACCESS_KEY    — R2 access key id
-    R2_SECRET_KEY    — R2 secret
-    HF_SYNC_PREFIX   — default "agency-os-backup"
-
-Local-first: SQLite WAL checkpoint sync se partial file corruption avoid hota hai.
+    python -m admin.hf_sync sync     # pb_data + JSON stores -> providers
+    python -m admin.hf_sync restore  # startup pe sab wapas lao
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import tempfile
 from pathlib import Path
 
 PREFIX = os.getenv("HF_SYNC_PREFIX", "agency-os-backup")
-BUCKET = os.getenv("R2_SYNC_BUCKET", "")
 PB_DIR = Path(os.getenv("PB_DATA_DIR", "/app/pb_data"))
 
 # JSON file stores jo PB ke sath mirror hote hain (workspace data)
@@ -31,19 +32,72 @@ _EXTRA_DIRS = [
     Path("data"),
 ]
 
+# Ye dirs bade artifacts hote hain — multi-provider round-robin routing
+_BIG_DIRS = {
+    "generated_sites", "outputs", "published_posts", "store",
+    "p100_cpu_test", "live_test_p100",
+}
 
-def _client():
-    if not BUCKET:
-        return None
+
+# ── Providers ─────────────────────────────────────────────────────────────
+
+def _mk_client(endpoint: str, access_key: str, secret_key: str):
     import boto3  # lazy import: sync ke liye hi chahiye
 
     return boto3.client(
         "s3",
-        endpoint_url=os.getenv("R2_ENDPOINT", ""),
-        aws_access_key_id=os.getenv("R2_ACCESS_KEY", ""),
-        aws_secret_access_key=os.getenv("R2_SECRET_KEY", ""),
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
     )
 
+
+def _load_providers() -> list[dict]:
+    """Env se providers build karo. Provider 1 = R2 (existing vars, critical data)."""
+    providers: list[dict] = []
+
+    r2_bucket = os.getenv("R2_SYNC_BUCKET", "")
+    if r2_bucket:
+        providers.append({
+            "name": "r2",
+            "bucket": r2_bucket,
+            "client": _mk_client(
+                os.getenv("R2_ENDPOINT", ""),
+                os.getenv("R2_ACCESS_KEY", ""),
+                os.getenv("R2_SECRET_KEY", ""),
+            ),
+        })
+
+    # Extra providers: SYNC_EXTRA_PROVIDERS="b2,e2,storj" (upper-case env vars)
+    for name in filter(None, (n.strip() for n in os.getenv("SYNC_EXTRA_PROVIDERS", "").split(","))):
+        env = name.upper()
+        bucket = os.getenv(f"{env}_BUCKET", "")
+        if not bucket:
+            continue
+        providers.append({
+            "name": name,
+            "bucket": bucket,
+            "client": _mk_client(
+                os.getenv(f"{env}_ENDPOINT", ""),
+                os.getenv(f"{env}_ACCESS_KEY", ""),
+                os.getenv(f"{env}_SECRET_KEY", ""),
+            ),
+        })
+
+    return providers
+
+
+def _route(group: str, rel: str, providers: list[dict]) -> dict:
+    """Critical data -> provider[0] (R2). Artifacts -> hash-based round-robin."""
+    if group == "critical" or len(providers) == 1:
+        return providers[0]
+    # ponytail: hash routing self-balancing hai; weight-aware jab provider
+    # limits track karne padenge (>40GB pe upgrade)
+    idx = int(hashlib.sha1(rel.encode()).hexdigest(), 16) % len(providers)
+    return providers[idx]
+
+
+# ── SQLite safety ─────────────────────────────────────────────────────────
 
 def _checkpoint(pb_dir: Path) -> None:
     """SQLite WAL checkpoint — .db file self-contained ban jata hai upload se pehle."""
@@ -56,69 +110,82 @@ def _checkpoint(pb_dir: Path) -> None:
             pass
 
 
+# ── Sync / Restore ────────────────────────────────────────────────────────
+
 def sync() -> int:
-    """pb_data + JSON stores → R2 upload. Return: files uploaded."""
-    s3 = _client()
-    if s3 is None:
-        print("[hf_sync] R2_SYNC_BUCKET unset — skipping sync")
+    providers = _load_providers()
+    if not providers:
+        print("[hf_sync] koi provider configured nahi (R2_SYNC_BUCKET unset) — skipping sync")
         return 0
 
     PB_DIR.mkdir(parents=True, exist_ok=True)
     _checkpoint(PB_DIR)
 
-    count = 0
+    counts: dict[str, int] = {p["name"]: 0 for p in providers}
+
+    def upload(provider: dict, local: Path, key: str) -> None:
+        provider["client"].upload_file(str(local), provider["bucket"], key)
+        counts[provider["name"]] += 1
+
+    # pb_data = critical, hamesha provider 1 (R2)
     for path in PB_DIR.rglob("*"):
         if path.is_file():
-            key = f"{PREFIX}/pb_data/{path.relative_to(PB_DIR).as_posix()}"
-            s3.upload_file(str(path), BUCKET, key)
-            count += 1
+            rel = path.relative_to(PB_DIR).as_posix()
+            upload(providers[0], path, f"{PREFIX}/pb_data/{rel}")
 
+    # JSON stores: critical chhote + round-robin bade
     for extra in _EXTRA_DIRS:
-        if extra.exists():
-            for path in extra.rglob("*"):
-                if path.is_file():
-                    key = f"{PREFIX}/files/{extra.name}/{path.relative_to(extra).as_posix()}"
-                    s3.upload_file(str(path), BUCKET, key)
-                    count += 1
+        if not extra.exists():
+            continue
+        for path in extra.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(extra).as_posix()
+            top = rel.split("/", 1)[0]
+            group = "big" if top in _BIG_DIRS else "critical"
+            prov = _route(group, rel, providers)
+            upload(prov, path, f"{PREFIX}/files/{extra.name}/{rel}")
 
-    print(f"[hf_sync] uploaded {count} files to s3://{BUCKET}/{PREFIX}")
-    return count
+    print(f"[hf_sync] uploaded: " + ", ".join(f"{n}={c}" for n, c in counts.items()))
+    return sum(counts.values())
 
 
 def restore() -> int:
-    """R2 → pb_data + JSON stores. Startup pe call karo. Return: files restored."""
-    s3 = _client()
-    if s3 is None:
-        print("[hf_sync] R2_SYNC_BUCKET unset — skipping restore")
+    providers = _load_providers()
+    if not providers:
+        print("[hf_sync] koi provider configured nahi — skipping restore")
         return 0
 
     PB_DIR.mkdir(parents=True, exist_ok=True)
-    paginator = s3.get_paginator("list_objects_v2")
+    total = 0
 
-    count = 0
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=f"{PREFIX}/"):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            rel = key.removeprefix(f"{PREFIX}/")
+    for prov in providers:
+        paginator = prov["client"].get_paginator("list_objects_v2")
+        # ponytail: full restore at boot; >1GB pe lazy per-key fetch karna
+        # hoga (startup time ceiling ~2-3 min @ 10GB)
+        for page in paginator.paginate(Bucket=prov["bucket"], Prefix=f"{PREFIX}/"):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                rel = key.removeprefix(f"{PREFIX}/")
 
-            if rel.startswith("pb_data/"):
-                target = PB_DIR / rel.removeprefix("pb_data/")
-            elif rel.startswith("files/"):
-                parts = rel.removeprefix("files/").split("/", 1)
-                if len(parts) != 2:
+                if rel.startswith("pb_data/"):
+                    target = PB_DIR / rel.removeprefix("pb_data/")
+                elif rel.startswith("files/"):
+                    parts = rel.removeprefix("files/").split("/", 1)
+                    if len(parts) != 2:
+                        continue
+                    target = Path(parts[0]) / parts[1]
+                else:
                     continue
-                target = Path(parts[0]) / parts[1]
-            else:
-                continue
 
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                s3.download_fileobj(BUCKET, key, tmp)
-                os.replace(tmp.name, target)
-            count += 1
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                    prov["client"].download_fileobj(prov["bucket"], key, tmp)
+                    os.replace(tmp.name, target)
+                total += 1
 
-    print(f"[hf_sync] restored {count} files from s3://{BUCKET}/{PREFIX}")
-    return count
+    print(f"[hf_sync] restored {total} files from {len(providers)} providers")
+    return total
 
 
 if __name__ == "__main__":
